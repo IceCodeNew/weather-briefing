@@ -17,7 +17,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@bb05f3fca7d68a33915cce4c747ee34d9b4e52eb # v4.2.0
-      - uses: docker/login-action@af1e73f1e7d5e5648042ff37c1a36c8d74960d77 # v4.4.0
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
