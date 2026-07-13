@@ -10,6 +10,7 @@ from weather_briefing.cli import (
     _parse_run_time,
     _precision_reduction_notice,
     build_parser,
+    main,
 )
 from weather_briefing.config import Settings
 from weather_briefing.models import ResolvedLocation
@@ -138,3 +139,20 @@ def test_version_flag() -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--version"])
+
+
+def test_main_loads_dotenv_with_supported_arguments(monkeypatch) -> None:
+    calls: list[bool] = []
+
+    def fake_load_dotenv(*, override: bool) -> bool:
+        calls.append(override)
+        return True
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", fake_load_dotenv)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "--version"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    assert calls == [False]

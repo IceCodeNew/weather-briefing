@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 import pendulum
 from apscheduler.triggers.cron import CronTrigger
@@ -17,8 +17,25 @@ class ConfigurationError(ValueError):
     """Raised when private runtime configuration is missing or malformed."""
 
 
+@overload
+def _clean_env(value: str) -> str: ...
+
+
+@overload
+def _clean_env(value: None) -> None: ...
+
+
+def _clean_env(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
 def _required(name: str) -> str:
-    value = os.getenv(name, "").strip()
+    value = _clean_env(os.getenv(name, ""))
     if not value:
         raise ConfigurationError(f"Missing required environment variable: {name}")
     return value
@@ -26,7 +43,7 @@ def _required(name: str) -> str:
 
 def _integer(name: str, default: int) -> int:
     try:
-        return int(os.getenv(name, str(default)))
+        return int(_clean_env(os.getenv(name, str(default))))
     except ValueError as exc:
         raise ConfigurationError(f"{name} must be an integer") from exc
 
@@ -53,7 +70,7 @@ def _bounded_integer(name: str, default: int, minimum: int, maximum: int) -> int
 
 
 def _cron_hour(name: str, default: str) -> str:
-    value = os.getenv(name, default).strip()
+    value = _clean_env(os.getenv(name, default))
     if not value:
         raise ConfigurationError(f"{name} must not be empty")
     try:
@@ -65,7 +82,7 @@ def _cron_hour(name: str, default: str) -> str:
 
 def _float(name: str, default: float) -> float:
     try:
-        return float(os.getenv(name, str(default)))
+        return float(_clean_env(os.getenv(name, str(default))))
     except ValueError as exc:
         raise ConfigurationError(f"{name} must be a number") from exc
 
@@ -90,7 +107,7 @@ def _json_file(path: Path) -> list[dict[str, Any]]:
 
 
 def _configured_weather_providers() -> tuple[str, ...] | None:
-    configured = os.getenv("WEATHER_PROVIDERS")
+    configured = _clean_env(os.getenv("WEATHER_PROVIDERS"))
     if configured is None:
         return None
     providers = tuple(item.strip() for item in configured.split(",") if item.strip())
@@ -189,8 +206,8 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        locations_path = Path(os.getenv("BRIEFING_LOCATIONS_FILE", "locations.json"))
-        rss_sources_path = Path(os.getenv("RSS_SOURCES_FILE", "rss-sources.json"))
+        locations_path = Path(_clean_env(os.getenv("BRIEFING_LOCATIONS_FILE", "locations.json")))
+        rss_sources_path = Path(_clean_env(os.getenv("RSS_SOURCES_FILE", "rss-sources.json")))
         feeds = tuple(
             FeedConfig(
                 id=str(item["id"]),
@@ -204,7 +221,7 @@ class Settings:
             )
             for item in _json_file(rss_sources_path)
         )
-        context_raw = os.getenv("CONTEXT_SOURCES_JSON", "[]")
+        context_raw = _clean_env(os.getenv("CONTEXT_SOURCES_JSON", "[]"))
         try:
             context_items = json.loads(context_raw)
         except json.JSONDecodeError as exc:
@@ -216,7 +233,7 @@ class Settings:
             for item in context_items
         )
         try:
-            timezone = pendulum.timezone(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai"))
+            timezone = pendulum.timezone(_clean_env(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai")))
         except (ValueError, KeyError) as exc:
             raise ConfigurationError("Invalid timezone") from exc
         retry_min = _float("RSS_RETRY_MIN_SECONDS", 3)
@@ -227,11 +244,11 @@ class Settings:
         daily_cron_hour = _bounded_integer("GREETING_HOUR", 8, 0, 23)
         daily_cron_minute = _bounded_integer("GREETING_MINUTE", 0, 0, 59)
         hourly_cron = _cron_hour("BRIEFING_CRON", "9-23")
-        llm_provider = os.getenv("LLM_PROVIDER", "deepseek")
+        llm_provider = _clean_env(os.getenv("LLM_PROVIDER", "deepseek"))
         if llm_provider == "deepseek":
             api_key = _required("DEEPSEEK_API_KEY")
             llm_model = _required("DEEPSEEK_MODEL")
-            llm_base_url = os.getenv("DEEPSEEK_BASE_URL")
+            llm_base_url = _clean_env(os.getenv("DEEPSEEK_BASE_URL"))
         else:
             api_key = _required("LLM_API_KEY")
             llm_model = _required("LLM_MODEL")
@@ -256,45 +273,55 @@ class Settings:
             timezone=timezone,
             locations_path=locations_path,
             locations=locations,
-            geocoding_base_url=os.getenv("GEOCODING_BASE_URL", "https://geocoding-api.open-meteo.com").rstrip("/"),
-            geocoding_api_key=os.getenv("GEOCODING_API_KEY") or None,
-            nominatim_base_url=os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org").rstrip("/"),
-            geocoding_user_agent=os.getenv(
-                "GEOCODING_USER_AGENT",
-                "weather-briefing/0.1 (+https://github.com/IceCodeNew/weather-briefing)",
+            geocoding_base_url=_clean_env(
+                os.getenv("GEOCODING_BASE_URL", "https://geocoding-api.open-meteo.com")
+            ).rstrip("/"),
+            geocoding_api_key=_clean_env(os.getenv("GEOCODING_API_KEY")) or None,
+            nominatim_base_url=_clean_env(
+                os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
+            ).rstrip("/"),
+            geocoding_user_agent=_clean_env(
+                os.getenv(
+                    "GEOCODING_USER_AGENT",
+                    "weather-briefing/0.1 (+https://github.com/IceCodeNew/weather-briefing)",
+                )
             ),
-            geocoding_cache_path=Path(os.getenv("GEOCODING_CACHE_PATH", "state/geocoding.json")),
+            geocoding_cache_path=Path(_clean_env(os.getenv("GEOCODING_CACHE_PATH", "state/geocoding.json"))),
             rss_sources_path=rss_sources_path,
             feeds=feeds,
             context_sources=context_sources,
             weather_providers=_configured_weather_providers(),
-            qweather_project_id=os.getenv("QWEATHER_PROJECT_ID") or None,
-            qweather_credential_id=os.getenv("QWEATHER_CREDENTIAL_ID") or None,
-            qweather_private_key=os.getenv("QWEATHER_PRIVATE_KEY") or None,
+            qweather_project_id=_clean_env(os.getenv("QWEATHER_PROJECT_ID")) or None,
+            qweather_credential_id=_clean_env(os.getenv("QWEATHER_CREDENTIAL_ID")) or None,
+            qweather_private_key=_clean_env(os.getenv("QWEATHER_PRIVATE_KEY")) or None,
             qweather_jwt_lifetime_seconds=_bounded_positive_integer("QWEATHER_JWT_LIFETIME_SECONDS", 900, 86_400),
-            qweather_base_url=(os.getenv("QWEATHER_API_HOST") or "").rstrip("/") or None,
+            qweather_base_url=(_clean_env(os.getenv("QWEATHER_API_HOST")) or "").rstrip("/") or None,
             qweather_index_types=tuple(
                 item.strip()
-                for item in os.getenv(
-                    "QWEATHER_INDEX_TYPES",
-                    ",".join(reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")),
+                for item in _clean_env(
+                    os.getenv(
+                        "QWEATHER_INDEX_TYPES",
+                        ",".join(reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")),
+                    )
                 ).split(",")
                 if item.strip()
             ),
-            open_meteo_weather_base_url=os.getenv("OPEN_METEO_WEATHER_BASE_URL", "https://api.open-meteo.com").rstrip(
-                "/"
-            ),
-            open_meteo_air_quality_base_url=os.getenv(
-                "OPEN_METEO_AIR_QUALITY_BASE_URL",
-                "https://air-quality-api.open-meteo.com",
+            open_meteo_weather_base_url=_clean_env(
+                os.getenv("OPEN_METEO_WEATHER_BASE_URL", "https://api.open-meteo.com")
             ).rstrip("/"),
-            open_meteo_api_key=os.getenv("OPEN_METEO_API_KEY") or None,
-            aqicn_api_token=os.getenv("AQICN_API_TOKEN") or None,
-            aqicn_base_url=os.getenv("AQICN_BASE_URL", "https://api.waqi.info").rstrip("/"),
-            state_path=Path(os.getenv("BRIEFING_STATE_PATH", "state/weather.sqlite3")),
-            publisher=os.getenv("PUBLISHER", "telegram"),
-            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
-            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID") or None,
+            open_meteo_air_quality_base_url=_clean_env(
+                os.getenv(
+                    "OPEN_METEO_AIR_QUALITY_BASE_URL",
+                    "https://air-quality-api.open-meteo.com",
+                )
+            ).rstrip("/"),
+            open_meteo_api_key=_clean_env(os.getenv("OPEN_METEO_API_KEY")) or None,
+            aqicn_api_token=_clean_env(os.getenv("AQICN_API_TOKEN")) or None,
+            aqicn_base_url=_clean_env(os.getenv("AQICN_BASE_URL", "https://api.waqi.info")).rstrip("/"),
+            state_path=Path(_clean_env(os.getenv("BRIEFING_STATE_PATH", "state/weather.sqlite3"))),
+            publisher=_clean_env(os.getenv("PUBLISHER", "telegram")),
+            telegram_bot_token=_clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,
+            telegram_chat_id=_clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None,
             rss_max_attempts=_positive_integer("RSS_MAX_ATTEMPTS", 3),
             rss_retry_min_seconds=retry_min,
             rss_retry_max_seconds=retry_max,
