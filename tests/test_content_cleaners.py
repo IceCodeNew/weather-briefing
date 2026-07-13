@@ -1,4 +1,6 @@
-from weather_briefing.content_cleaners import ContentCleaningRules, HTMLContentCleaner
+import pytest
+
+from weather_briefing.content_cleaners import ContentCleaningError, ContentCleaningRules, HTMLContentCleaner
 
 
 def test_html_cleaner_removes_page_chrome_without_rewriting_article_text() -> None:
@@ -24,3 +26,13 @@ def test_html_cleaner_decodes_entities_to_visible_text() -> None:
     cleaned = HTMLContentCleaner().clean("<p>风力 7&amp;ndash;8 级</p>", ContentCleaningRules())
 
     assert cleaned == "风力 7&ndash;8 级"
+
+
+def test_html_cleaner_rejects_invalid_css_selector() -> None:
+    with pytest.raises(ContentCleaningError, match="Invalid content removal selector"):
+        HTMLContentCleaner().clean("<p>test</p>", ContentCleaningRules(remove_selectors=("[invalid",)))
+
+
+def test_html_cleaner_rejects_invalid_regex_pattern() -> None:
+    with pytest.raises(ContentCleaningError, match="Invalid content removal pattern"):
+        HTMLContentCleaner().clean("<p>test</p>", ContentCleaningRules(remove_patterns=("[invalid",)))

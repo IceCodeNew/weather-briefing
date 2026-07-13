@@ -1,5 +1,12 @@
+import pytest
+
 from weather_briefing.air_quality import health_guidance
-from weather_briefing.reference_data import reference_string_tuple, reference_value
+from weather_briefing.reference_data import (
+    ReferenceDataError,
+    load_reference_data,
+    reference_string_tuple,
+    reference_value,
+)
 
 
 def test_packaged_reference_data_is_available() -> None:
@@ -17,3 +24,28 @@ def test_air_quality_guidance_covers_values_above_last_bounded_band() -> None:
 
     assert category
     assert guidance
+
+
+def test_load_reference_data_rejects_non_json_filename() -> None:
+    with pytest.raises(ReferenceDataError, match="one JSON file"):
+        load_reference_data("data.json/nested")
+
+
+def test_load_reference_data_rejects_non_json_extension() -> None:
+    with pytest.raises(ReferenceDataError, match="one JSON file"):
+        load_reference_data("data.txt")
+
+
+def test_load_reference_data_rejects_missing_file() -> None:
+    with pytest.raises(ReferenceDataError, match="Unable to load"):
+        load_reference_data("nonexistent.json")
+
+
+def test_reference_value_rejects_missing_path() -> None:
+    with pytest.raises(ReferenceDataError, match="Missing reference data field"):
+        reference_value("geography.json", "nonexistent", "key")
+
+
+def test_reference_string_tuple_rejects_non_list_value() -> None:
+    with pytest.raises(ReferenceDataError, match="non-empty string list"):
+        reference_string_tuple("geography.json", "mainland_china_service_bounds")

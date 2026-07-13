@@ -302,3 +302,156 @@ class TestScheduleSettings:
 
         with pytest.raises(ConfigurationError):
             Settings.from_env()
+
+
+class TestConfigErrorPaths:
+    def test_missing_required_llm_key_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("LLM_PROVIDER", "openai-compatible")
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+        with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
+            Settings.from_env()
+
+    def test_invalid_float_env_value_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("HTTP_TIMEOUT_SECONDS", "not-a-number")
+
+        with pytest.raises(ConfigurationError, match="must be a number"):
+            Settings.from_env()
+
+    def test_empty_locations_file_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text("[]", encoding="utf-8")
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="Configure at least one location"):
+            Settings.from_env()
+
+    def test_invalid_location_id_characters_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text('[{"id":"invalid id","name":"Name"}]', encoding="utf-8")
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="Location id must use"):
+            Settings.from_env()
+
+    def test_duplicate_location_id_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text(
+            '[{"id":"beijing","name":"Beijing"},{"id":"beijing","name":"Also Beijing"}]',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="Duplicate location id"):
+            Settings.from_env()
+
+    def test_location_without_name_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text('[{"id":"beijing"}]', encoding="utf-8")
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="must have a name"):
+            Settings.from_env()
+
+    def test_mismatched_lat_lon_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text(
+            '[{"id":"beijing","name":"Beijing","latitude":39.9}]',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="provide both latitude and longitude"):
+            Settings.from_env()
+
+    def test_latitude_out_of_range_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text(
+            '[{"id":"beijing","name":"Beijing","latitude":95,"longitude":116}]',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="latitude is out of range"):
+            Settings.from_env()
+
+    def test_longitude_out_of_range_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text(
+            '[{"id":"beijing","name":"Beijing","latitude":39,"longitude":200}]',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="longitude is out of range"):
+            Settings.from_env()
+
+    def test_invalid_context_sources_json_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("CONTEXT_SOURCES_JSON", "not-json")
+
+        with pytest.raises(ConfigurationError, match="CONTEXT_SOURCES_JSON must contain valid JSON"):
+            Settings.from_env()
+
+    def test_context_sources_not_array_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("CONTEXT_SOURCES_JSON", '{"key":"value"}')
+
+        with pytest.raises(ConfigurationError, match="CONTEXT_SOURCES_JSON must be a JSON array"):
+            Settings.from_env()
+
+    def test_invalid_timezone_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("BRIEFING_TIMEZONE", "Invalid/Timezone")
+
+        with pytest.raises(ConfigurationError, match="Invalid timezone"):
+            Settings.from_env()
+
+    def test_rss_retry_delay_range_invalid_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("RSS_RETRY_MIN_SECONDS", "10")
+        monkeypatch.setenv("RSS_RETRY_MAX_SECONDS", "5")
+
+        with pytest.raises(ConfigurationError, match="RSS retry delay range is invalid"):
+            Settings.from_env()
+
+    def test_empty_weather_providers_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("WEATHER_PROVIDERS", ",")
+
+        with pytest.raises(ConfigurationError, match="WEATHER_PROVIDERS cannot be empty"):
+            Settings.from_env()
+
+    def test_invalid_json_in_rss_sources_file_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        source_file = tmp_path / "rss-sources.json"
+        source_file.write_text("not-json", encoding="utf-8")
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+        with pytest.raises(ConfigurationError, match="must contain readable JSON"):
+            Settings.from_env()
+
+    def test_rss_sources_file_not_array_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        source_file = tmp_path / "rss-sources.json"
+        source_file.write_text('{"key":"value"}', encoding="utf-8")
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+        with pytest.raises(ConfigurationError, match="must be a JSON array"):
+            Settings.from_env()
