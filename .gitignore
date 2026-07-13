@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# CommandCode
+.commandcode/**
+
+# Weather Briefing private runtime state
+/rss-sources.json
+/locations.json
+*.sqlite3
+*.db
+briefings/
+state/
