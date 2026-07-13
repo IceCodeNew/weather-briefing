@@ -168,3 +168,63 @@ def test_generic_llm_provider_uses_generic_configuration(monkeypatch) -> None:
     assert settings.llm_provider == "openai-compatible"
     assert settings.llm_model == "generic-model"
     assert settings.llm_base_url == "https://compatible.example.invalid/v1"
+
+
+class TestScheduleSettings:
+    def test_defaults(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+
+        settings = Settings.from_env()
+
+        assert settings.greeting_hour == 8
+        assert settings.greeting_minute == 0
+        assert settings.hourly_cron == "9-23"
+
+    def test_custom_greeting(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("GREETING_HOUR", "7")
+        monkeypatch.setenv("GREETING_MINUTE", "30")
+
+        settings = Settings.from_env()
+
+        assert settings.greeting_hour == 7
+        assert settings.greeting_minute == 30
+
+    def test_custom_hourly_cron(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("BRIEFING_CRON", "8-20")
+
+        settings = Settings.from_env()
+
+        assert settings.hourly_cron == "8-20"
+
+    def test_empty_briefing_cron_rejected(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("BRIEFING_CRON", "")
+
+        with pytest.raises(ConfigurationError, match="BRIEFING_CRON must not be empty"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("value", ("foo", "24", "9-", "9 - 18"))
+    def test_invalid_briefing_cron_rejected(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("BRIEFING_CRON", value)
+
+        with pytest.raises(ConfigurationError, match="valid APScheduler hour expression"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("value", ("25", "-1", "abc"))
+    def test_greeting_hour_out_of_bounds_rejected(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("GREETING_HOUR", value)
+
+        with pytest.raises(ConfigurationError):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("value", ("60", "-1", "abc"))
+    def test_greeting_minute_out_of_bounds_rejected(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("GREETING_MINUTE", value)
+
+        with pytest.raises(ConfigurationError):
+            Settings.from_env()
