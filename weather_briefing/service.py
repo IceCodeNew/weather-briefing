@@ -40,9 +40,7 @@ class BriefingService:
         self._weather_context_provider = weather_context_provider
 
     async def run(self, kind: str, now: pendulum.DateTime | None = None) -> str | None:
-        current_time = require_aware_datetime(
-            now or pendulum.now(self._settings.timezone), context="Briefing run time"
-        )
+        current_time = require_aware_datetime(now or pendulum.now(self._settings.timezone), context="Briefing run time")
         try:
             body = await self._run(kind, current_time)
         except Exception:
@@ -122,9 +120,7 @@ class BriefingService:
             historical_context,
             active_warnings,
         )
-        briefing_limit = self._delivery.briefing_limit(
-            self._settings.briefing_max_characters
-        )
+        briefing_limit = self._delivery.briefing_limit(self._settings.briefing_max_characters)
         payload["output_constraints"] = {"briefing_max_characters": briefing_limit}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
 
@@ -136,8 +132,7 @@ class BriefingService:
                 raise LLMError("daily briefing must set should_publish=true")
             if candidate_message.visible_length > briefing_limit:
                 raise LLMError(
-                    f"briefing has {candidate_message.visible_length} visible characters; "
-                    f"limit is {briefing_limit}"
+                    f"briefing has {candidate_message.visible_length} visible characters; limit is {briefing_limit}"
                 )
 
         result = await self._summarize(payload, now, valid_source_ids, validator=validate_length)

@@ -277,9 +277,7 @@ class Settings:
                 item.strip()
                 for item in os.getenv(
                     "QWEATHER_INDEX_TYPES",
-                    ",".join(
-                        reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")
-                    ),
+                    ",".join(reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")),
                 ).split(",")
                 if item.strip()
             ),

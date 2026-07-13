@@ -10,9 +10,7 @@ from .render import MessageRenderer
 
 
 class Publisher(Protocol):
-    async def publish(
-        self, message: RenderedMessage, *, single_message: bool = False
-    ) -> None: ...
+    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,9 +50,7 @@ class DeliveryProvider:
 
 
 class StdoutPublisher:
-    async def publish(
-        self, message: RenderedMessage, *, single_message: bool = False
-    ) -> None:
+    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
         print(message.body)
 
 
@@ -70,16 +66,10 @@ class TelegramPublisher:
         self._url = f"https://api.telegram.org/bot{token}/sendMessage"
         self._chat_id = chat_id
 
-    async def publish(
-        self, message: RenderedMessage, *, single_message: bool = False
-    ) -> None:
+    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
             raise DeliveryError("Telegram single message exceeds the platform limit")
-        chunks = (
-            (message.body,)
-            if single_message
-            else _split_message(message.body, self.MAX_MESSAGE_LENGTH)
-        )
+        chunks = (message.body,) if single_message else _split_message(message.body, self.MAX_MESSAGE_LENGTH)
         for chunk in chunks:
             try:
                 response = await self._client.post(

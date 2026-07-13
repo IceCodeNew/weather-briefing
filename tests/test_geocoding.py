@@ -36,9 +36,7 @@ async def test_open_meteo_geocoder_resolves_coordinates_and_country() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await OpenMeteoGeocodingProvider(client).geocode(
-            LocationSpec("beijing", "北京市西城区中南海")
-        )
+        result = await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("beijing", "北京市西城区中南海"))
 
     assert result.latitude == 39.911389
     assert result.country_code == "CN"
@@ -76,9 +74,7 @@ async def test_open_meteo_geocoder_rejects_broad_first_result() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await OpenMeteoGeocodingProvider(client).geocode(
-            LocationSpec("example", "中国北京市西城区中南海")
-        )
+        result = await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("example", "中国北京市西城区中南海"))
 
     assert result.latitude == 39.911389
     assert result.longitude == 116.380556
@@ -135,9 +131,9 @@ async def test_nominatim_normalizes_region_suffix_and_rejects_unrelated_match() 
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        result = await NominatimGeocodingProvider(
-            client, user_agent="weather-briefing-test/1"
-        ).geocode(LocationSpec("beijing", "北京市西城区中南海地区"))
+        result = await NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1").geocode(
+            LocationSpec("beijing", "北京市西城区中南海地区")
+        )
 
     assert result.latitude == 39.911389
     assert result.longitude == 116.380556
@@ -164,9 +160,9 @@ async def test_geocoder_reduces_precision_after_full_address_fails() -> None:
             )
 
     original_name = "中国北京市西城区中南海1号"
-    result = await PrecisionReducingGeocodingProvider(
-        RoadLevelGeocoder()
-    ).geocode(LocationSpec("example", original_name))
+    result = await PrecisionReducingGeocodingProvider(RoadLevelGeocoder()).geocode(
+        LocationSpec("example", original_name)
+    )
 
     assert queries == [original_name, "中国北京市西城区中南海"]
     assert result.name == original_name

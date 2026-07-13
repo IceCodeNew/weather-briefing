@@ -79,11 +79,7 @@ class AQICNProvider:
 
 
 def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
-    observed_at = (
-        snapshot.observed_at.to_iso8601_string()
-        if snapshot.observed_at is not None
-        else "不可用"
-    )
+    observed_at = snapshot.observed_at.to_iso8601_string() if snapshot.observed_at is not None else "不可用"
     concentration = "不可用"
     if snapshot.pm25_concentration is not None and snapshot.pm25_unit:
         concentration = f"{snapshot.pm25_concentration:g} {snapshot.pm25_unit}"

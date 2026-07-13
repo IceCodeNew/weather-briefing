@@ -21,8 +21,6 @@ def test_html_cleaner_removes_page_chrome_without_rewriting_article_text() -> No
 
 
 def test_html_cleaner_decodes_entities_to_visible_text() -> None:
-    cleaned = HTMLContentCleaner().clean(
-        "<p>风力 7&amp;ndash;8 级</p>", ContentCleaningRules()
-    )
+    cleaned = HTMLContentCleaner().clean("<p>风力 7&amp;ndash;8 级</p>", ContentCleaningRules())
 
     assert cleaned == "风力 7&ndash;8 级"

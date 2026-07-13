@@ -90,6 +90,7 @@ def parse_result(
     valid_source_ids: set[str],
 ) -> BriefingResult:
     require_aware_datetime(now, context="Briefing result time")
+
     def conclusions(key: str) -> tuple[Conclusion, ...]:
         values = payload.get(key, [])
         if not isinstance(values, list):

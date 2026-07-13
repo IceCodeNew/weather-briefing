@@ -40,9 +40,7 @@ class TelegramHTMLRenderer:
         if result.active_warnings:
             lines.extend(["<b>当前生效的气象预警</b>", ""])
             for warning in result.active_warnings:
-                links = " ".join(
-                    _html_link(source_urls[source_id]) for source_id in warning.source_ids
-                )
+                links = " ".join(_html_link(source_urls[source_id]) for source_id in warning.source_ids)
                 lines.append(
                     f"• <b>{_html_text(warning.title)}（{_html_text(warning.status)}）</b>："
                     f"{_html_text(warning.detail)} {links}".rstrip()
@@ -82,9 +80,7 @@ class PlainTextRenderer:
             lines.extend(["当前生效的气象预警", ""])
             for warning in result.active_warnings:
                 sources = " ".join(source_urls[item] for item in warning.source_ids)
-                lines.append(
-                    f"- {warning.title}（{warning.status}）：{warning.detail} {sources}".rstrip()
-                )
+                lines.append(f"- {warning.title}（{warning.status}）：{warning.detail} {sources}".rstrip())
             lines.append("")
         lines.extend(_plain_items("天气信息", result.conclusions, source_urls))
         lines.extend(_plain_items("灾害动态", result.disaster_tracking, source_urls))
@@ -106,9 +102,7 @@ def _html_link(url: str) -> str:
     return f'<a href="{escape(url, quote=True)}">来源</a>'
 
 
-def _html_items(
-    title: str, items: tuple[Conclusion, ...], source_urls: dict[str, str]
-) -> list[str]:
+def _html_items(title: str, items: tuple[Conclusion, ...], source_urls: dict[str, str]) -> list[str]:
     if not items:
         return []
     lines = [f"<b>{_html_text(title)}</b>", ""]
@@ -119,9 +113,7 @@ def _html_items(
     return lines
 
 
-def _plain_items(
-    title: str, items: tuple[Conclusion, ...], source_urls: dict[str, str]
-) -> list[str]:
+def _plain_items(title: str, items: tuple[Conclusion, ...], source_urls: dict[str, str]) -> list[str]:
     if not items:
         return []
     lines = [title, ""]
