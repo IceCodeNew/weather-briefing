@@ -1,0 +1,6 @@
+**
+!README.md
+!pyproject.toml
+!uv.lock
+!weather_briefing/
+!weather_briefing/**
