@@ -1,0 +1,18 @@
+{
+  "weather_provider_order": {
+    "mainland_china": [
+      "qweather",
+      "open-meteo"
+    ],
+    "other": [
+      "open-meteo"
+    ]
+  },
+  "qweather_lifestyle_index_types": [
+    "1",
+    "3",
+    "6",
+    "8",
+    "15"
+  ]
+}
