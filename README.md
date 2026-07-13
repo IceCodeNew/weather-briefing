@@ -1,0 +1,84 @@
+# Weather Briefing
+
+有状态的天气信息简报生成器。它以天气 API 为基础，可选读取私密 RSS 补充信息，保留历史上下文和有效预警，通过可替换的 LLM provider 生成带来源引用的增量简报。
+
+## 功能
+
+- 08:00 生成当日预报及穿衣、除湿、运动、口罩建议。
+- 09:00–23:00 每小时生成增量简报，不重复生活建议。
+- 标题匹配配置规则的权威预报文章经 HTML 与页面噪声清洗后完整独立转发，并进入后续预报上下文。
+- 08:00 通过可组合 provider 加入 API 天气预报、AQI、指数标准、PM2.5 原始浓度及生活指数，并用于穿衣、运动和口罩建议。
+- 中国大陆天气默认使用 QWeather、Open-Meteo 的降级顺序，其他地区默认只使用 Open-Meteo；也可通过 `WEATHER_PROVIDERS` 显式指定主要来源和其他备用来源。
+- 支持多个关注地点；只给地名时通过 Open-Meteo Geocoding 解析并缓存坐标与国家信息，已有坐标时不发起地理编码请求。
+- 天气来源缺少空气质量时才使用可选 AQICN；两者都无法提供空气质量时给出明确配置错误。
+- RSS 来源从可选 `rss-sources.json` 加载；没有该文件时小时任务仍由天气 API 正常运行。
+- 普通无变化的小时结果只写入快照记忆，不发送消息；即将降雨、显著变化、预警或灾害动态才提醒。
+- SQLite 持久化文章去重、历史简报、预警状态和任务/源健康状态。
+- 时间点统一使用时区感知的 Pendulum 值；尽量避免不必要的时区转换，绝对禁止在代码中处理任何不含明确时区信息的时间。
+- RSS 请求在 3–5 秒随机退避后重试；连续任务失败或源长期无更新时发送运维告警。
+- 所有结论要求引用本轮输入中的来源链接。
+- 所有日报与小时简报都由 LLM 生成平台无关的结构化结果，由 Telegram 等投递 provider 各自的模板渲染并输出。
+- LLM、正文 cleaner、天气/空气质量 provider 与投递 provider 均通过接口解耦。
+
+完整需求与设计见 [docs/requirements.md](docs/requirements.md) 和 [docs/design.md](docs/design.md)。
+
+## 快速开始
+
+支持 Python 3.11–3.14；CI 覆盖全部受支持版本，并以 Python 3.14 作为首选开发与测试版本。Distroless Debian 13 镜像使用其系统 Python 3.13。
+
+```bash
+uv lock --check
+uv sync --frozen
+cp env.example .env
+cp locations.example.json locations.json
+uv run --frozen weather-briefing run hourly
+```
+
+`env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id` 和 `name`，`latitude` 与 `longitude` 可同时删除，此时程序用 Open-Meteo Geocoding 解析并把结果缓存到 `state/`。
+
+`LLM_PROVIDER=deepseek` 使用 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和可选的 `DEEPSEEK_BASE_URL`；DeepSeek provider 已预置官方 Base URL。`LLM_PROVIDER=openai-compatible` 使用 `LLM_API_KEY`、`LLM_MODEL` 和 `LLM_BASE_URL`。两套配置互不回退。
+
+定位层从地名解析国家或行政区代码。Open-Meteo 负责城市/邮编查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；结果会持久缓存。只有坐标时使用中国大陆服务范围四至宽松包围盒作快速可能性判断。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
+
+RSS 为可选补充数据。需要使用时复制 `rss-sources.example.json` 为被 Git 忽略的 `rss-sources.json` 并填写真实来源；不创建该文件即可只使用天气 API。
+
+QWeather 使用 Ed25519 JWT 认证。将控制台中的项目 ID、JWT 凭据 ID、Base64 编码的私钥 PEM 和专属 API Host 分别写入 `QWEATHER_PROJECT_ID`、`QWEATHER_CREDENTIAL_ID`、`QWEATHER_PRIVATE_KEY` 与 `QWEATHER_API_HOST`。应用每次请求前解码私钥并签发短期 Token，不使用长期 API KEY。
+
+Telegram 投递 provider 组合平台专用 HTML renderer 与 Bot API publisher，负责渲染粗体章节、预警和可点击来源链接并完成投递。日常简报限制为一条不超过 Telegram 4096 可见字符上限的消息；权威预报清洗正文单独完整发送。需要回放历史数据进行隔离测试时，可覆盖业务时间和状态数据库：
+
+```bash
+BRIEFING_STATE_PATH=state/replay.sqlite3 weather-briefing run daily --at 2026-07-11T08:00:00+08:00
+```
+
+## 调度
+
+项目提供单一 OCI 镜像，不需要 Docker Compose。构建并运行常驻调度器：
+
+```bash
+cp env.example .env
+cp locations.example.json locations.json
+docker buildx build --load -t weather-briefing .
+docker volume create weather-briefing-state
+docker run -d --name weather-briefing --restart unless-stopped \
+  --env-file .env \
+  --mount type=bind,src="$PWD/locations.json",dst=/app/locations.json,readonly \
+  --mount source=weather-briefing-state,target=/app/state \
+  weather-briefing
+```
+
+若启用 RSS，再把私密 `rss-sources.json` 以只读方式挂载到容器内配置的同名路径。配置文件不会进入镜像构建上下文。
+
+也可在持久主机上使用 cron：
+
+```cron
+0 8 * * * cd /srv/weather-briefing && .venv/bin/weather-briefing run daily
+0 9-23 * * * cd /srv/weather-briefing && .venv/bin/weather-briefing run hourly
+```
+
+## 安全
+
+- 不要把 `.env`、数据库、生成简报或真实配置提交到 Git。
+- CI 使用 Gitleaks 扫描凭据，并运行自定义隐私哨兵测试。
+- Telegram token 与 chat ID 只从运行环境读取；测试可选择 stdout publisher。
+
+地点解析使用 [Open-Meteo Geocoding](https://open-meteo.com/en/docs/geocoding-api)；详细地名备用数据 © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)，通过 Nominatim 获取。公共 Nominatim 仅在本地缓存未命中时调用，并遵守其使用政策。

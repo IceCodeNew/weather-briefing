@@ -1,0 +1,22 @@
+[
+  {
+    "id": "authority-weather",
+    "name": "Authority weather feed",
+    "url": "https://private.example.invalid/feed",
+    "location_ids": [
+      "zhongnanhai"
+    ],
+    "verbatim_title_patterns": [
+      "verbatim bulletin title"
+    ],
+    "forecast_title_patterns": [
+      "forecast title"
+    ],
+    "content_remove_selectors": [
+      ".non-article-modal"
+    ],
+    "content_remove_patterns": [
+      "^publisher metadata$"
+    ]
+  }
+]
