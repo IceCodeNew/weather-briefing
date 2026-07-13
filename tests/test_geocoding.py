@@ -9,6 +9,7 @@ from weather_briefing.geocoding import (
     GeocodingError,
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
+    PrecisionReducingGeocodingProvider,
     possibly_mainland_china,
 )
 from weather_briefing.models import LocationSpec, ResolvedLocation
@@ -44,7 +45,7 @@ async def test_open_meteo_geocoder_resolves_coordinates_and_country() -> None:
     assert result.is_mainland_china is True
 
 
-async def test_open_meteo_geocoder_selects_the_matching_result() -> None:
+async def test_open_meteo_geocoder_rejects_broad_first_result() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.params["count"] == "5"
         return httpx.Response(
@@ -81,6 +82,7 @@ async def test_open_meteo_geocoder_selects_the_matching_result() -> None:
 
     assert result.latitude == 39.911389
     assert result.longitude == 116.380556
+    assert result.matched_name == "中南海"
 
 
 async def test_nominatim_fallback_resolves_detailed_place_name() -> None:
@@ -141,6 +143,37 @@ async def test_nominatim_normalizes_region_suffix_and_rejects_unrelated_match() 
     assert result.longitude == 116.380556
 
 
+async def test_geocoder_reduces_precision_after_full_address_fails() -> None:
+    queries: list[str] = []
+
+    class RoadLevelGeocoder:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            queries.append(location.name)
+            if location.name.endswith("1号"):
+                raise GeocodingError("no building match")
+            return ResolvedLocation(
+                location.id,
+                location.name,
+                39.911389,
+                116.380556,
+                "CN",
+                "北京市",
+                "Asia/Shanghai",
+                True,
+                matched_name="中南海, 西城区, 北京市, 中国",
+            )
+
+    original_name = "中国北京市西城区中南海1号"
+    result = await PrecisionReducingGeocodingProvider(
+        RoadLevelGeocoder()
+    ).geocode(LocationSpec("example", original_name))
+
+    assert queries == [original_name, "中国北京市西城区中南海"]
+    assert result.name == original_name
+    assert result.matched_name == "中南海, 西城区, 北京市, 中国"
+    assert result.precision_reduced is True
+
+
 async def test_resolver_caches_name_lookup(tmp_path: Path) -> None:
     class RecordingGeocoder:
         calls = 0
@@ -162,10 +195,12 @@ async def test_resolver_caches_name_lookup(tmp_path: Path) -> None:
     resolver = CachedLocationResolver(geocoder, tmp_path / "geocoding.json")
     location = LocationSpec("beijing", "北京市西城区中南海")
 
-    first = await resolver.resolve(location)
-    second = await resolver.resolve(location)
+    first = await resolver.resolve_with_metadata(location)
+    second = await resolver.resolve_with_metadata(location)
 
-    assert first == second
+    assert first.location == second.location
+    assert first.from_cache is False
+    assert second.from_cache is True
     assert geocoder.calls == 1
 
 
@@ -179,7 +214,10 @@ async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path) -> None:
         '{"example:Example":{"id":"example","name":"Example"}}',
         encoding="utf-8",
     )
-    resolver = CachedLocationResolver(NeverCalledGeocoder(), cache_path)
+    resolver = CachedLocationResolver(
+        NeverCalledGeocoder(),
+        cache_path,
+    )
 
     with pytest.raises(GeocodingError, match="Invalid cached geocoding record"):
         await resolver.resolve(LocationSpec("example", "Example"))
