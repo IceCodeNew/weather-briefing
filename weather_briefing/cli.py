@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -11,6 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
 
+from . import __version__
 from .air_quality import (
     AirQualityProvider,
     AQICNProvider,
@@ -47,25 +49,35 @@ from .weather_context import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a stateful weather briefing")
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("kind", choices=("daily", "hourly"))
     run_parser.add_argument("--enforce-window", action="store_true")
     run_parser.add_argument("--at", help="Override run time with an ISO-8601 timestamp including UTC offset")
-    subparsers.add_parser("daemon")
+    daemon_parser = subparsers.add_parser("daemon")
+    daemon_parser.add_argument("--run-now", action="store_true", help="Run a briefing immediately before scheduling")
     return parser
 
 
-def _in_schedule(kind: str, now: pendulum.DateTime) -> bool:
+def _in_schedule(kind: str, now: pendulum.DateTime, settings: Settings) -> bool:
     if kind == "daily":
-        return now.hour == 8
-    return 9 <= now.hour <= 23
+        return now.hour == settings.greeting_hour
+    return _hour_in_cron(now.hour, settings.hourly_cron)
+
+
+def _hour_in_cron(hour: int, cron_hour: str) -> bool:
+    if not 0 <= hour <= 23:
+        return False
+    current_hour = datetime(2000, 1, 1, hour, tzinfo=UTC)
+    trigger = CronTrigger(hour=cron_hour, timezone=UTC)
+    return trigger.get_next_fire_time(None, current_hour) == current_hour
 
 
 async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
     settings = Settings.from_env()
     now = _parse_run_time(at, settings.timezone)
-    if enforce_window and not _in_schedule(kind, now):
+    if enforce_window and not _in_schedule(kind, now, settings):
         print(f"Skipping delayed {kind} run outside configured local-time window")
         return
     async with httpx.AsyncClient(
@@ -295,18 +307,28 @@ def _parse_run_time(
     return parse_aware_datetime(value, context="Run time").in_timezone(timezone)
 
 
-async def daemon() -> None:
+async def daemon(run_now: bool = False) -> None:
     settings = Settings.from_env()
+    if run_now:
+        await run("hourly", False)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     scheduler.add_job(
         run,
-        CronTrigger(hour=8, minute=0, timezone=settings.timezone),
+        CronTrigger(
+            hour=settings.greeting_hour,
+            minute=settings.greeting_minute,
+            timezone=settings.timezone,
+        ),
         args=("daily", False),
         max_instances=1,
     )
     scheduler.add_job(
         run,
-        CronTrigger(hour="9-23", minute=0, timezone=settings.timezone),
+        CronTrigger(
+            hour=settings.hourly_cron,
+            minute=0,
+            timezone=settings.timezone,
+        ),
         args=("hourly", False),
         max_instances=1,
     )
@@ -318,7 +340,7 @@ def main() -> None:
     load_dotenv(override=False)
     args = build_parser().parse_args()
     if args.command == "daemon":
-        asyncio.run(daemon())
+        asyncio.run(daemon(args.run_now))
     else:
         asyncio.run(run(args.kind, args.enforce_window, args.at))
 

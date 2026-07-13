@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pendulum
+from apscheduler.triggers.cron import CronTrigger
 
 from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation
 from .reference_data import reference_string_tuple
@@ -41,6 +42,24 @@ def _bounded_positive_integer(name: str, default: int, maximum: int) -> int:
     value = _positive_integer(name, default)
     if value > maximum:
         raise ConfigurationError(f"{name} cannot exceed {maximum}")
+    return value
+
+
+def _bounded_integer(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = _integer(name, default)
+    if not minimum <= value <= maximum:
+        raise ConfigurationError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def _cron_hour(name: str, default: str) -> str:
+    value = os.getenv(name, default).strip()
+    if not value:
+        raise ConfigurationError(f"{name} must not be empty")
+    try:
+        CronTrigger(hour=value)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be a valid APScheduler hour expression") from exc
     return value
 
 
@@ -164,6 +183,9 @@ class Settings:
     warning_retention_hours: int
     history_hours: int
     briefing_max_characters: int
+    greeting_hour: int
+    greeting_minute: int
+    hourly_cron: str
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -202,6 +224,9 @@ class Settings:
         if retry_min < 0 or retry_max < retry_min:
             raise ConfigurationError("RSS retry delay range is invalid")
         briefing_max_characters = _positive_integer("BRIEFING_MAX_CHARACTERS", 3500)
+        daily_cron_hour = _bounded_integer("GREETING_HOUR", 8, 0, 23)
+        daily_cron_minute = _bounded_integer("GREETING_MINUTE", 0, 0, 59)
+        hourly_cron = _cron_hour("BRIEFING_CRON", "9-23")
         llm_provider = os.getenv("LLM_PROVIDER", "deepseek")
         if llm_provider == "deepseek":
             api_key = _required("DEEPSEEK_API_KEY")
@@ -280,4 +305,7 @@ class Settings:
             warning_retention_hours=_positive_integer("WARNING_RETENTION_HOURS", 12),
             history_hours=_positive_integer("HISTORY_HOURS", 48),
             briefing_max_characters=briefing_max_characters,
+            greeting_hour=daily_cron_hour,
+            greeting_minute=daily_cron_minute,
+            hourly_cron=hourly_cron,
         )
