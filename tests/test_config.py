@@ -10,7 +10,7 @@ def _required_environment(monkeypatch) -> None:
     values = {
         "DEEPSEEK_API_KEY": "test-key",
         "DEEPSEEK_MODEL": "test-model",
-        "BRIEFING_LOCATIONS_FILE": str(Path(__file__).parent / "fixtures" / "locations.json"),
+        "BRIEFING_LOCATIONS_FILE": str(Path(__file__).parents[1] / "locations.example.json"),
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)

@@ -18,3 +18,11 @@ def test_private_runtime_files_are_ignored() -> None:
         if line.strip() and not line.startswith("#")
     }
     assert patterns >= REQUIRED_IGNORE_PATTERNS
+
+
+def test_visible_environment_example_is_tracked_and_not_ignored() -> None:
+    root = Path(__file__).parents[1]
+
+    assert (root / "env.example").is_file()
+    assert (root / "locations.example.json").is_file()
+    assert not (root / ".env.example").exists()
