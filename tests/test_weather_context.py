@@ -343,3 +343,211 @@ async def test_aqicn_receives_explicit_offset_when_weather_time_has_no_timezone_
     provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), AirProvider())
 
     assert (await provider.fetch(1, 2)).air_quality == air
+
+
+def test_qweather_jwt_rejects_invalid_lifetime() -> None:
+    with pytest.raises(ValueError, match="between 1 and 86400"):
+        QWeatherJWTAuthenticator(
+            project_id="p",
+            credential_id="c",
+            private_key_base64=base64.b64encode(b"key").decode(),
+            lifetime_seconds=0,
+        )
+
+
+def test_qweather_jwt_rejects_invalid_base64_key() -> None:
+    with pytest.raises(ValueError, match="Base64-encoded"):
+        QWeatherJWTAuthenticator(
+            project_id="p",
+            credential_id="c",
+            private_key_base64="!!!invalid-base64!!!",
+        )
+
+
+async def test_qweather_rejects_non_success_weather_status() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(200, json={"code": "400"})
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WeatherContextError, match="non-success weather status"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+async def test_qweather_rejects_empty_daily_forecast() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={"code": "200", "updateTime": "2026-07-13T08:00", "daily": []},
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WeatherContextError, match="no daily forecast"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+async def test_qweather_air_quality_failure_is_silent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is None
+
+
+async def test_open_meteo_rejects_empty_forecast() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "timezone": "UTC",
+                    "current": {"time": "2026-07-13T08:00"},
+                    "daily": {"time": [], "weather_code": []},
+                },
+            )
+        )
+    ) as client:
+        with pytest.raises(WeatherContextError, match="no daily forecast"):
+            await OpenMeteoProvider(client).fetch(1, 2)
+
+
+async def test_open_meteo_air_quality_failure_is_silent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(
+                200,
+                json={
+                    "timezone": "UTC",
+                    "current": {"time": "2026-07-13T08:00"},
+                    "daily": {
+                        "time": ["2026-07-13"],
+                        "weather_code": [1],
+                        "temperature_2m_max": [30],
+                        "temperature_2m_min": [20],
+                        "apparent_temperature_max": [31],
+                        "apparent_temperature_min": [21],
+                        "precipitation_sum": [0],
+                        "precipitation_probability_max": [10],
+                        "wind_speed_10m_max": [10],
+                        "wind_gusts_10m_max": [15],
+                        "wind_direction_10m_dominant": [90],
+                        "uv_index_max": [5],
+                    },
+                },
+            )
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(1, 2)
+
+    assert snapshot.air_quality is None
+
+
+async def test_fallback_weather_provider_requires_at_least_one_provider() -> None:
+    from weather_briefing.weather_context import FallbackWeatherContextProvider
+
+    with pytest.raises(ValueError, match="At least one"):
+        FallbackWeatherContextProvider()
+
+
+async def test_supplement_when_air_quality_present_skips_fallback() -> None:
+    air = AirQualitySnapshot(
+        source_id="air-quality:test",
+        source_name="Test",
+        source_url="https://example.invalid",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        aqi=42,
+        aqi_display="42",
+        aqi_standard="US EPA",
+        pm25_aqi=None,
+        pm25_concentration=None,
+        pm25_unit=None,
+        category="good",
+        health_guidance="ok",
+    )
+    weather = WeatherContextSnapshot(
+        source_id="weather:test",
+        source_name="Weather",
+        source_url="https://example.invalid/weather",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        weather_forecast=("forecast",),
+        air_quality=air,
+    )
+
+    class WeatherProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return weather
+
+    class FailingAirProvider:
+        async def fetch(self, latitude: float, longitude: float, timezone: str) -> AirQualitySnapshot:
+            raise AssertionError("should not be called")
+
+    provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), FailingAirProvider())
+
+    assert (await provider.fetch(1, 2)).air_quality == air
+
+
+async def test_aqicn_fallback_raises_weather_context_error_on_air_quality_error() -> None:
+    from weather_briefing.air_quality import AirQualityError
+
+    weather = WeatherContextSnapshot(
+        source_id="weather:test",
+        source_name="Weather",
+        source_url="https://example.invalid/weather",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        weather_forecast=("forecast",),
+    )
+
+    class WeatherProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return weather
+
+    class FailingAirProvider:
+        async def fetch(self, latitude: float, longitude: float, timezone: str) -> AirQualitySnapshot:
+            raise AirQualityError("aqicn failed")
+
+    provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), FailingAirProvider())
+
+    with pytest.raises(WeatherContextError, match="AQICN fallback failed"):
+        await provider.fetch(1, 2)

@@ -99,3 +99,39 @@ def test_utc_timestamps_have_stable_lexical_order_with_microseconds(tmp_path: Pa
         state.save_briefing("hourly", "first", first)
 
         assert state.recent_briefings(first.add(hours=1), 2) == ("first", "second")
+
+
+def test_stale_source_skips_unknown_source_id(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        assert state.stale_sources(("unknown",), now, 24) == []
+
+
+def test_mark_stale_sources_alerted_with_empty_ids_is_noop(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.mark_stale_sources_alerted((), now)
+
+
+def test_record_failure_increments_consecutive_count(tmp_path: Path) -> None:
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        assert state.record_failure() == 1
+        assert state.record_failure() == 2
+        assert state.record_failure() == 3
+
+
+def test_record_success_resets_failure_count(tmp_path: Path) -> None:
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.record_failure()
+        state.record_failure()
+        state.record_success()
+        assert state.record_failure() == 1
+
+
+def test_parse_time_rejects_invalid_format() -> None:
+    import pytest
+
+    from weather_briefing.state import _parse_time
+
+    with pytest.raises(ValueError, match="fixed-width UTC format"):
+        _parse_time("invalid")

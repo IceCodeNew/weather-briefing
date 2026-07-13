@@ -4,7 +4,14 @@ import httpx
 import pytest
 
 from weather_briefing.models import RenderedMessage
-from weather_briefing.publishers import DeliveryError, DeliveryProvider, TelegramPublisher, _split_message
+from weather_briefing.publishers import (
+    DeliveryError,
+    DeliveryProvider,
+    StdoutPublisher,
+    TelegramPublisher,
+    _safe_html_boundary,
+    _split_message,
+)
 from weather_briefing.render import PlainTextRenderer
 
 
@@ -61,3 +68,25 @@ async def test_telegram_rejects_oversized_single_message_before_delivery() -> No
         publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
         with pytest.raises(DeliveryError, match="exceeds"):
             await publisher.publish(RenderedMessage("<b>short markup</b>", 4097), single_message=True)
+
+
+async def test_stdout_publisher_outputs_message_body(capsys) -> None:
+    await StdoutPublisher().publish(RenderedMessage("test body", 9))
+
+    assert capsys.readouterr().out.strip() == "test body"
+
+
+def test_safe_html_boundary_avoids_splitting_inside_html_entity() -> None:
+    assert _safe_html_boundary("text with &amp more text", 16) == 10
+
+
+def test_safe_html_boundary_avoids_splitting_inside_html_tag() -> None:
+    assert _safe_html_boundary("text <b>bold</b>", 7) == 5
+
+
+def test_safe_html_boundary_returns_limit_when_no_boundary_issue() -> None:
+    assert _safe_html_boundary("plain text without html", 10) == 10
+
+
+def test_safe_html_boundary_returns_limit_when_boundary_is_zero() -> None:
+    assert _safe_html_boundary("<tag", 1) == 1

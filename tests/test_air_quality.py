@@ -1,6 +1,7 @@
 import httpx
+import pytest
 
-from weather_briefing.air_quality import AQICNProvider, air_quality_to_document
+from weather_briefing.air_quality import AirQualityError, AQICNProvider, air_quality_to_document
 
 
 async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> None:
@@ -98,3 +99,37 @@ async def test_aqicn_response_timezone_overrides_queried_location_timezone() -> 
 
     assert snapshot.observed_at is not None
     assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T09:00:00+09:00"
+
+
+async def test_aqicn_rejects_non_ok_status() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"status": "error", "data": "..."}))
+    ) as client:
+        with pytest.raises(AirQualityError, match="non-success status"):
+            await AQICNProvider(
+                client,
+                token="token",
+                base_url="https://api.example.invalid",
+            ).fetch(0, 0, "UTC")
+
+
+async def test_aqicn_rejects_http_error() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
+        with pytest.raises(AirQualityError, match="AQICN request"):
+            await AQICNProvider(
+                client,
+                token="token",
+                base_url="https://api.example.invalid",
+            ).fetch(0, 0, "UTC")
+
+
+async def test_aqicn_rejects_missing_data_key() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"status": "ok"}))
+    ) as client:
+        with pytest.raises(AirQualityError, match="AQICN request"):
+            await AQICNProvider(
+                client,
+                token="token",
+                base_url="https://api.example.invalid",
+            ).fetch(0, 0, "UTC")

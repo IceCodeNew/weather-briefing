@@ -347,3 +347,201 @@ async def test_failure_alert_is_sent_only_when_threshold_is_first_reached(
 
     assert len(publisher.messages) == 1
     assert "连续失败 3 次" in publisher.messages[0][0].body
+
+
+async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
+    verbatim = Article(
+        id="verbatim-id",
+        source_id="feed",
+        source_name="Feed",
+        title="Forecast bulletin",
+        url="https://example.invalid/v",
+        published_at=now,
+        content="Raw forecast",
+        is_verbatim=True,
+    )
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        context_sources=(),
+        task_failure_threshold=3,
+        rss_stale_hours=24,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "v.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, StaticRSSSource(verbatim)),
+            cast(Any, EmptyContextSource()),
+            RecordingLLM(),
+            delivery,
+            delivery,
+        )
+        await service.run("daily", now)
+
+        assert len(publisher.messages) == 2
+        assert publisher.messages[1][0].body == "Forecast bulletin\n\nRaw forecast"
+        assert publisher.messages[1][1] is False
+
+
+async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(),
+        context_sources=(),
+        task_failure_threshold=3,
+        rss_stale_hours=24,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    llm = RecordingLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "empty.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, EmptyRSSSource()),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            delivery,
+        )
+        result = await service.run("hourly", now)
+
+    assert result is None
+
+
+async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    yesterday = now.subtract(days=1)
+    article = Article(
+        id="article-id",
+        source_id="feed",
+        source_name="Feed",
+        title="Old article",
+        url="https://example.invalid/old",
+        published_at=yesterday,
+        content="content",
+    )
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        context_sources=(),
+        task_failure_threshold=3,
+        rss_stale_hours=1,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    llm = RecordingLLM()
+    ops_publisher = RecordingPublisher()
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), ops_publisher)
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "stale.sqlite3") as state:
+        state.record_source_check("feed", yesterday, yesterday)
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, StaticRSSSource(article)),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            ops_delivery,
+        )
+        await service.run("hourly", now)
+
+    assert len(ops_publisher.messages) >= 1
+    assert "长时间无更新" in ops_publisher.messages[0][0].body
+
+
+class FailingOnceLLM:
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+        self.attempts += 1
+        if self.attempts == 1:
+            return {
+                "headline": "Briefing",
+                "overview": "Overview",
+                "conclusions": [{"text": "Claim", "source_ids": ["invented"]}],
+                "active_warnings": [],
+                "resolved_warning_ids": [],
+                "advice": [],
+                "disaster_tracking": [],
+            }
+        return {
+            "headline": "Briefing",
+            "overview": "Overview",
+            "conclusions": [],
+            "active_warnings": [],
+            "resolved_warning_ids": [],
+            "advice": [],
+            "disaster_tracking": [],
+        }
+
+
+async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    article = Article(
+        id="article-id",
+        source_id="feed",
+        source_name="Feed",
+        title="Article",
+        url="https://example.invalid/a",
+        published_at=now,
+        content="content",
+    )
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        context_sources=(),
+        task_failure_threshold=3,
+        rss_stale_hours=24,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=2,
+    )
+    llm = FailingOnceLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "retry.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, StaticRSSSource(article)),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            delivery,
+        )
+        body = await service.run("hourly", now)
+
+    assert body is not None
+    assert llm.attempts == 2

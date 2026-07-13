@@ -238,3 +238,70 @@ async def test_coordinates_skip_geocoding_and_use_extreme_bounds(
     assert possibly_mainland_china(latitude["maximum"], longitude["maximum"]) is True
     assert possibly_mainland_china(latitude["maximum"] + 0.01, longitude["maximum"]) is False
     assert possibly_mainland_china(latitude["minimum"] - 0.01, longitude["minimum"]) is False
+
+
+async def test_nominatim_requires_user_agent() -> None:
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ValueError, match="identifying User-Agent"):
+            NominatimGeocodingProvider(client, user_agent="  ")
+
+
+async def test_fallback_geocoding_requires_at_least_one_provider() -> None:
+    with pytest.raises(ValueError, match="At least one"):
+        FallbackGeocodingProvider()
+
+
+async def test_fallback_geocoding_raises_when_all_providers_fail() -> None:
+    class FailingProvider:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            raise GeocodingError("first failure")
+
+    with pytest.raises(GeocodingError, match="No geocoder could resolve"):
+        await FallbackGeocodingProvider(FailingProvider()).geocode(LocationSpec("test", "Test"))
+
+
+async def test_cached_resolver_handles_broken_cache_file(tmp_path: Path) -> None:
+    cache_path = tmp_path / "geocoding.json"
+    cache_path.write_text("not-json", encoding="utf-8")
+
+    class FailingProvider:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            raise GeocodingError("test failure")
+
+    resolver = CachedLocationResolver(
+        FallbackGeocodingProvider(FailingProvider()),
+        cache_path,
+    )
+
+    with pytest.raises(GeocodingError, match="readable JSON"):
+        await resolver.resolve(LocationSpec("test", "Test"))
+
+
+async def test_cached_resolver_rejects_non_dict_cache_root(tmp_path: Path) -> None:
+    cache_path = tmp_path / "geocoding.json"
+    cache_path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    class FailingProvider:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            raise GeocodingError("test failure")
+
+    resolver = CachedLocationResolver(
+        FallbackGeocodingProvider(FailingProvider()),
+        cache_path,
+    )
+
+    with pytest.raises(GeocodingError, match="object"):
+        await resolver.resolve(LocationSpec("test", "Test"))
+
+
+async def test_nominatim_handles_invalid_response_structure() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json=[{"lat": "x", "lon": "y", "display_name": "test", "address": {}}],
+            )
+        )
+    ) as client:
+        with pytest.raises(GeocodingError, match="response validation failed"):
+            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "test"))

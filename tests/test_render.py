@@ -1,6 +1,6 @@
 import pendulum
 
-from weather_briefing.models import Article, BriefingResult, Conclusion
+from weather_briefing.models import Article, BriefingResult, Conclusion, Warning
 from weather_briefing.render import PlainTextRenderer, TelegramHTMLRenderer
 
 
@@ -36,3 +36,69 @@ def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
 
     assert rendered.body == "Daily\n\nOverview"
     assert "<b>" not in rendered.body
+
+
+def test_telegram_html_renders_active_warnings_section() -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article("source", "feed", "Feed", "Title", "https://example.invalid/a", now, "Body")
+    warning = Warning("w1", "暴雨", "active", "暴雨预警", ("source",), now)
+    result = BriefingResult(
+        "Daily",
+        "Overview",
+        (),
+        active_warnings=(warning,),
+    )
+
+    rendered = TelegramHTMLRenderer().render_briefing(result, (article,), ())
+
+    assert "<b>当前生效的气象预警</b>" in rendered.body
+    assert "暴雨" in rendered.body
+    assert '<a href="https://example.invalid/a">来源</a>' in rendered.body
+
+
+def test_plain_text_renders_active_warnings_section() -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article("source", "feed", "Feed", "Title", "https://example.invalid/a", now, "Body")
+    warning = Warning("w1", "暴雨", "active", "暴雨预警", ("source",), now)
+    result = BriefingResult(
+        "Daily",
+        "Overview",
+        (),
+        active_warnings=(warning,),
+    )
+
+    rendered = PlainTextRenderer().render_briefing(result, (article,), ())
+
+    assert "当前生效的气象预警" in rendered.body
+    assert "暴雨" in rendered.body
+    assert "https://example.invalid/a" in rendered.body
+
+
+def test_telegram_html_render_verbatim() -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article("source", "feed", "Feed", "Title & <details>", "https://example.invalid/a", now, "Body content")
+
+    rendered = TelegramHTMLRenderer().render_verbatim(article)
+
+    assert rendered.body == "<b>Title &amp; &lt;details&gt;</b>\n\nBody content"
+
+
+def test_telegram_html_render_alert() -> None:
+    rendered = TelegramHTMLRenderer().render_alert("Alert Title", "Alert <Body>")
+
+    assert rendered.body == "<b>Alert Title</b>\n\nAlert &lt;Body&gt;"
+
+
+def test_plain_text_render_verbatim() -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article("source", "feed", "Feed", "Title", "https://example.invalid/a", now, "Body content")
+
+    rendered = PlainTextRenderer().render_verbatim(article)
+
+    assert rendered.body == "Title\n\nBody content"
+
+
+def test_plain_text_render_alert() -> None:
+    rendered = PlainTextRenderer().render_alert("Alert Title", "Alert Body")
+
+    assert rendered.body == "Alert Title\n\nAlert Body"
