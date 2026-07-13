@@ -39,6 +39,8 @@ uv run --frozen weather-briefing run hourly
 
 `LLM_PROVIDER=deepseek` 使用 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和可选的 `DEEPSEEK_BASE_URL`；DeepSeek provider 已预置官方 Base URL。`LLM_PROVIDER=openai-compatible` 使用 `LLM_API_KEY`、`LLM_MODEL` 和 `LLM_BASE_URL`。两套配置互不回退。
 
+应用将带时间、级别和 logger 名称的运行日志写入标准错误；设置 `DEBUG=true` 可输出 RSS 获取和 LLM 重试等诊断信息。
+
 定位层从地名解析国家或行政区代码。Open-Meteo 负责城市/邮编查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；结果会持久缓存。只有坐标时使用中国大陆服务范围四至宽松包围盒作快速可能性判断。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
 
 RSS 为可选补充数据。需要使用时复制 `rss-sources.example.json` 为被 Git 忽略的 `rss-sources.json` 并填写真实来源；不创建该文件即可只使用天气 API。

@@ -342,8 +342,9 @@ async def test_failure_alert_is_sent_only_when_threshold_is_first_reached(
             delivery,
         )
         for attempt in range(4):
-            with pytest.raises(RuntimeError, match="feed unavailable"):
+            with pytest.raises(RuntimeError, match="feed unavailable") as error:
                 await service.run("hourly", now.add(hours=attempt))
+            assert error.value.__notes__ == [f"Briefing run failed after {attempt + 1} consecutive failure(s)"]
 
     assert len(publisher.messages) == 1
     assert "连续失败 3 次" in publisher.messages[0][0].body

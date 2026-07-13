@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,12 +76,38 @@ def _hour_in_cron(hour: int, cron_hour: str) -> bool:
     return trigger.get_next_fire_time(None, current_hour) == current_hour
 
 
+_LOGGER = logging.getLogger("weather_briefing")
+
+
+def _configure_logging(*, debug: bool) -> None:
+    level = logging.DEBUG if debug else logging.INFO
+    _fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    if not _LOGGER.handlers:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(_fmt)
+        _LOGGER.addHandler(handler)
+    _LOGGER.setLevel(level)
+    _LOGGER.propagate = False
+    if not logging.root.handlers:
+        root_handler = logging.StreamHandler(sys.stderr)
+        root_handler.setFormatter(_fmt)
+        logging.root.addHandler(root_handler)
+    logging.root.setLevel(level)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
 async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
     settings = Settings.from_env()
+    _configure_logging(debug=settings.debug)
     now = _parse_run_time(at, settings.timezone)
     if enforce_window and not _in_schedule(kind, now, settings):
-        print(f"Skipping delayed {kind} run outside configured local-time window")
+        _LOGGER.info("Skipping delayed %s run outside configured local-time window", kind)
         return
+    _LOGGER.info("Starting %s briefing run at %s", kind, now.to_iso8601_string())
     async with httpx.AsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True) as client:
         delivery = _delivery_provider(settings, client)
         llm_provider = _llm_provider(settings, client)
@@ -100,6 +128,7 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
             ),
             settings.geocoding_cache_path,
         )
+        _LOGGER.info("Resolving %d location(s)", len(settings.locations))
         resolutions = [await resolver.resolve_with_metadata(location) for location in settings.locations]
         for resolution in resolutions:
             location = resolution.location
@@ -110,6 +139,7 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
                 )
         locations = tuple(resolution.location for resolution in resolutions)
         for location in locations:
+            _LOGGER.info("Processing location %s (%s)", location.id, location.name)
             with SQLiteStateStore(_location_state_path(settings.state_path, location, len(locations))) as state:
                 service = BriefingService(
                     settings,
@@ -127,7 +157,11 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
                     delivery,
                     _weather_context_provider(settings, client, location),
                 )
-                await service.run(kind, now)
+                body = await service.run(kind, now)
+                if body is not None:
+                    _LOGGER.info("Location %s %s briefing published (%d characters)", location.id, kind, len(body))
+                else:
+                    _LOGGER.info("Location %s %s briefing skipped (no content)", location.id, kind)
 
 
 def _llm_provider(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
@@ -284,7 +318,10 @@ def _parse_run_time(value: str | None, timezone: pendulum.Timezone) -> pendulum.
 
 async def daemon(run_now: bool = False) -> None:
     settings = Settings.from_env()
+    _configure_logging(debug=settings.debug)
+    _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
     if run_now:
+        _LOGGER.info("Running initial briefing")
         await run("hourly", False)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     scheduler.add_job(
@@ -314,10 +351,15 @@ async def daemon(run_now: bool = False) -> None:
 def main() -> None:
     load_dotenv(override=False)
     args = build_parser().parse_args()
-    if args.command == "daemon":
-        asyncio.run(daemon(args.run_now))
-    else:
-        asyncio.run(run(args.kind, args.enforce_window, args.at))
+    _configure_logging(debug=False)
+    try:
+        if args.command == "daemon":
+            asyncio.run(daemon(args.run_now))
+        else:
+            asyncio.run(run(args.kind, args.enforce_window, args.at))
+    except Exception:
+        _LOGGER.exception("weather-briefing terminated with an error")
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
