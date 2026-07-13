@@ -3,7 +3,11 @@ from pathlib import Path
 import pendulum
 import pytest
 
-from weather_briefing.cli import _location_state_path, _parse_run_time
+from weather_briefing.cli import (
+    _location_state_path,
+    _parse_run_time,
+    _precision_reduction_notice,
+)
 from weather_briefing.models import ResolvedLocation
 
 
@@ -36,3 +40,26 @@ def test_multiple_locations_receive_isolated_state_paths() -> None:
 
     assert _location_state_path(Path("state/weather.sqlite3"), location, 1) == Path("state/weather.sqlite3")
     assert _location_state_path(Path("state/weather.sqlite3"), location, 2) == Path("state/weather-example.sqlite3")
+
+
+def test_precision_reduction_notice_contains_match_coordinates_and_action() -> None:
+    location = ResolvedLocation(
+        "example",
+        "北京市西城区中南海1号",
+        39.911389,
+        116.380556,
+        "CN",
+        "北京市",
+        "Asia/Shanghai",
+        True,
+        matched_name="中南海, 西城区, 北京市, 中国",
+        precision_reduced=True,
+    )
+
+    notice = _precision_reduction_notice(location, Path("locations.json"))
+
+    assert "中南海, 西城区, 北京市, 中国" in notice
+    assert "39.9113890" in notice
+    assert "116.3805560" in notice
+    assert "locations.json" in notice
+    assert "确认" in notice

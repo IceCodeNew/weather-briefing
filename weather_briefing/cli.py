@@ -21,6 +21,7 @@ from .geocoding import (
     FallbackGeocodingProvider,
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
+    PrecisionReducingGeocodingProvider,
 )
 from .llm import (
     DeepSeekProvider,
@@ -73,24 +74,34 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
         delivery = _delivery_provider(settings, client)
         llm_provider = _llm_provider(settings, client)
         resolver = CachedLocationResolver(
-            FallbackGeocodingProvider(
-                OpenMeteoGeocodingProvider(
-                    client,
-                    base_url=settings.geocoding_base_url,
-                    api_key=settings.geocoding_api_key,
-                ),
-                NominatimGeocodingProvider(
-                    client,
-                    base_url=settings.nominatim_base_url,
-                    user_agent=settings.geocoding_user_agent,
-                ),
+            PrecisionReducingGeocodingProvider(
+                FallbackGeocodingProvider(
+                    OpenMeteoGeocodingProvider(
+                        client,
+                        base_url=settings.geocoding_base_url,
+                        api_key=settings.geocoding_api_key,
+                    ),
+                    NominatimGeocodingProvider(
+                        client,
+                        base_url=settings.nominatim_base_url,
+                        user_agent=settings.geocoding_user_agent,
+                    ),
+                )
             ),
             settings.geocoding_cache_path,
         )
-        resolved_locations = [
-            await resolver.resolve(location) for location in settings.locations
+        resolutions = [
+            await resolver.resolve_with_metadata(location)
+            for location in settings.locations
         ]
-        locations = tuple(resolved_locations)
+        for resolution in resolutions:
+            location = resolution.location
+            if location.precision_reduced and not resolution.from_cache:
+                await delivery.publish_alert(
+                    "位置匹配需要确认",
+                    _precision_reduction_notice(location, settings.locations_path),
+                )
+        locations = tuple(resolution.location for resolution in resolutions)
         for location in locations:
             with SQLiteStateStore(
                 _location_state_path(settings.state_path, location, len(locations))
@@ -201,6 +212,15 @@ def _location_state_path(
         return base_path
     suffix = base_path.suffix or ".sqlite3"
     return base_path.with_name(f"{base_path.stem}-{location.id}{suffix}")
+
+
+def _precision_reduction_notice(location: ResolvedLocation, locations_path: Path) -> str:
+    matched_name = location.matched_name or "未提供匹配名称"
+    return (
+        f"配置地点“{location.name}”无法直接解析，已降低精度匹配为“{matched_name}”（纬度 "
+        f"{location.latitude:.7f}，经度 {location.longitude:.7f}）。请确认该位置是否正确；确认后将坐标写入 "
+        f"{locations_path}，可避免后续再次查询和猜测。"
+    )
 
 
 def _build_weather_provider(

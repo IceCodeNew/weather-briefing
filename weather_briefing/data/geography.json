@@ -24,5 +24,9 @@
       "中国"
     ],
     "mainland_china_administrative_division_suffix_characters": "市区县镇乡"
-  }
+  },
+  "mainland_china_geocoding_precision_reduction_patterns": [
+    "[0-9０-９]+(?:弄|号|栋|幢|座)?(?:楼|室)?$",
+    "[^省市区县旗州盟]+(?:路|街|道|巷|村|里|苑|园|小区)$"
+  ]
 }

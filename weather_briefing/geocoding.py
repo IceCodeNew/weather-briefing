@@ -4,14 +4,14 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from functools import cache
 from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
 
-from .models import LocationSpec, ResolvedLocation
+from .models import LocationResolution, LocationSpec, ResolvedLocation
 from .reference_data import ReferenceDataError, reference_string_tuple, reference_value
 
 
@@ -115,6 +115,7 @@ class OpenMeteoGeocodingProvider:
             administrative_area=administrative_area,
             timezone=timezone,
             is_mainland_china=_is_geocoded_mainland(country_code, administrative_area),
+            matched_name=str(result.get("name", "")).strip() or location.name,
         )
 
 
@@ -195,6 +196,7 @@ class NominatimGeocodingProvider:
             administrative_area=administrative_area,
             timezone=None,
             is_mainland_china=_is_geocoded_mainland(country_code, administrative_area),
+            matched_name=str(result.get("display_name", "")).strip() or location.name,
         )
 
 
@@ -216,31 +218,63 @@ class FallbackGeocodingProvider:
         ) from errors[-1]
 
 
+class PrecisionReducingGeocodingProvider:
+    def __init__(self, provider: GeocodingProvider) -> None:
+        self._provider = provider
+
+    async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        try:
+            return await self._provider.geocode(location)
+        except GeocodingError as direct_error:
+            last_error = direct_error
+        for candidate_name in _lower_precision_location_names(location.name):
+            candidate = replace(location, name=candidate_name)
+            try:
+                resolved = await self._provider.geocode(candidate)
+            except GeocodingError as exc:
+                last_error = exc
+                continue
+            return replace(
+                resolved,
+                name=location.name,
+                precision_reduced=True,
+            )
+        raise GeocodingError(
+            f"No geocoder could resolve location at a safe precision: {location.name}"
+        ) from last_error
+
+
 class CachedLocationResolver:
     def __init__(self, provider: GeocodingProvider, cache_path: Path) -> None:
         self._provider = provider
         self._cache_path = cache_path
 
     async def resolve(self, location: LocationSpec) -> ResolvedLocation:
+        return (await self.resolve_with_metadata(location)).location
+
+    async def resolve_with_metadata(self, location: LocationSpec) -> LocationResolution:
         if location.latitude is not None and location.longitude is not None:
-            return ResolvedLocation(
-                id=location.id,
-                name=location.name,
-                latitude=location.latitude,
-                longitude=location.longitude,
-                country_code=None,
-                administrative_area=None,
-                timezone=None,
-                is_mainland_china=possibly_mainland_china(
-                    location.latitude, location.longitude
+            return LocationResolution(
+                ResolvedLocation(
+                    id=location.id,
+                    name=location.name,
+                    latitude=location.latitude,
+                    longitude=location.longitude,
+                    country_code=None,
+                    administrative_area=None,
+                    timezone=None,
+                    is_mainland_china=possibly_mainland_china(
+                        location.latitude, location.longitude
+                    ),
                 ),
+                from_cache=False,
             )
         cache = self._read_cache()
         cache_key = f"{location.id}:{location.name}"
         cached = cache.get(cache_key)
         if isinstance(cached, dict):
             try:
-                return ResolvedLocation(**cached)
+                return LocationResolution(ResolvedLocation(**cached), from_cache=True)
             except TypeError as exc:
                 raise GeocodingError(
                     f"Invalid cached geocoding record for location: {location.name}"
@@ -252,7 +286,7 @@ class CachedLocationResolver:
         resolved = await self._provider.geocode(location)
         cache[cache_key] = asdict(resolved)
         self._write_cache(cache)
-        return resolved
+        return LocationResolution(resolved, from_cache=False)
 
     def _read_cache(self) -> dict[str, Any]:
         if not self._cache_path.exists():
@@ -317,3 +351,18 @@ def _normalized_location_name(name: str) -> str:
     for term in reference_string_tuple("geography.json", "nominatim_name_rules", "removable_terms"):
         normalized = normalized.replace(term, "")
     return normalized.strip()
+
+
+def _lower_precision_location_names(name: str) -> tuple[str, ...]:
+    patterns = reference_string_tuple(
+        "geography.json",
+        "mainland_china_geocoding_precision_reduction_patterns",
+    )
+    candidates: list[str] = []
+    current = name.strip()
+    for pattern in patterns:
+        reduced = re.sub(pattern, "", current).strip(" ,，")
+        if reduced and reduced != name and reduced not in candidates:
+            candidates.append(reduced)
+        current = reduced
+    return tuple(candidates)

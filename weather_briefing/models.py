@@ -42,6 +42,14 @@ class ResolvedLocation:
     administrative_area: str | None
     timezone: str | None
     is_mainland_china: bool
+    matched_name: str | None = None
+    precision_reduced: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class LocationResolution:
+    location: ResolvedLocation
+    from_cache: bool
 
 
 @dataclass(frozen=True, slots=True)
