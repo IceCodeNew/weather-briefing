@@ -1,0 +1,28 @@
+{
+  "mainland_china_service_bounds": {
+    "description": "Broad service-area possibility check including Hainan; not a political boundary polygon.",
+    "latitude": {
+      "minimum": 18.0,
+      "maximum": 53.57
+    },
+    "longitude": {
+      "minimum": 73.0,
+      "maximum": 135.09
+    }
+  },
+  "mainland_china_excluded_administrative_areas": [
+    "hong kong",
+    "香港",
+    "macao",
+    "macau",
+    "澳门",
+    "澳門"
+  ],
+  "nominatim_name_rules": {
+    "removable_terms": [
+      "地区",
+      "中国"
+    ],
+    "mainland_china_administrative_division_suffix_characters": "市区县镇乡"
+  }
+}
