@@ -96,6 +96,8 @@ def _configure_logging(*, debug: bool) -> None:
         root_handler.setFormatter(_fmt)
         logging.root.addHandler(root_handler)
     logging.root.setLevel(level)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:

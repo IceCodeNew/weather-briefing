@@ -26,6 +26,8 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
     original_propagate = _LOGGER.propagate
     original_root_handlers = logging.root.handlers[:]
     original_root_level = logging.root.level
+    original_httpx_level = logging.getLogger("httpx").level
+    original_httpcore_level = logging.getLogger("httpcore").level
     try:
         _LOGGER.handlers.clear()
         logging.root.handlers.clear()
@@ -40,6 +42,8 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         assert not _LOGGER.propagate
         assert logging.root.handlers == [root_handler]
         assert logging.root.level == logging.DEBUG
+        assert logging.getLogger("httpx").level == logging.WARNING
+        assert logging.getLogger("httpcore").level == logging.WARNING
     finally:
         _LOGGER.handlers.clear()
         _LOGGER.handlers.extend(original_handlers)
@@ -48,6 +52,8 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         logging.root.handlers.clear()
         logging.root.handlers.extend(original_root_handlers)
         logging.root.setLevel(original_root_level)
+        logging.getLogger("httpx").setLevel(original_httpx_level)
+        logging.getLogger("httpcore").setLevel(original_httpcore_level)
 
 
 @pytest.mark.parametrize(
