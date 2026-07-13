@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zoneinfo import ZoneInfo
+import pendulum
 
 from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation
 from .reference_data import reference_string_tuple
@@ -129,7 +129,7 @@ class Settings:
     llm_max_output_tokens: int
     llm_max_attempts: int
     http_timeout_seconds: float
-    timezone: ZoneInfo
+    timezone: pendulum.Timezone
     locations_path: Path
     locations: tuple[LocationSpec, ...]
     geocoding_base_url: str
@@ -194,7 +194,7 @@ class Settings:
             for item in context_items
         )
         try:
-            timezone = ZoneInfo(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai"))
+            timezone = pendulum.timezone(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai"))
         except (ValueError, KeyError) as exc:
             raise ConfigurationError("Invalid timezone") from exc
         retry_min = _float("RSS_RETRY_MIN_SECONDS", 3)

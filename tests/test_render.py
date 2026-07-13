@@ -1,12 +1,11 @@
-from datetime import datetime
-from zoneinfo import ZoneInfo
+import pendulum
 
 from weather_briefing.models import Article, BriefingResult, Conclusion
 from weather_briefing.render import PlainTextRenderer, TelegramHTMLRenderer
 
 
 def test_render_briefing_uses_safe_telegram_html() -> None:
-    now = datetime(2026, 7, 11, 8, tzinfo=ZoneInfo("Asia/Shanghai"))
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
     article = Article(
         "source",
         "feed",

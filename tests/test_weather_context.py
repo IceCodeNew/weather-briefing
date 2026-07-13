@@ -2,9 +2,11 @@ import base64
 
 import httpx
 import jwt
+import pendulum
 import pytest
 
 from weather_briefing.models import AirQualitySnapshot, WeatherContextSnapshot
+from weather_briefing.time_utils import parse_aware_datetime
 from weather_briefing.weather_context import (
     AirQualitySupplementingWeatherProvider,
     FallbackWeatherContextProvider,
@@ -70,7 +72,7 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
                 200,
                 json={
                     "code": "200",
-                    "updateTime": "2026-07-13T08:00+08:00",
+                    "updateTime": "2026-07-13T08:00",
                     "fxLink": "https://www.qweather.com/weather/test.html",
                     "daily": [
                         {
@@ -148,10 +150,12 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
         ).fetch(39.911389, 116.380556)
 
     assert snapshot.source_id == "weather:qweather"
+    assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
     assert len(snapshot.weather_forecast) == 2
     assert snapshot.lifestyle_advice == ("运动指数（适宜）：适宜进行户外运动。",)
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.aqi_standard == "中国环境空气质量指数（cn-mee）"
+    assert snapshot.air_quality.observed_at is None
     documents = snapshot_to_documents(snapshot)
     assert [item.id for item in documents] == [
         "weather:qweather",
@@ -167,6 +171,8 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
             return httpx.Response(
                 200,
                 json={
+                    "timezone": "Europe/Berlin",
+                    "utc_offset_seconds": 7200,
                     "current": {"time": "2026-07-13T08:00", "relative_humidity_2m": 60},
                     "daily": {
                         "time": ["2026-07-13", "2026-07-14"],
@@ -188,6 +194,8 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
         return httpx.Response(
             200,
             json={
+                "timezone": "Europe/Berlin",
+                "utc_offset_seconds": 7200,
                 "current": {
                     "time": "2026-07-13T08:00",
                     "us_aqi": 42,
@@ -206,6 +214,8 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
 
     assert len(snapshot.weather_forecast) == 2
     assert "WMO天气代码2" in snapshot.weather_forecast[0]
+    assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+02:00"
+    assert snapshot.observed_at.timezone_name == "Europe/Berlin"
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.aqi_standard == "U.S. AQI"
     assert snapshot.air_quality.pm25_concentration == 9.5
@@ -216,7 +226,7 @@ async def test_weather_provider_falls_back_after_primary_weather_failure() -> No
         source_id="weather:fallback",
         source_name="Fallback weather",
         source_url="https://example.invalid/weather",
-        observed_at="now",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
         weather_forecast=("forecast",),
     )
 
@@ -238,7 +248,7 @@ async def test_missing_weather_air_quality_requires_optional_aqicn_configuration
         source_id="weather:test",
         source_name="Weather",
         source_url="https://example.invalid/weather",
-        observed_at="now",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
         weather_forecast=("forecast",),
     )
 
@@ -257,14 +267,14 @@ async def test_aqicn_supplements_weather_without_air_quality() -> None:
         source_id="weather:test",
         source_name="Weather",
         source_url="https://example.invalid/weather",
-        observed_at="now",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
         weather_forecast=("forecast",),
     )
     air = AirQualitySnapshot(
         source_id="air-quality:aqicn",
         source_name="AQICN",
         source_url="https://example.invalid/air",
-        observed_at="now",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
         aqi=42,
         aqi_display="42",
         aqi_standard="US EPA",
@@ -280,7 +290,58 @@ async def test_aqicn_supplements_weather_without_air_quality() -> None:
             return weather
 
     class AirProvider:
-        async def fetch(self, latitude: float, longitude: float) -> AirQualitySnapshot:
+        async def fetch(
+            self,
+            latitude: float,
+            longitude: float,
+            timezone: str,
+        ) -> AirQualitySnapshot:
+            assert timezone == "UTC"
+            return air
+
+    provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), AirProvider())
+
+    assert (await provider.fetch(1, 2)).air_quality == air
+
+
+async def test_aqicn_receives_explicit_offset_when_weather_time_has_no_timezone_name() -> None:
+    weather = WeatherContextSnapshot(
+        source_id="weather:test",
+        source_name="Weather",
+        source_url="https://example.invalid/weather",
+        observed_at=parse_aware_datetime(
+            "2026-07-13T08:00:00+05:30",
+            context="Test weather snapshot time",
+        ),
+        weather_forecast=("forecast",),
+    )
+    air = AirQualitySnapshot(
+        source_id="air-quality:aqicn",
+        source_name="AQICN",
+        source_url="https://example.invalid/air",
+        observed_at=None,
+        aqi=42,
+        aqi_display="42",
+        aqi_standard="US EPA",
+        pm25_aqi=None,
+        pm25_concentration=None,
+        pm25_unit=None,
+        category="优",
+        health_guidance="Normal activity",
+    )
+
+    class WeatherProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return weather
+
+    class AirProvider:
+        async def fetch(
+            self,
+            latitude: float,
+            longitude: float,
+            timezone: str,
+        ) -> AirQualitySnapshot:
+            assert timezone == "+05:30"
             return air
 
     provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), AirProvider())

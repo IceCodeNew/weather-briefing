@@ -3,11 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import httpx
+import pendulum
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
@@ -34,6 +33,7 @@ from .render import PlainTextRenderer, TelegramHTMLRenderer
 from .service import BriefingService
 from .sources import HTTPContextSource, RSSSource
 from .state import SQLiteStateStore
+from .time_utils import parse_aware_datetime
 from .weather_context import (
     AirQualitySupplementingWeatherProvider,
     FallbackWeatherContextProvider,
@@ -50,12 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("kind", choices=("daily", "hourly"))
     run_parser.add_argument("--enforce-window", action="store_true")
-    run_parser.add_argument("--at", help="Override local run time with an ISO-8601 timestamp")
+    run_parser.add_argument("--at", help="Override run time with an ISO-8601 timestamp including UTC offset")
     subparsers.add_parser("daemon")
     return parser
 
 
-def _in_schedule(kind: str, now: datetime) -> bool:
+def _in_schedule(kind: str, now: pendulum.DateTime) -> bool:
     if kind == "daily":
         return now.hour == 8
     return 9 <= now.hour <= 23
@@ -101,7 +101,6 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
                     state,
                     RSSSource(
                         client,
-                        timezone=settings.timezone,
                         max_attempts=settings.rss_max_attempts,
                         retry_min_seconds=settings.rss_retry_min_seconds,
                         retry_max_seconds=settings.rss_retry_max_seconds,
@@ -268,13 +267,12 @@ WEATHER_PROVIDER_BUILDERS: dict[
 }
 
 
-def _parse_run_time(value: str | None, timezone: ZoneInfo) -> datetime:
+def _parse_run_time(
+    value: str | None, timezone: pendulum.Timezone
+) -> pendulum.DateTime:
     if value is None:
-        return datetime.now(timezone)
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone)
-    return parsed.astimezone(timezone)
+        return pendulum.now(timezone)
+    return parse_aware_datetime(value, context="Run time").in_timezone(timezone)
 
 
 async def daemon() -> None:

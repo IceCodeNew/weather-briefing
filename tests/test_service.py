@@ -1,9 +1,8 @@
-from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from zoneinfo import ZoneInfo
 
+import pendulum
 import pytest
 
 from weather_briefing.llm import LLMError
@@ -54,13 +53,13 @@ class StaticWeatherContextProvider:
             source_id="weather:test",
             source_name="Test weather",
             source_url="https://example.invalid/weather",
-            observed_at="2026-07-13T08:00:00+00:00",
+            observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
             weather_forecast=("Rain later",),
             air_quality=AirQualitySnapshot(
                 source_id="air-quality:test",
                 source_name="Test air quality",
                 source_url="https://example.invalid/air-quality",
-                observed_at="2026-07-13T08:00:00+00:00",
+                observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
                 aqi=42,
                 aqi_display="42",
                 aqi_standard="test-standard",
@@ -133,7 +132,7 @@ def _location() -> ResolvedLocation:
 async def test_daily_briefing_uses_configured_coordinates_and_air_quality_context(
     tmp_path: Path,
 ) -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
+    timezone = pendulum.timezone("Asia/Shanghai")
     settings = SimpleNamespace(
         timezone=timezone,
         feeds=(),
@@ -149,7 +148,7 @@ async def test_daily_briefing_uses_configured_coordinates_and_air_quality_contex
     llm = RecordingLLM()
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
-    now = datetime(2026, 7, 13, 8, tzinfo=timezone)
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         service = BriefingService(
@@ -178,15 +177,15 @@ async def test_daily_briefing_uses_configured_coordinates_and_air_quality_contex
 
 
 async def test_hourly_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
-    now = datetime(2026, 7, 13, 9, tzinfo=timezone)
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
     article = Article(
         id="article-id",
         source_id="feed",
         source_name="Weather feed",
         title="Hourly update",
         url="https://example.invalid/hourly",
-        published_at=datetime(2026, 7, 12, 23, 30, tzinfo=ZoneInfo("UTC")),
+        published_at=pendulum.datetime(2026, 7, 12, 23, 30, tz="UTC"),
         content="New weather information",
     )
     settings = SimpleNamespace(
@@ -226,7 +225,7 @@ async def test_hourly_briefing_also_uses_the_llm_provider(tmp_path: Path) -> Non
 async def test_hourly_api_only_update_can_be_remembered_without_delivery(
     tmp_path: Path,
 ) -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
+    timezone = pendulum.timezone("Asia/Shanghai")
     settings = SimpleNamespace(
         timezone=timezone,
         feeds=(),
@@ -242,7 +241,7 @@ async def test_hourly_api_only_update_can_be_remembered_without_delivery(
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
     weather_context = StaticWeatherContextProvider()
-    now = datetime(2026, 7, 13, 9, tzinfo=timezone)
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         service = BriefingService(
@@ -282,7 +281,7 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
     llm: RecordingLLM,
     message: str,
 ) -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
+    timezone = pendulum.timezone("Asia/Shanghai")
     settings = SimpleNamespace(
         timezone=timezone,
         feeds=(),
@@ -310,7 +309,7 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
             StaticWeatherContextProvider(),
         )
         with pytest.raises(LLMError, match="validation failed") as error:
-            await service.run(kind, datetime(2026, 7, 13, 9, tzinfo=timezone))
+            await service.run(kind, pendulum.datetime(2026, 7, 13, 9, tz=timezone))
 
     assert message in str(error.value.__cause__)
     assert publisher.messages == []
@@ -319,7 +318,7 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
 async def test_failure_alert_is_sent_only_when_threshold_is_first_reached(
     tmp_path: Path,
 ) -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
+    timezone = pendulum.timezone("Asia/Shanghai")
     settings = SimpleNamespace(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/feed"),),
@@ -333,7 +332,7 @@ async def test_failure_alert_is_sent_only_when_threshold_is_first_reached(
     )
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
-    now = datetime(2026, 7, 13, 9, tzinfo=timezone)
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "failure.sqlite3") as state:
         service = BriefingService(
@@ -348,7 +347,7 @@ async def test_failure_alert_is_sent_only_when_threshold_is_first_reached(
         )
         for attempt in range(4):
             with pytest.raises(RuntimeError, match="feed unavailable"):
-                await service.run("hourly", now + timedelta(hours=attempt))
+                await service.run("hourly", now.add(hours=attempt))
 
     assert len(publisher.messages) == 1
     assert "连续失败 3 次" in publisher.messages[0][0].body

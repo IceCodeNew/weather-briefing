@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
-from datetime import datetime, timedelta
 from pathlib import Path
 
+import pendulum
+
 from .models import Article, SourceDocument, Warning
+from .time_utils import require_aware_datetime
+
+_STORAGE_TIME_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$")
 
 
 class SQLiteStateStore:
@@ -66,7 +71,7 @@ class SQLiteStateStore:
         )
         return {str(row["id"]) for row in rows}
 
-    def save_articles(self, articles: tuple[Article, ...], processed_at: datetime) -> None:
+    def save_articles(self, articles: tuple[Article, ...], processed_at: pendulum.DateTime) -> None:
         self._connection.executemany(
             """INSERT OR IGNORE INTO articles
             (id, source_id, source_name, title, url, published_at, content, is_verbatim, processed_at)
@@ -78,10 +83,10 @@ class SQLiteStateStore:
                     article.source_name,
                     article.title,
                     article.url,
-                    article.published_at.isoformat(),
+                    _storage_time(article.published_at),
                     article.content,
                     article.is_verbatim,
-                    processed_at.isoformat(),
+                    _storage_time(processed_at),
                 )
                 for article in articles
             ],
@@ -91,8 +96,8 @@ class SQLiteStateStore:
     def record_source_check(
         self,
         source_id: str,
-        checked_at: datetime,
-        latest_at: datetime | None,
+        checked_at: pendulum.DateTime,
+        latest_at: pendulum.DateTime | None,
     ) -> None:
         self._connection.execute(
             """INSERT INTO source_health(
@@ -114,8 +119,8 @@ class SQLiteStateStore:
                 END""",
             (
                 source_id,
-                checked_at.isoformat(),
-                latest_at.isoformat() if latest_at else None,
+                _storage_time(checked_at),
+                _storage_time(latest_at) if latest_at else None,
             ),
         )
         self._connection.commit()
@@ -123,10 +128,10 @@ class SQLiteStateStore:
     def stale_sources(
         self,
         source_ids: tuple[str, ...],
-        now: datetime,
+        now: pendulum.DateTime,
         stale_hours: int,
     ) -> list[str]:
-        threshold = now - timedelta(hours=stale_hours)
+        threshold = now.subtract(hours=stale_hours)
         stale: list[str] = []
         for source_id in source_ids:
             row = self._connection.execute(
@@ -136,14 +141,14 @@ class SQLiteStateStore:
             if row is None:
                 continue
             reference_time = row["last_article_at"] or row["first_checked_at"]
-            if datetime.fromisoformat(reference_time) < threshold:
+            if _parse_time(reference_time) < threshold:
                 stale.append(source_id)
         return stale
 
     def stale_sources_requiring_alert(
         self,
         source_ids: tuple[str, ...],
-        now: datetime,
+        now: pendulum.DateTime,
         stale_hours: int,
     ) -> list[str]:
         stale = set(self.stale_sources(source_ids, now, stale_hours))
@@ -161,7 +166,7 @@ class SQLiteStateStore:
     def mark_stale_sources_alerted(
         self,
         source_ids: tuple[str, ...],
-        alerted_at: datetime,
+        alerted_at: pendulum.DateTime,
     ) -> None:
         if not source_ids:
             return
@@ -169,20 +174,20 @@ class SQLiteStateStore:
         self._connection.execute(
             f"UPDATE source_health SET stale_alerted_at = ? "  # noqa: S608
             f"WHERE source_id IN ({placeholders})",
-            (alerted_at.isoformat(), *source_ids),
+            (_storage_time(alerted_at), *source_ids),
         )
         self._connection.commit()
 
-    def recent_briefings(self, now: datetime, history_hours: int) -> tuple[str, ...]:
-        threshold = (now - timedelta(hours=history_hours)).isoformat()
+    def recent_briefings(self, now: pendulum.DateTime, history_hours: int) -> tuple[str, ...]:
+        threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             "SELECT body FROM briefings WHERE published_at >= ? ORDER BY published_at",
             (threshold,),
         )
         return tuple(str(row["body"]) for row in rows)
 
-    def recent_articles(self, now: datetime, history_hours: int) -> tuple[Article, ...]:
-        threshold = (now - timedelta(hours=history_hours)).isoformat()
+    def recent_articles(self, now: pendulum.DateTime, history_hours: int) -> tuple[Article, ...]:
+        threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             "SELECT * FROM articles WHERE published_at >= ? ORDER BY published_at",
             (threshold,),
@@ -194,21 +199,21 @@ class SQLiteStateStore:
                 source_name=str(row["source_name"]),
                 title=str(row["title"]),
                 url=str(row["url"]),
-                published_at=datetime.fromisoformat(row["published_at"]),
+                published_at=_parse_time(row["published_at"]),
                 content=str(row["content"]),
                 is_verbatim=bool(row["is_verbatim"]),
             )
             for row in rows
         )
 
-    def save_briefing(self, kind: str, body: str, published_at: datetime) -> None:
+    def save_briefing(self, kind: str, body: str, published_at: pendulum.DateTime) -> None:
         self._connection.execute(
             "INSERT INTO briefings(kind, body, published_at) VALUES (?, ?, ?)",
-            (kind, body, published_at.isoformat()),
+            (kind, body, _storage_time(published_at)),
         )
         self._connection.commit()
 
-    def save_context_documents(self, documents: tuple[SourceDocument, ...], observed_at: datetime) -> None:
+    def save_context_documents(self, documents: tuple[SourceDocument, ...], observed_at: pendulum.DateTime) -> None:
         self._connection.executemany(
             """INSERT INTO context_snapshots(source_id, name, url, content, observed_at)
             VALUES (?, ?, ?, ?, ?)""",
@@ -218,15 +223,15 @@ class SQLiteStateStore:
                     document.name,
                     document.url,
                     document.content,
-                    observed_at.isoformat(),
+                    _storage_time(observed_at),
                 )
                 for document in documents
             ],
         )
         self._connection.commit()
 
-    def recent_context_documents(self, now: datetime, history_hours: int) -> tuple[SourceDocument, ...]:
-        threshold = (now - timedelta(hours=history_hours)).isoformat()
+    def recent_context_documents(self, now: pendulum.DateTime, history_hours: int) -> tuple[SourceDocument, ...]:
+        threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             """SELECT source_id, name, url, content FROM context_snapshots
             WHERE observed_at >= ? ORDER BY observed_at""",
@@ -242,8 +247,8 @@ class SQLiteStateStore:
             for row in rows
         )
 
-    def active_warnings(self, now: datetime, retention_hours: int) -> tuple[Warning, ...]:
-        threshold = (now - timedelta(hours=retention_hours)).isoformat()
+    def active_warnings(self, now: pendulum.DateTime, retention_hours: int) -> tuple[Warning, ...]:
+        threshold = _storage_time(now.subtract(hours=retention_hours))
         rows = self._connection.execute(
             "SELECT payload, last_confirmed_at FROM warnings WHERE last_confirmed_at >= ?",
             (threshold,),
@@ -258,7 +263,7 @@ class SQLiteStateStore:
                     status=payload["status"],
                     detail=payload["detail"],
                     source_ids=tuple(payload["source_ids"]),
-                    last_confirmed_at=datetime.fromisoformat(row["last_confirmed_at"]),
+                    last_confirmed_at=_parse_time(row["last_confirmed_at"]),
                 )
             )
         return tuple(warnings)
@@ -267,7 +272,7 @@ class SQLiteStateStore:
         self,
         warnings: tuple[Warning, ...],
         resolved_warning_ids: tuple[str, ...],
-        now: datetime,
+        now: pendulum.DateTime,
         confirmed_source_ids: set[str] | None = None,
     ) -> None:
         confirmed_source_ids = confirmed_source_ids or set()
@@ -282,11 +287,7 @@ class SQLiteStateStore:
                 "SELECT last_confirmed_at FROM warnings WHERE id = ?", (warning.id,)
             ).fetchone()
             has_new_evidence = bool(set(warning.source_ids) & confirmed_source_ids)
-            confirmed_at = (
-                now
-                if existing is None or has_new_evidence
-                else datetime.fromisoformat(existing["last_confirmed_at"])
-            )
+            confirmed_at = now if existing is None or has_new_evidence else _parse_time(existing["last_confirmed_at"])
             payload = json.dumps(
                 {
                     "id": warning.id,
@@ -301,7 +302,7 @@ class SQLiteStateStore:
                 """INSERT INTO warnings(id, payload, last_confirmed_at) VALUES (?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET payload = excluded.payload,
                 last_confirmed_at = excluded.last_confirmed_at""",
-                (warning.id, payload, confirmed_at.isoformat()),
+                (warning.id, payload, _storage_time(confirmed_at)),
             )
         self._connection.commit()
 
@@ -316,3 +317,14 @@ class SQLiteStateStore:
         self._connection.commit()
         row = self._connection.execute("SELECT consecutive_failures FROM task_health WHERE singleton = 1").fetchone()
         return int(row["consecutive_failures"])
+
+
+def _parse_time(value: str) -> pendulum.DateTime:
+    if not _STORAGE_TIME_PATTERN.fullmatch(value):
+        raise ValueError("State timestamp must use fixed-width UTC format")
+    return pendulum.from_format(value, "YYYY-MM-DD[T]HH:mm:ss.SSSSSS[Z]", tz="UTC")
+
+
+def _storage_time(value: pendulum.DateTime) -> str:
+    aware = require_aware_datetime(value, context="State timestamp")
+    return aware.in_timezone("UTC").format("YYYY-MM-DD[T]HH:mm:ss.SSSSSS[Z]")

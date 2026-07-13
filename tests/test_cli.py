@@ -1,15 +1,25 @@
 from pathlib import Path
-from zoneinfo import ZoneInfo
+
+import pendulum
+import pytest
 
 from weather_briefing.cli import _location_state_path, _parse_run_time
 from weather_briefing.models import ResolvedLocation
 
 
-def test_parse_run_time_treats_naive_override_as_configured_timezone() -> None:
-    timezone = ZoneInfo("Asia/Shanghai")
-    parsed = _parse_run_time("2026-07-11T08:00:00", timezone)
+@pytest.mark.parametrize(
+    "value",
+    ("2026-03-29T02:30:00", "2026-10-25T02:30:00"),
+)
+def test_parse_run_time_rejects_timestamp_without_timezone(value: str) -> None:
+    with pytest.raises(ValueError, match="explicit UTC offset"):
+        _parse_run_time(value, pendulum.timezone("Europe/Paris"))
 
-    assert parsed.isoformat() == "2026-07-11T08:00:00+08:00"
+
+def test_parse_run_time_converts_explicit_offset_to_configured_timezone() -> None:
+    parsed = _parse_run_time("2026-07-11T00:00:00Z", pendulum.timezone("Asia/Shanghai"))
+
+    assert parsed.to_iso8601_string() == "2026-07-11T08:00:00+08:00"
 
 
 def test_multiple_locations_receive_isolated_state_paths() -> None:
@@ -24,9 +34,5 @@ def test_multiple_locations_receive_isolated_state_paths() -> None:
         True,
     )
 
-    assert _location_state_path(Path("state/weather.sqlite3"), location, 1) == Path(
-        "state/weather.sqlite3"
-    )
-    assert _location_state_path(Path("state/weather.sqlite3"), location, 2) == Path(
-        "state/weather-example.sqlite3"
-    )
+    assert _location_state_path(Path("state/weather.sqlite3"), location, 1) == Path("state/weather.sqlite3")
+    assert _location_state_path(Path("state/weather.sqlite3"), location, 2) == Path("state/weather-example.sqlite3")
