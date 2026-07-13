@@ -11,6 +11,7 @@ def _required_environment(monkeypatch) -> None:
         "DEEPSEEK_API_KEY": "test-key",
         "DEEPSEEK_MODEL": "test-model",
         "BRIEFING_LOCATIONS_FILE": str(Path(__file__).parents[1] / "locations.example.json"),
+        "RSS_SOURCES_FILE": str(Path(__file__).parents[1] / "rss-sources.example.json"),
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -40,7 +41,7 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
         "qweather",
         "open-meteo",
     )
-    assert settings.feeds == ()
+    assert [feed.id for feed in settings.feeds] == ["authority-weather"]
     assert settings.llm_provider == "deepseek"
     assert settings.llm_base_url is None
     assert settings.qweather_index_types == ("1", "3", "6", "8", "15")
@@ -98,6 +99,7 @@ def test_location_file_supports_multiple_places_and_optional_coordinates(
         encoding="utf-8",
     )
     monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
 
     settings = Settings.from_env()
 
