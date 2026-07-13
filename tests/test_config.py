@@ -127,6 +127,90 @@ def test_qweather_jwt_lifetime_cannot_exceed_official_limit(monkeypatch) -> None
         Settings.from_env()
 
 
+def test_qweather_private_key_strips_surrounding_quotes(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("QWEATHER_PRIVATE_KEY", "'LS0tLS0='")
+
+    settings = Settings.from_env()
+
+    assert settings.qweather_private_key == "LS0tLS0="
+
+
+def test_qweather_private_key_double_quotes_are_also_stripped(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("QWEATHER_PRIVATE_KEY", '"LS0tLS0="')
+
+    settings = Settings.from_env()
+
+    assert settings.qweather_private_key == "LS0tLS0="
+
+
+def test_qweather_private_key_without_quotes_is_unchanged(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("QWEATHER_PRIVATE_KEY", "LS0tLS0=")
+
+    settings = Settings.from_env()
+
+    assert settings.qweather_private_key == "LS0tLS0="
+
+
+def test_env_api_key_with_quotes_is_cleaned(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "'sk-quoted-key'")
+
+    settings = Settings.from_env()
+
+    assert settings.api_key == "sk-quoted-key"
+
+
+def test_env_url_with_quotes_is_cleaned(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("GEOCODING_API_KEY", "'geocoding-key'")
+    monkeypatch.setenv("GEOCODING_BASE_URL", "'https://geocoding.example.invalid/'")
+
+    settings = Settings.from_env()
+
+    assert settings.geocoding_api_key == "geocoding-key"
+    assert settings.geocoding_base_url == "https://geocoding.example.invalid"
+
+
+def test_env_numeric_with_quotes_is_parsed(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("RSS_MAX_ATTEMPTS", "'5'")
+
+    settings = Settings.from_env()
+
+    assert settings.rss_max_attempts == 5
+
+
+def test_env_provider_with_quotes_is_cleaned(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "'deepseek'")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_provider == "deepseek"
+
+
+def test_env_optional_with_quoted_empty_yields_none(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("QWEATHER_PROJECT_ID", "''")
+
+    settings = Settings.from_env()
+
+    assert settings.qweather_project_id is None
+
+
+@pytest.mark.parametrize("value", ("sk-key'", 'sk-key"', "'sk-key\""))
+def test_env_value_with_unmatched_quotes_is_unchanged(monkeypatch, value: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", value)
+
+    settings = Settings.from_env()
+
+    assert settings.api_key == value
+
+
 @pytest.mark.parametrize(
     "name",
     (
