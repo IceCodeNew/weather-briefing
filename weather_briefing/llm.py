@@ -62,6 +62,27 @@ class OpenAICompatibleChatCompletionsProvider:
         return result
 
 
+class DeepSeekProvider(OpenAICompatibleChatCompletionsProvider):
+    DEFAULT_BASE_URL = "https://api.deepseek.com"
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        api_key: str,
+        model: str,
+        max_output_tokens: int,
+        base_url: str = DEFAULT_BASE_URL,
+    ) -> None:
+        super().__init__(
+            client,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            max_output_tokens=max_output_tokens,
+        )
+
+
 def parse_result(payload: Mapping[str, Any], now: datetime, valid_source_ids: set[str]) -> BriefingResult:
     def conclusions(key: str) -> tuple[Conclusion, ...]:
         values = payload.get(key, [])
