@@ -1,0 +1,35 @@
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "weather-briefing"
+version = "0.1.0"
+description = "Stateful, source-cited weather briefings"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "anyio>=4.11,<5",
+  "pytest>=8,<9",
+  "ruff>=0.5,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+anyio_mode = "auto"
+
+[tool.uv]
+required-version = "==0.11.28"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

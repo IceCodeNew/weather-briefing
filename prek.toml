@@ -1,0 +1,37 @@
+# Configuration file for `prek`, a git hook framework written in Rust.
+#:schema https://www.schemastore.org/prek.json
+
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c"  # frozen: v6.0.0
+hooks = [
+  { id = "check-added-large-files" },
+  { id = "check-case-conflict" },
+  { id = "check-json" },
+  { id = "check-merge-conflict" },
+  { id = "check-toml" },
+  { id = "check-yaml" },
+  { id = "end-of-file-fixer" },
+  { id = "mixed-line-ending" },
+  { id = "no-commit-to-branch" },
+]
+
+[[repos]]
+repo = "https://github.com/woodruffw/zizmor-pre-commit"
+rev = "e3eebf65325ccc992422292cb7a4baee967cf815"  # frozen: v1.26.1
+hooks = [{ id = "zizmor" }]
+
+[[repos]]
+repo = "https://github.com/rhysd/actionlint"
+rev = "914e7df21a07ef503a81201c76d2b11c789d3fca"  # frozen: v1.7.12
+hooks = [{ id = "actionlint" }]
+
+[[repos]]
+repo = "https://github.com/gitleaks/gitleaks"
+rev = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e"  # frozen: v8.30.1
+hooks = [{ id = "gitleaks" }]
+
+[[repos]]
+repo = "https://github.com/hadolint/hadolint"
+rev = "57e1618d78fd469a92c1e584e8c9313024656623"  # frozen: v2.14.0
+hooks = [{ id = "hadolint-docker" }]
