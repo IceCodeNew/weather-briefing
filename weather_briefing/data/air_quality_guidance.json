@@ -1,0 +1,35 @@
+{
+  "standard": "US EPA",
+  "bands": [
+    {
+      "maximum_aqi": 50,
+      "category": "优",
+      "guidance": "空气污染风险很低，一般无需因空气质量调整户外活动。"
+    },
+    {
+      "maximum_aqi": 100,
+      "category": "良",
+      "guidance": "极少数异常敏感人群应减少长时间、高强度户外活动。"
+    },
+    {
+      "maximum_aqi": 150,
+      "category": "对敏感人群不健康",
+      "guidance": "儿童、活跃成年人和呼吸系统疾病人群应减少长时间户外活动。"
+    },
+    {
+      "maximum_aqi": 200,
+      "category": "不健康",
+      "guidance": "敏感人群应避免长时间户外活动，其他人群也应适当减少户外活动。"
+    },
+    {
+      "maximum_aqi": 300,
+      "category": "非常不健康",
+      "guidance": "所有人应减少户外活动，敏感人群尽量避免外出。"
+    },
+    {
+      "maximum_aqi": null,
+      "category": "危险",
+      "guidance": "所有人应避免户外活动，并关注当地健康部门建议。"
+    }
+  ]
+}
