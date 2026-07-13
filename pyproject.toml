@@ -22,7 +22,7 @@ dependencies = [
 [dependency-groups]
 dev = [
   "anyio>=4.11,<5",
-  "pytest>=8,<9",
+  "pytest>=9,<10",
   "ruff>=0.5,<1",
 ]
 
