@@ -80,9 +80,7 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
     if enforce_window and not _in_schedule(kind, now, settings):
         print(f"Skipping delayed {kind} run outside configured local-time window")
         return
-    async with httpx.AsyncClient(
-        timeout=settings.http_timeout_seconds, follow_redirects=True
-    ) as client:
+    async with httpx.AsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True) as client:
         delivery = _delivery_provider(settings, client)
         llm_provider = _llm_provider(settings, client)
         resolver = CachedLocationResolver(
@@ -102,10 +100,7 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
             ),
             settings.geocoding_cache_path,
         )
-        resolutions = [
-            await resolver.resolve_with_metadata(location)
-            for location in settings.locations
-        ]
+        resolutions = [await resolver.resolve_with_metadata(location) for location in settings.locations]
         for resolution in resolutions:
             location = resolution.location
             if location.precision_reduced and not resolution.from_cache:
@@ -115,9 +110,7 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
                 )
         locations = tuple(resolution.location for resolution in resolutions)
         for location in locations:
-            with SQLiteStateStore(
-                _location_state_path(settings.state_path, location, len(locations))
-            ) as state:
+            with SQLiteStateStore(_location_state_path(settings.state_path, location, len(locations))) as state:
                 service = BriefingService(
                     settings,
                     location,
@@ -196,9 +189,7 @@ def _weather_context_provider(
     if not providers:
         raise ValueError("No configured weather provider is available")
     weather_provider: WeatherContextProvider = (
-        providers[0]
-        if len(providers) == 1
-        else FallbackWeatherContextProvider(*providers)
+        providers[0] if len(providers) == 1 else FallbackWeatherContextProvider(*providers)
     )
     return AirQualitySupplementingWeatherProvider(
         weather_provider,
@@ -217,9 +208,7 @@ def _qweather_is_configured(settings: Settings) -> bool:
     )
 
 
-def _location_state_path(
-    base_path: Path, location: ResolvedLocation, location_count: int
-) -> Path:
+def _location_state_path(base_path: Path, location: ResolvedLocation, location_count: int) -> Path:
     if location_count == 1:
         return base_path
     suffix = base_path.suffix or ".sqlite3"
@@ -235,26 +224,20 @@ def _precision_reduction_notice(location: ResolvedLocation, locations_path: Path
     )
 
 
-def _build_weather_provider(
-    name: str, settings: Settings, client: httpx.AsyncClient
-) -> WeatherContextProvider:
+def _build_weather_provider(name: str, settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
     builder = WEATHER_PROVIDER_BUILDERS.get(name)
     if builder is None:
         raise ValueError(f"Unsupported weather provider: {name}")
     return builder(settings, client)
 
 
-def _build_qweather(
-    settings: Settings, client: httpx.AsyncClient
-) -> WeatherContextProvider:
+def _build_qweather(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
     project_id = settings.qweather_project_id
     credential_id = settings.qweather_credential_id
     private_key = settings.qweather_private_key
     base_url = settings.qweather_base_url
     if not project_id or not credential_id or not private_key or not base_url:
-        raise ValueError(
-            "QWeather provider requires project, credential, private key, and API host settings"
-        )
+        raise ValueError("QWeather provider requires project, credential, private key, and API host settings")
     return QWeatherProvider(
         client,
         authenticator=QWeatherJWTAuthenticator(
@@ -268,9 +251,7 @@ def _build_qweather(
     )
 
 
-def _build_open_meteo(
-    settings: Settings, client: httpx.AsyncClient
-) -> WeatherContextProvider:
+def _build_open_meteo(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
     return OpenMeteoProvider(
         client,
         weather_base_url=settings.open_meteo_weather_base_url,
@@ -279,9 +260,7 @@ def _build_open_meteo(
     )
 
 
-def _aqicn_provider(
-    settings: Settings, client: httpx.AsyncClient
-) -> AirQualityProvider | None:
+def _aqicn_provider(settings: Settings, client: httpx.AsyncClient) -> AirQualityProvider | None:
     if not settings.aqicn_api_token:
         return None
     return AQICNProvider(
@@ -291,17 +270,13 @@ def _aqicn_provider(
     )
 
 
-WEATHER_PROVIDER_BUILDERS: dict[
-    str, Callable[[Settings, httpx.AsyncClient], WeatherContextProvider]
-] = {
+WEATHER_PROVIDER_BUILDERS: dict[str, Callable[[Settings, httpx.AsyncClient], WeatherContextProvider]] = {
     "qweather": _build_qweather,
     "open-meteo": _build_open_meteo,
 }
 
 
-def _parse_run_time(
-    value: str | None, timezone: pendulum.Timezone
-) -> pendulum.DateTime:
+def _parse_run_time(value: str | None, timezone: pendulum.Timezone) -> pendulum.DateTime:
     if value is None:
         return pendulum.now(timezone)
     return parse_aware_datetime(value, context="Run time").in_timezone(timezone)

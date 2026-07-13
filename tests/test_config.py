@@ -54,9 +54,10 @@ def test_weather_provider_order_can_be_configured(monkeypatch) -> None:
 
     settings = Settings.from_env()
 
-    assert weather_providers_for(
-        _resolved_location(mainland=True), settings.weather_providers
-    ) == ("open-meteo", "qweather")
+    assert weather_providers_for(_resolved_location(mainland=True), settings.weather_providers) == (
+        "open-meteo",
+        "qweather",
+    )
 
 
 def test_non_mainland_weather_providers_default_to_open_meteo_only(monkeypatch) -> None:
@@ -65,14 +66,10 @@ def test_non_mainland_weather_providers_default_to_open_meteo_only(monkeypatch) 
 
     settings = Settings.from_env()
 
-    assert weather_providers_for(
-        _resolved_location(mainland=False), settings.weather_providers
-    ) == ("open-meteo",)
+    assert weather_providers_for(_resolved_location(mainland=False), settings.weather_providers) == ("open-meteo",)
 
 
-def test_optional_rss_sources_are_loaded_from_named_file(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_optional_rss_sources_are_loaded_from_named_file(monkeypatch, tmp_path: Path) -> None:
     _required_environment(monkeypatch)
     source_file = tmp_path / "rss-sources.json"
     source_file.write_text(
@@ -87,9 +84,7 @@ def test_optional_rss_sources_are_loaded_from_named_file(
     assert [feed.id for feed in settings.feeds] == ["test"]
 
 
-def test_location_file_supports_multiple_places_and_optional_coordinates(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_location_file_supports_multiple_places_and_optional_coordinates(monkeypatch, tmp_path: Path) -> None:
     _required_environment(monkeypatch)
     location_file = tmp_path / "locations.json"
     location_file.write_text(
@@ -108,18 +103,13 @@ def test_location_file_supports_multiple_places_and_optional_coordinates(
     assert settings.locations[1].longitude == 116.380556
 
 
-def test_rss_source_location_ids_must_reference_configured_locations(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_rss_source_location_ids_must_reference_configured_locations(monkeypatch, tmp_path: Path) -> None:
     _required_environment(monkeypatch)
     location_file = tmp_path / "locations.json"
-    location_file.write_text(
-        '[{"id":"beijing","name":"Beijing"}]', encoding="utf-8"
-    )
+    location_file.write_text('[{"id":"beijing","name":"Beijing"}]', encoding="utf-8")
     source_file = tmp_path / "rss-sources.json"
     source_file.write_text(
-        '[{"id":"feed","name":"Feed","url":"https://example.invalid/feed",'
-        '"location_ids":["shanghai"]}]',
+        '[{"id":"feed","name":"Feed","url":"https://example.invalid/feed","location_ids":["shanghai"]}]',
         encoding="utf-8",
     )
     monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))

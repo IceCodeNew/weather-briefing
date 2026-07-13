@@ -1,0 +1,49 @@
+name: Linter
+permissions:
+  pull-requests: read
+  checks: write
+
+on:
+    push:
+      branches:
+        - "master"
+        - "renovate/**"
+    pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        persist-credentials: false
+    # python-lint
+    - name: Install the latest version of ruff
+      uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+      with:
+        version: "latest"
+        args: "format --check --diff"
+    - name: Run Ruff linter
+      run: |
+        # check the formatted codes
+        ruff check --select I --fix
+        ruff format
+        # run the linters
+        ruff check .
+    # Dockerfile lint
+    - name: hadolint
+      uses: reviewdog/action-hadolint@1b2cfa6ba72072ad35158d7ff3aa49bbdc03506d # v1.51.0
+      with:
+        hadolint_ignore: DL3007 SC2114
+        reporter: github-check
+
+    # misspell
+    - name: misspell
+      uses: reviewdog/action-misspell@d6429416b12b09b4e2768307d53bef58d172e962 # v1.27.0
+      with:
+        locale: "US"
+        reporter: github-check

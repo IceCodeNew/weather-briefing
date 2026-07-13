@@ -60,6 +60,4 @@ async def test_telegram_rejects_oversized_single_message_before_delivery() -> No
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
         publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
         with pytest.raises(DeliveryError, match="exceeds"):
-            await publisher.publish(
-                RenderedMessage("<b>short markup</b>", 4097), single_message=True
-            )
+            await publisher.publish(RenderedMessage("<b>short markup</b>", 4097), single_message=True)

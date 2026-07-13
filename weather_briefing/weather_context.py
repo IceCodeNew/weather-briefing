@@ -46,13 +46,9 @@ class QWeatherJWTAuthenticator:
         self._project_id = project_id
         self._credential_id = credential_id
         try:
-            self._private_key = base64.b64decode(
-                private_key_base64, validate=True
-            ).decode("utf-8")
+            self._private_key = base64.b64decode(private_key_base64, validate=True).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
-            raise ValueError(
-                "QWeather private key must be a Base64-encoded UTF-8 PEM"
-            ) from None
+            raise ValueError("QWeather private key must be a Base64-encoded UTF-8 PEM") from None
         self._lifetime_seconds = lifetime_seconds
         self._clock = clock
 
@@ -103,9 +99,7 @@ class QWeatherProvider:
             weather_payload = weather_response.json()
             if weather_payload.get("code") != "200":
                 raise WeatherContextError("QWeather returned a non-success weather status")
-            weather_forecast = tuple(
-                _format_qweather_day(item) for item in weather_payload.get("daily", ())[:2]
-            )
+            weather_forecast = tuple(_format_qweather_day(item) for item in weather_payload.get("daily", ())[:2])
             if not weather_forecast:
                 raise WeatherContextError("QWeather returned no daily forecast")
 
@@ -122,14 +116,9 @@ class QWeatherProvider:
             indices_payload = indices_response.json()
             if indices_payload.get("code") != "200":
                 raise WeatherContextError("QWeather returned a non-success indices status")
-            lifestyle_advice = tuple(
-                _format_qweather_lifestyle(item)
-                for item in indices_payload.get("daily", ())
-            )
+            lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in indices_payload.get("daily", ()))
             source_url = str(
-                weather_payload.get("fxLink")
-                or indices_payload.get("fxLink")
-                or "https://www.qweather.com/"
+                weather_payload.get("fxLink") or indices_payload.get("fxLink") or "https://www.qweather.com/"
             )
             observed_at = parse_datetime_with_default_timezone(
                 str(weather_payload.get("updateTime") or indices_payload["updateTime"]),
@@ -181,9 +170,7 @@ class QWeatherProvider:
                 pm25_concentration=float(concentration["value"]),
                 pm25_unit=str(concentration["unit"]),
                 category=str(index.get("category", "未知")),
-                health_guidance=str(
-                    advice.get("generalPopulation") or health.get("effect", "")
-                ),
+                health_guidance=str(advice.get("generalPopulation") or health.get("effect", "")),
             )
         except (httpx.HTTPError, KeyError, TypeError, ValueError):
             return None
@@ -229,16 +216,12 @@ class OpenMeteoProvider:
         if self._api_key:
             params["apikey"] = self._api_key
         try:
-            response = await self._client.get(
-                f"{self._weather_base_url}/v1/forecast", params=params
-            )
+            response = await self._client.get(f"{self._weather_base_url}/v1/forecast", params=params)
             response.raise_for_status()
             payload = response.json()
             daily = cast(dict[str, list[object]], payload["daily"])
             times = daily["time"]
-            weather_forecast = tuple(
-                _format_open_meteo_day(daily, index) for index in range(min(2, len(times)))
-            )
+            weather_forecast = tuple(_format_open_meteo_day(daily, index) for index in range(min(2, len(times))))
             if not weather_forecast:
                 raise WeatherContextError("Open-Meteo returned no daily forecast")
             observed_at = parse_datetime_with_default_timezone(
@@ -261,9 +244,7 @@ class OpenMeteoProvider:
             air_quality=air_quality,
         )
 
-    async def _fetch_air_quality(
-        self, latitude: float, longitude: float
-    ) -> AirQualitySnapshot | None:
+    async def _fetch_air_quality(self, latitude: float, longitude: float) -> AirQualitySnapshot | None:
         params: dict[str, str | int | float] = {
             "latitude": latitude,
             "longitude": longitude,
@@ -273,9 +254,7 @@ class OpenMeteoProvider:
         if self._api_key:
             params["apikey"] = self._api_key
         try:
-            response = await self._client.get(
-                f"{self._air_quality_base_url}/v1/air-quality", params=params
-            )
+            response = await self._client.get(f"{self._air_quality_base_url}/v1/air-quality", params=params)
             response.raise_for_status()
             payload = response.json()
             current = cast(dict[str, Any], payload["current"])
@@ -332,9 +311,7 @@ class AirQualitySupplementingWeatherProvider:
         if snapshot.air_quality is not None:
             return snapshot
         if self._air_quality_provider is None:
-            raise WeatherContextError(
-                "Weather source did not provide air quality; configure AQICN_API_TOKEN"
-            )
+            raise WeatherContextError("Weather source did not provide air quality; configure AQICN_API_TOKEN")
         try:
             air_quality = await self._air_quality_provider.fetch(
                 latitude,
@@ -345,9 +322,7 @@ class AirQualitySupplementingWeatherProvider:
                 ),
             )
         except AirQualityError:
-            raise WeatherContextError(
-                "Weather source did not provide air quality and AQICN fallback failed"
-            ) from None
+            raise WeatherContextError("Weather source did not provide air quality and AQICN fallback failed") from None
         return replace(snapshot, air_quality=air_quality)
 
 

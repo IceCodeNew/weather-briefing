@@ -118,18 +118,14 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
         return httpx.Response(
             200,
             json={
-                "metadata": {
-                    "attributions": ["https://developer.qweather.com/attribution.html"]
-                },
+                "metadata": {"attributions": ["https://developer.qweather.com/attribution.html"]},
                 "indexes": [
                     {
                         "code": "cn-mee",
                         "name": "中国环境空气质量指数",
                         "aqi": 68,
                         "category": "良",
-                        "health": {
-                            "advice": {"generalPopulation": "可以正常进行户外活动。"}
-                        },
+                        "health": {"advice": {"generalPopulation": "可以正常进行户外活动。"}},
                     }
                 ],
                 "pollutants": [
@@ -201,7 +197,7 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
                     "us_aqi": 42,
                     "us_aqi_pm2_5": 35,
                     "pm2_5": 9.5,
-                }
+                },
             },
         )
 

@@ -98,11 +98,7 @@ class RecordingLLM:
             "conclusions": [conclusion],
             "active_warnings": [],
             "resolved_warning_ids": [],
-            "advice": (
-                [conclusion]
-                if payload["mode"] == "daily" or self._include_hourly_advice
-                else []
-            ),
+            "advice": ([conclusion] if payload["mode"] == "daily" or self._include_hourly_advice else []),
             "disaster_tracking": [],
             "should_publish": self._should_publish,
         }
