@@ -211,6 +211,14 @@ def test_env_value_with_unmatched_quotes_is_unchanged(monkeypatch, value: str) -
     assert settings.api_key == value
 
 
+@pytest.mark.parametrize("value", ("1", "true", "yes", "'true'", '"yes"'))
+def test_debug_accepts_truthy_values_with_optional_outer_quotes(monkeypatch, value: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("DEBUG", value)
+
+    assert Settings.from_env().debug
+
+
 @pytest.mark.parametrize(
     "name",
     (

@@ -1,9 +1,12 @@
+import logging
 from pathlib import Path
 
 import pendulum
 import pytest
 
 from weather_briefing.cli import (
+    _LOGGER,
+    _configure_logging,
     _hour_in_cron,
     _in_schedule,
     _location_state_path,
@@ -14,6 +17,36 @@ from weather_briefing.cli import (
 )
 from weather_briefing.config import Settings
 from weather_briefing.models import ResolvedLocation
+
+
+def test_configure_logging_is_idempotent_and_updates_level() -> None:
+    original_handlers = _LOGGER.handlers[:]
+    original_level = _LOGGER.level
+    original_propagate = _LOGGER.propagate
+    original_root_handlers = logging.root.handlers[:]
+    original_root_level = logging.root.level
+    try:
+        _LOGGER.handlers.clear()
+        logging.root.handlers.clear()
+
+        _configure_logging(debug=False)
+        own_handler = _LOGGER.handlers[0]
+        root_handler = logging.root.handlers[0]
+        _configure_logging(debug=True)
+
+        assert _LOGGER.handlers == [own_handler]
+        assert _LOGGER.level == logging.DEBUG
+        assert not _LOGGER.propagate
+        assert logging.root.handlers == [root_handler]
+        assert logging.root.level == logging.DEBUG
+    finally:
+        _LOGGER.handlers.clear()
+        _LOGGER.handlers.extend(original_handlers)
+        _LOGGER.setLevel(original_level)
+        _LOGGER.propagate = original_propagate
+        logging.root.handlers.clear()
+        logging.root.handlers.extend(original_root_handlers)
+        logging.root.setLevel(original_root_level)
 
 
 @pytest.mark.parametrize(
@@ -156,3 +189,68 @@ def test_main_loads_dotenv_with_supported_arguments(monkeypatch) -> None:
 
     assert exc_info.value.code == 0
     assert calls == [False]
+
+
+def test_main_configures_info_logging_before_daemon_and_logs_failure_once(monkeypatch, capsys) -> None:
+    original_handlers = _LOGGER.handlers[:]
+    original_level = _LOGGER.level
+    original_propagate = _LOGGER.propagate
+
+    async def fail_daemon(run_now: bool = False) -> None:
+        assert len(_LOGGER.handlers) == 1
+        assert _LOGGER.level == logging.INFO
+        raise RuntimeError("daemon-boom")
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli.daemon", fail_daemon)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "daemon"])
+    try:
+        _LOGGER.handlers.clear()
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        stderr = capsys.readouterr().err
+        assert exc_info.value.code == 1
+        assert stderr.count("weather-briefing terminated with an error") == 1
+        assert stderr.count("RuntimeError: daemon-boom") == 1
+        assert "[ERROR] weather_briefing:" in stderr
+    finally:
+        _LOGGER.handlers.clear()
+        _LOGGER.handlers.extend(original_handlers)
+        _LOGGER.setLevel(original_level)
+        _LOGGER.propagate = original_propagate
+
+
+def test_main_configures_info_logging_before_run_and_logs_failure_once(monkeypatch, capsys) -> None:
+    original_handlers = _LOGGER.handlers[:]
+    original_level = _LOGGER.level
+    original_propagate = _LOGGER.propagate
+
+    async def fail_run(kind: str, enforce_window: bool, at: str | None) -> None:
+        assert kind == "hourly"
+        assert not enforce_window
+        assert at is None
+        assert len(_LOGGER.handlers) == 1
+        assert _LOGGER.level == logging.INFO
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli.run", fail_run)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "run", "hourly"])
+    try:
+        _LOGGER.handlers.clear()
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        stderr = capsys.readouterr().err
+        assert exc_info.value.code == 1
+        assert stderr.count("weather-briefing terminated with an error") == 1
+        assert stderr.count("RuntimeError: boom") == 1
+        assert "[ERROR] weather_briefing:" in stderr
+    finally:
+        _LOGGER.handlers.clear()
+        _LOGGER.handlers.extend(original_handlers)
+        _LOGGER.setLevel(original_level)
+        _LOGGER.propagate = original_propagate

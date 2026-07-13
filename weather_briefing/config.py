@@ -203,6 +203,7 @@ class Settings:
     greeting_hour: int
     greeting_minute: int
     hourly_cron: str
+    debug: bool
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -333,4 +334,5 @@ class Settings:
             greeting_hour=daily_cron_hour,
             greeting_minute=daily_cron_minute,
             hourly_cron=hourly_cron,
+            debug=_clean_env(os.getenv("DEBUG", "")).lower() in ("1", "true", "yes"),
         )

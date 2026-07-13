@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 
 import pendulum
@@ -14,6 +15,8 @@ from .sources import HTTPContextSource, RSSSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
 from .weather_context import WeatherContextProvider, snapshot_to_documents
+
+_LOGGER = logging.getLogger("weather_briefing.service")
 
 
 class BriefingService:
@@ -43,8 +46,9 @@ class BriefingService:
         current_time = require_aware_datetime(now or pendulum.now(self._settings.timezone), context="Briefing run time")
         try:
             body = await self._run(kind, current_time)
-        except Exception:
+        except Exception as exc:
             failure_count = self._state.record_failure()
+            exc.add_note(f"Briefing run failed after {failure_count} consecutive failure(s)")
             if failure_count == self._settings.task_failure_threshold:
                 await self._ops_delivery.publish_alert(
                     "天气简报任务连续失败",
@@ -58,8 +62,10 @@ class BriefingService:
         feeds = tuple(
             feed for feed in self._settings.feeds if not feed.location_ids or self._location.id in feed.location_ids
         )
+        _LOGGER.debug("Fetching %d RSS feed(s)", len(feeds))
         fetched = await asyncio.gather(*(self._rss_source.fetch(config) for config in feeds))
         all_articles = tuple(article for group in fetched for article in group)
+        _LOGGER.info("Fetched %d article(s) from %d feed(s)", len(all_articles), len(fetched))
         for config, articles in zip(feeds, fetched, strict=True):
             latest_at = max((article.published_at for article in articles), default=None)
             self._state.record_source_check(config.id, now, latest_at)
@@ -69,6 +75,7 @@ class BriefingService:
             self._settings.rss_stale_hours,
         )
         if stale:
+            _LOGGER.warning("Stale RSS source(s): %s", ", ".join(stale))
             await self._ops_delivery.publish_alert(
                 "天气 RSS 源长时间无更新",
                 f"以下源超过 {self._settings.rss_stale_hours} 小时无新文章：{', '.join(stale)}",
@@ -106,11 +113,19 @@ class BriefingService:
         reference_context = _unique_documents((*historical_context, *context))
         active_warnings = self._state.active_warnings(now, self._settings.warning_retention_hours)
         if not new_articles and not bootstrap_articles and not context and not active_warnings:
+            _LOGGER.info("Skipping briefing: no new articles, context, or warnings")
             return None
         historical_articles = _unique_articles(
             (*self._state.recent_articles(now, self._settings.history_hours), *bootstrap_articles)
         )
         source_articles = _unique_articles((*historical_articles, *new_articles))
+        _LOGGER.debug(
+            "%d new article(s), %d historical article(s), %d active warning(s), %d context document(s)",
+            len(new_articles),
+            len(historical_articles),
+            len(active_warnings),
+            len(context),
+        )
         payload = self._build_payload(
             kind,
             now,
@@ -142,6 +157,7 @@ class BriefingService:
             reference_context,
         )
         if kind == "hourly" and not result.should_publish:
+            _LOGGER.info("Hourly briefing skipped: should_publish=False")
             self._save_result_state(
                 kind,
                 now,
@@ -204,13 +220,20 @@ class BriefingService:
         for attempt in range(self._settings.llm_max_attempts):
             raw_result: dict[str, object] | None = None
             try:
+                _LOGGER.debug("LLM summarization attempt %d/%d", attempt + 1, self._settings.llm_max_attempts)
                 raw_result = await self._llm.summarize(instructions, current_payload)
                 result = parse_result(raw_result, now, valid_source_ids)
                 if validator is not None:
                     validator(result)
+                _LOGGER.debug(
+                    "LLM summarization successful on attempt %d/%d", attempt + 1, self._settings.llm_max_attempts
+                )
                 return result
             except LLMError as exc:
                 last_error = exc
+                _LOGGER.debug(
+                    "LLM validation failure (attempt %d/%d): %s", attempt + 1, self._settings.llm_max_attempts, exc
+                )
                 if attempt + 1 < self._settings.llm_max_attempts:
                     instructions = f"{SYSTEM_PROMPT}\n上一版 JSON 未通过验证。请只修复契约错误：{exc}"
                     repair_payload: dict[str, object] = {
