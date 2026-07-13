@@ -13,6 +13,10 @@ import jwt
 from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_document, health_guidance
 from .models import AirQualitySnapshot, SourceDocument, WeatherContextSnapshot
 from .reference_data import reference_string_tuple
+from .time_utils import (
+    datetime_timezone_specifier,
+    parse_datetime_with_default_timezone,
+)
 
 
 class WeatherContextError(RuntimeError):
@@ -127,10 +131,10 @@ class QWeatherProvider:
                 or indices_payload.get("fxLink")
                 or "https://www.qweather.com/"
             )
-            observed_at = str(
-                weather_payload.get("updateTime")
-                or indices_payload.get("updateTime")
-                or "实时"
+            observed_at = parse_datetime_with_default_timezone(
+                str(weather_payload.get("updateTime") or indices_payload["updateTime"]),
+                "Asia/Shanghai",
+                context="QWeather update time",
             )
         except WeatherContextError:
             raise
@@ -169,7 +173,7 @@ class QWeatherProvider:
                 source_id="air-quality:qweather",
                 source_name="QWeather air quality",
                 source_url=str(_first_attribution(payload) or "https://www.qweather.com/"),
-                observed_at=str(payload.get("updateTime") or "实时"),
+                observed_at=None,
                 aqi=aqi,
                 aqi_display=str(index.get("aqiDisplay", index["aqi"])),
                 aqi_standard=_aqi_standard(index),
@@ -237,7 +241,11 @@ class OpenMeteoProvider:
             )
             if not weather_forecast:
                 raise WeatherContextError("Open-Meteo returned no daily forecast")
-            observed_at = str(cast(dict[str, object], payload.get("current", {})).get("time", "实时"))
+            observed_at = parse_datetime_with_default_timezone(
+                str(cast(dict[str, object], payload["current"])["time"]),
+                str(payload["timezone"]),
+                context="Open-Meteo weather update time",
+            )
         except WeatherContextError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError):
@@ -269,14 +277,19 @@ class OpenMeteoProvider:
                 f"{self._air_quality_base_url}/v1/air-quality", params=params
             )
             response.raise_for_status()
-            current = cast(dict[str, Any], response.json()["current"])
+            payload = response.json()
+            current = cast(dict[str, Any], payload["current"])
             aqi = round(float(current["us_aqi"]))
             category, guidance = health_guidance(aqi)
             return AirQualitySnapshot(
                 source_id="air-quality:open-meteo",
                 source_name="Open-Meteo air quality",
                 source_url="https://open-meteo.com/en/docs/air-quality-api",
-                observed_at=str(current["time"]),
+                observed_at=parse_datetime_with_default_timezone(
+                    str(current["time"]),
+                    str(payload["timezone"]),
+                    context="Open-Meteo air-quality update time",
+                ),
                 aqi=aqi,
                 aqi_display=str(aqi),
                 aqi_standard="U.S. AQI",
@@ -323,7 +336,14 @@ class AirQualitySupplementingWeatherProvider:
                 "Weather source did not provide air quality; configure AQICN_API_TOKEN"
             )
         try:
-            air_quality = await self._air_quality_provider.fetch(latitude, longitude)
+            air_quality = await self._air_quality_provider.fetch(
+                latitude,
+                longitude,
+                datetime_timezone_specifier(
+                    snapshot.observed_at,
+                    context="Weather snapshot time",
+                ),
+            )
         except AirQualityError:
             raise WeatherContextError(
                 "Weather source did not provide air quality and AQICN fallback failed"
@@ -340,7 +360,7 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
             name=snapshot.source_name,
             url=snapshot.source_url,
             content=(
-                f"更新时间：{snapshot.observed_at}\n"
+                f"更新时间：{snapshot.observed_at.to_iso8601_string()}\n"
                 f"今明天气预报：\n{weather}\n"
                 f"生活与出行指数：\n{lifestyle}"
             ),

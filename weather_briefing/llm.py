@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from datetime import datetime
 from typing import Any, Protocol
 
 import httpx
+import pendulum
 
 from .models import BriefingResult, Conclusion, Warning
+from .time_utils import require_aware_datetime
 
 
 class LLMError(RuntimeError):
@@ -83,7 +84,12 @@ class DeepSeekProvider(OpenAICompatibleChatCompletionsProvider):
         )
 
 
-def parse_result(payload: Mapping[str, Any], now: datetime, valid_source_ids: set[str]) -> BriefingResult:
+def parse_result(
+    payload: Mapping[str, Any],
+    now: pendulum.DateTime,
+    valid_source_ids: set[str],
+) -> BriefingResult:
+    require_aware_datetime(now, context="Briefing result time")
     def conclusions(key: str) -> tuple[Conclusion, ...]:
         values = payload.get(key, [])
         if not isinstance(values, list):

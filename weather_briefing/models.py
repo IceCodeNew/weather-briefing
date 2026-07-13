@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+
+import pendulum
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +51,7 @@ class Article:
     source_name: str
     title: str
     url: str
-    published_at: datetime
+    published_at: pendulum.DateTime
     content: str
     is_verbatim: bool = False
 
@@ -68,7 +69,7 @@ class AirQualitySnapshot:
     source_id: str
     source_name: str
     source_url: str
-    observed_at: str
+    observed_at: pendulum.DateTime | None
     aqi: float
     aqi_display: str
     aqi_standard: str
@@ -84,7 +85,7 @@ class WeatherContextSnapshot:
     source_id: str
     source_name: str
     source_url: str
-    observed_at: str
+    observed_at: pendulum.DateTime
     weather_forecast: tuple[str, ...]
     lifestyle_advice: tuple[str, ...] = ()
     air_quality: AirQualitySnapshot | None = None
@@ -97,7 +98,7 @@ class Warning:
     status: str
     detail: str
     source_ids: tuple[str, ...]
-    last_confirmed_at: datetime
+    last_confirmed_at: pendulum.DateTime
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,9 +4,11 @@ from functools import cache
 from typing import Protocol
 
 import httpx
+import pendulum
 
 from .models import AirQualitySnapshot, SourceDocument
 from .reference_data import ReferenceDataError, reference_value
+from .time_utils import parse_datetime_with_default_timezone
 
 
 class AirQualityError(RuntimeError):
@@ -14,7 +16,12 @@ class AirQualityError(RuntimeError):
 
 
 class AirQualityProvider(Protocol):
-    async def fetch(self, latitude: float, longitude: float) -> AirQualitySnapshot: ...
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        timezone: str,
+    ) -> AirQualitySnapshot: ...
 
 
 class AQICNProvider:
@@ -29,7 +36,12 @@ class AQICNProvider:
         self._token = token
         self._base_url = base_url
 
-    async def fetch(self, latitude: float, longitude: float) -> AirQualitySnapshot:
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        timezone: str,
+    ) -> AirQualitySnapshot:
         try:
             response = await self._client.get(
                 f"{self._base_url}/feed/geo:{latitude};{longitude}/",
@@ -44,7 +56,7 @@ class AQICNProvider:
             pm25_value = data.get("iaqi", {}).get("pm25", {}).get("v")
             pm25_aqi = round(float(pm25_value)) if pm25_value is not None else None
             city = data["city"]
-            observed_at = str(data.get("time", {}).get("s", "unknown"))
+            observed_at = _aqicn_observed_at(data.get("time"), timezone)
         except AirQualityError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError):
@@ -67,6 +79,11 @@ class AQICNProvider:
 
 
 def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
+    observed_at = (
+        snapshot.observed_at.to_iso8601_string()
+        if snapshot.observed_at is not None
+        else "不可用"
+    )
     concentration = "不可用"
     if snapshot.pm25_concentration is not None and snapshot.pm25_unit:
         concentration = f"{snapshot.pm25_concentration:g} {snapshot.pm25_unit}"
@@ -76,7 +93,7 @@ def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
         name=snapshot.source_name,
         url=snapshot.source_url,
         content=(
-            f"观测时间：{snapshot.observed_at}\n"
+            f"观测时间：{observed_at}\n"
             f"AQI：{snapshot.aqi_display}（标准：{snapshot.aqi_standard}；"
             f"类别：{snapshot.category}）\n"
             f"PM2.5 单项 AQI：{pm25_aqi}（标准：{snapshot.aqi_standard}）\n"
@@ -91,6 +108,28 @@ def health_guidance(aqi: int) -> tuple[str, str]:
         if maximum_aqi is None or aqi <= maximum_aqi:
             return category, guidance
     raise ReferenceDataError("Air quality guidance must end with an unbounded band")
+
+
+def _aqicn_observed_at(
+    value: object,
+    queried_location_timezone: str,
+) -> pendulum.DateTime | None:
+    if not isinstance(value, dict):
+        return None
+    time_value = value.get("iso") or value.get("s")
+    if not isinstance(time_value, str) or not time_value.strip():
+        return None
+    response_timezone = value.get("tz")
+    default_timezone = (
+        response_timezone.strip()
+        if isinstance(response_timezone, str) and response_timezone.strip()
+        else queried_location_timezone
+    )
+    return parse_datetime_with_default_timezone(
+        time_value,
+        default_timezone,
+        context="AQICN observation time",
+    )
 
 
 @cache

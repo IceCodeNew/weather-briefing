@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timedelta
+
+import pendulum
 
 from .config import Settings
 from .llm import LLMError, LLMProvider, parse_result
@@ -11,6 +12,7 @@ from .prompts import SYSTEM_PROMPT
 from .publishers import DeliveryProvider
 from .sources import HTTPContextSource, RSSSource
 from .state import SQLiteStateStore
+from .time_utils import require_aware_datetime
 from .weather_context import WeatherContextProvider, snapshot_to_documents
 
 
@@ -37,8 +39,10 @@ class BriefingService:
         self._ops_delivery = ops_delivery
         self._weather_context_provider = weather_context_provider
 
-    async def run(self, kind: str, now: datetime | None = None) -> str | None:
-        current_time = now or datetime.now(self._settings.timezone)
+    async def run(self, kind: str, now: pendulum.DateTime | None = None) -> str | None:
+        current_time = require_aware_datetime(
+            now or pendulum.now(self._settings.timezone), context="Briefing run time"
+        )
         try:
             body = await self._run(kind, current_time)
         except Exception:
@@ -52,7 +56,7 @@ class BriefingService:
         self._state.record_success()
         return body
 
-    async def _run(self, kind: str, now: datetime) -> str | None:
+    async def _run(self, kind: str, now: pendulum.DateTime) -> str | None:
         feeds = tuple(
             feed for feed in self._settings.feeds if not feed.location_ids or self._location.id in feed.location_ids
         )
@@ -72,10 +76,10 @@ class BriefingService:
                 f"以下源超过 {self._settings.rss_stale_hours} 小时无新文章：{', '.join(stale)}",
             )
             self._state.mark_stale_sources_alerted(tuple(stale), now)
-        local_now = now.astimezone(self._settings.timezone)
-        today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        tomorrow_start = today_start + timedelta(days=1)
-        yesterday_start = today_start - timedelta(days=1)
+        local_now = now.in_timezone(self._settings.timezone)
+        today_start = local_now.start_of("day")
+        tomorrow_start = today_start.add(days=1)
+        yesterday_start = today_start.subtract(days=1)
         todays_articles = tuple(
             article for article in all_articles if today_start <= article.published_at < tomorrow_start
         )
@@ -172,7 +176,7 @@ class BriefingService:
     def _save_result_state(
         self,
         kind: str,
-        now: datetime,
+        now: pendulum.DateTime,
         new_articles: tuple[Article, ...],
         bootstrap_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
@@ -195,7 +199,7 @@ class BriefingService:
     async def _summarize(
         self,
         payload: dict[str, object],
-        now: datetime,
+        now: pendulum.DateTime,
         valid_source_ids: set[str],
         validator: Callable[[BriefingResult], None] | None = None,
     ) -> BriefingResult:
@@ -240,7 +244,7 @@ class BriefingService:
     def _build_payload(
         self,
         kind: str,
-        now: datetime,
+        now: pendulum.DateTime,
         articles: tuple[Article, ...],
         historical_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],

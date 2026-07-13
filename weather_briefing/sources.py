@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import random
-from datetime import datetime
 from time import struct_time
-from zoneinfo import ZoneInfo
 
 import feedparser
 import httpx
+import pendulum
 
 from .content_cleaners import ContentCleaner, ContentCleaningRules, HTMLContentCleaner
 from .models import Article, ContextSourceConfig, FeedConfig, SourceDocument
@@ -18,11 +17,11 @@ class SourceFetchError(RuntimeError):
     """Raised after a source exhausts all retry attempts."""
 
 
-def _entry_time(entry: feedparser.FeedParserDict, timezone: ZoneInfo) -> datetime | None:
+def _entry_time(entry: feedparser.FeedParserDict) -> pendulum.DateTime | None:
     parsed: struct_time | None = entry.get("published_parsed") or entry.get("updated_parsed")
     if parsed is None:
         return None
-    return datetime(*parsed[:6], tzinfo=ZoneInfo("UTC")).astimezone(timezone)
+    return pendulum.datetime(*parsed[:6], tz="UTC")
 
 
 def _entry_content(entry: feedparser.FeedParserDict) -> str:
@@ -37,14 +36,12 @@ class RSSSource:
         self,
         client: httpx.AsyncClient,
         *,
-        timezone: ZoneInfo,
         max_attempts: int,
         retry_min_seconds: float = 3,
         retry_max_seconds: float = 5,
         cleaner: ContentCleaner | None = None,
     ) -> None:
         self._client = client
-        self._timezone = timezone
         self._max_attempts = max_attempts
         self._retry_min_seconds = retry_min_seconds
         self._retry_max_seconds = retry_max_seconds
@@ -57,7 +54,7 @@ class RSSSource:
             raise SourceFetchError(f"RSS parser rejected source {config.id}")
         articles: list[Article] = []
         for entry in parsed.entries:
-            published_at = _entry_time(entry, self._timezone)
+            published_at = _entry_time(entry)
             if published_at is None:
                 continue
             url = str(entry.get("link", "")).strip()
@@ -92,12 +89,8 @@ class RSSSource:
                 return response.text
             except httpx.HTTPError:
                 if attempt < self._max_attempts:
-                    await asyncio.sleep(
-                        random.uniform(self._retry_min_seconds, self._retry_max_seconds)
-                    )
-        raise SourceFetchError(
-            f"RSS source {config.id} failed after {self._max_attempts} attempts"
-        ) from None
+                    await asyncio.sleep(random.uniform(self._retry_min_seconds, self._retry_max_seconds))
+        raise SourceFetchError(f"RSS source {config.id} failed after {self._max_attempts} attempts") from None
 
 
 class HTTPContextSource:
