@@ -330,7 +330,7 @@ def _make_fake_settings(**overrides: object) -> object:
         "rss_retry_min_seconds": 3,
         "rss_retry_max_seconds": 5,
         "rss_stale_hours": 24,
-        "task_failure_threshold": 3,
+        "rss_failure_threshold": 3,
         "warning_retention_hours": 12,
         "history_hours": 48,
         "briefing_max_characters": 3500,

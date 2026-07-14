@@ -196,7 +196,7 @@ class Settings:
     rss_retry_min_seconds: float
     rss_retry_max_seconds: float
     rss_stale_hours: int
-    task_failure_threshold: int
+    rss_failure_threshold: int
     warning_retention_hours: int
     history_hours: int
     briefing_max_characters: int
@@ -327,7 +327,7 @@ class Settings:
             rss_retry_min_seconds=retry_min,
             rss_retry_max_seconds=retry_max,
             rss_stale_hours=_positive_integer("RSS_STALE_HOURS", 24),
-            task_failure_threshold=_positive_integer("TASK_FAILURE_THRESHOLD", 3),
+            rss_failure_threshold=_positive_integer("RSS_FAILURE_THRESHOLD", 3),
             warning_retention_hours=_positive_integer("WARNING_RETENTION_HOURS", 12),
             history_hours=_positive_integer("HISTORY_HOURS", 48),
             briefing_max_characters=briefing_max_characters,

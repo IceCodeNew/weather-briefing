@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -18,6 +19,7 @@ from weather_briefing.publishers import DeliveryProvider
 from weather_briefing.render import PlainTextRenderer
 from weather_briefing.service import BriefingService
 from weather_briefing.state import SQLiteStateStore
+from weather_briefing.weather_context import WeatherContextError
 
 
 class EmptyRSSSource:
@@ -36,6 +38,25 @@ class StaticRSSSource:
 class FailingRSSSource:
     async def fetch(self, config: object) -> tuple[Article, ...]:
         raise RuntimeError("feed unavailable")
+
+
+class CanceledRSSSource:
+    async def fetch(self, config: object) -> tuple[Article, ...]:
+        raise asyncio.CancelledError
+
+
+class MixedOutcomeRSSSource:
+    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
+        if config.id.startswith("canceled-"):
+            raise asyncio.CancelledError
+        if config.id == "failing-feed":
+            raise RuntimeError("feed unavailable")
+        return ()
+
+
+class FailingWeatherContextProvider:
+    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+        raise WeatherContextError("weather context unavailable")
 
 
 class EmptyContextSource:
@@ -112,6 +133,18 @@ class RecordingPublisher:
         self.messages.append((message, single_message))
 
 
+class FailOncePublisher(RecordingPublisher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
+        self.attempts += 1
+        if self.attempts == 1:
+            raise RuntimeError("delivery unavailable")
+        await super().publish(message, single_message=single_message)
+
+
 def _location() -> ResolvedLocation:
     return ResolvedLocation(
         id="test",
@@ -133,8 +166,8 @@ async def test_daily_briefing_uses_configured_coordinates_and_air_quality_contex
         timezone=timezone,
         feeds=(),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -188,8 +221,8 @@ async def test_hourly_briefing_also_uses_the_llm_provider(tmp_path: Path) -> Non
         timezone=timezone,
         feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -226,8 +259,8 @@ async def test_hourly_api_only_update_can_be_remembered_without_delivery(
         timezone=timezone,
         feeds=(),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -282,8 +315,8 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
         timezone=timezone,
         feeds=(),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -291,6 +324,8 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
     )
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    ops_publisher = RecordingPublisher()
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), ops_publisher)
 
     with SQLiteStateStore(tmp_path / f"{kind}.sqlite3") as state:
         service = BriefingService(
@@ -301,7 +336,7 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
             cast(Any, EmptyContextSource()),
             llm,
             delivery,
-            delivery,
+            ops_delivery,
             StaticWeatherContextProvider(),
         )
         with pytest.raises(LLMError, match="validation failed") as error:
@@ -311,16 +346,16 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
     assert publisher.messages == []
 
 
-async def test_failure_alert_is_sent_only_when_threshold_is_first_reached(
+async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     settings = SimpleNamespace(
         timezone=timezone,
-        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/feed"),),
+        feeds=(),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -335,19 +370,77 @@ async def test_failure_alert_is_sent_only_when_threshold_is_first_reached(
             cast(Any, settings),
             _location(),
             state,
-            cast(Any, FailingRSSSource()),
+            cast(Any, EmptyRSSSource()),
             cast(Any, EmptyContextSource()),
             RecordingLLM(),
             delivery,
             delivery,
+            FailingWeatherContextProvider(),
         )
-        for attempt in range(4):
-            with pytest.raises(RuntimeError, match="feed unavailable") as error:
-                await service.run("hourly", now.add(hours=attempt))
-            assert error.value.__notes__ == [f"Briefing run failed after {attempt + 1} consecutive failure(s)"]
+        # First failure: alert fires immediately
+        with pytest.raises(WeatherContextError, match="weather context unavailable") as error:
+            await service.run("hourly", now)
+        assert error.value.__notes__ == ["Briefing run failed"]
+        assert len(publisher.messages) == 1
+        assert "任务执行失败" in publisher.messages[0][0].body
 
-    assert len(publisher.messages) == 1
-    assert "连续失败 3 次" in publisher.messages[0][0].body
+        # Second consecutive failure: no new alert
+        with pytest.raises(WeatherContextError, match="weather context unavailable") as error:
+            await service.run("hourly", now.add(hours=1))
+        assert error.value.__notes__ == ["Briefing run failed"]
+        assert len(publisher.messages) == 1
+
+
+async def test_task_failure_alert_delivery_failure_is_retried(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    ops_publisher = FailOncePublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "failure-alert.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, EmptyRSSSource()),
+            cast(Any, EmptyContextSource()),
+            RecordingLLM(),
+            delivery,
+            DeliveryProvider(PlainTextRenderer(), ops_publisher),
+            FailingWeatherContextProvider(),
+        )
+
+        with (
+            caplog.at_level("ERROR", logger="weather_briefing.service"),
+            pytest.raises(WeatherContextError, match="weather context unavailable") as error,
+        ):
+            await service.run("hourly", now)
+
+        with pytest.raises(WeatherContextError, match="weather context unavailable"):
+            await service.run("hourly", now.add(hours=1))
+        assert len(ops_publisher.messages) == 1
+        assert "任务执行失败" in ops_publisher.messages[0][0].body
+
+        with pytest.raises(WeatherContextError, match="weather context unavailable"):
+            await service.run("hourly", now.add(hours=2))
+        assert len(ops_publisher.messages) == 1
+
+    assert error.value.__notes__ == ["Briefing run failed"]
+    assert "Failed to publish or record briefing failure alert" in caplog.text
 
 
 async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path) -> None:
@@ -367,8 +460,8 @@ async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path) -> Non
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -402,8 +495,8 @@ async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) 
         timezone=timezone,
         feeds=(),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -446,8 +539,8 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=1,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -520,8 +613,8 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -555,8 +648,8 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
         timezone=timezone,
         feeds=(),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=10,
@@ -610,8 +703,8 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
         timezone=timezone,
         feeds=(FeedConfig("known-feed", "Known", "https://example.invalid/rss"),),
         context_sources=(),
-        task_failure_threshold=3,
         rss_stale_hours=24,
+        rss_failure_threshold=3,
         warning_retention_hours=12,
         history_hours=48,
         briefing_max_characters=3500,
@@ -637,3 +730,220 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
     assert body is None
     assert llm.payload is None
     assert publisher.messages == []
+
+
+async def test_rss_failure_does_not_crash_daily_task_with_weather_context(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("failing-feed", "Failing", "https://example.invalid/feed"),),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=3,
+    )
+    llm = RecordingLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "rss-fail.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, FailingRSSSource()),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        body = await service.run("daily", now)
+
+    assert body is not None
+    assert len(publisher.messages) == 1
+
+
+async def test_rss_cancellation_aborts_task_without_recording_failure(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("canceled-feed", "Canceled", "https://example.invalid/feed"),),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=1,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "rss-canceled.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, CanceledRSSSource()),
+            cast(Any, EmptyContextSource()),
+            RecordingLLM(),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await service.run("hourly", now)
+
+        assert state.rss_sources_requiring_failure_alert(("canceled-feed",), 1) == []
+
+    assert publisher.messages == []
+
+
+async def test_rss_cancellation_records_other_completed_feed_results(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(
+            FeedConfig("canceled-feed", "Canceled", "https://example.invalid/canceled"),
+            FeedConfig("canceled-other", "Also canceled", "https://example.invalid/canceled-other"),
+            FeedConfig("recovered-feed", "Recovered", "https://example.invalid/recovered"),
+            FeedConfig("failing-feed", "Failing", "https://example.invalid/failing"),
+        ),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=1,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "rss-canceled-results.sqlite3") as state:
+        state.record_rss_fetch_failure("recovered-feed")
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, MixedOutcomeRSSSource()),
+            cast(Any, EmptyContextSource()),
+            RecordingLLM(),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await service.run("hourly", now)
+
+        assert state.rss_sources_requiring_failure_alert(("recovered-feed",), 1) == []
+        assert state.rss_sources_requiring_failure_alert(("failing-feed",), 1) == ["failing-feed"]
+
+
+async def test_rss_failure_alert_is_sent_after_threshold(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("fail-feed", "Failing", "https://example.invalid/feed"),),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=2,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    llm = RecordingLLM()
+    ops_publisher = RecordingPublisher()
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), ops_publisher)
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "rss-alert.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, FailingRSSSource()),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            ops_delivery,
+            StaticWeatherContextProvider(),
+        )
+        # First failure: no alert yet (threshold is 2)
+        await service.run("hourly", now)
+        assert ops_publisher.messages == []
+
+        # Second failure: alert should trigger
+        await service.run("hourly", now.add(hours=1))
+        assert len(ops_publisher.messages) == 1
+        assert "持续获取失败" in ops_publisher.messages[0][0].body
+
+        # Third failure: no new alert (already alerted)
+        await service.run("hourly", now.add(hours=2))
+        assert len(ops_publisher.messages) == 1
+
+
+async def test_failed_rss_alert_delivery_is_retried(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("fail-feed", "Failing", "https://example.invalid/feed"),),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=1,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    ops_publisher = FailOncePublisher()
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), ops_publisher)
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "rss-alert-retry.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, FailingRSSSource()),
+            cast(Any, EmptyContextSource()),
+            RecordingLLM(),
+            delivery,
+            ops_delivery,
+            StaticWeatherContextProvider(),
+        )
+
+        with caplog.at_level("ERROR", logger="weather_briefing.service"):
+            await service.run("hourly", now)
+        assert state.rss_sources_requiring_failure_alert(("fail-feed",), 1) == ["fail-feed"]
+        assert len(publisher.messages) == 1
+
+        await service.run("hourly", now.add(hours=1))
+        assert state.rss_sources_requiring_failure_alert(("fail-feed",), 1) == []
+
+    assert "Failed to publish or record RSS health alert" in caplog.text
+    assert any("持续获取失败" in message.body for message, _ in ops_publisher.messages)

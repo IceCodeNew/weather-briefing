@@ -56,6 +56,14 @@ class SQLiteStateStore:
             CREATE TABLE IF NOT EXISTS task_health (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1), consecutive_failures INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS task_failure_alert (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1), alerted_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS rss_failure_tracker (
+                source_id TEXT PRIMARY KEY,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                failure_alerted_at TEXT
+            );
             INSERT OR IGNORE INTO task_health(singleton, consecutive_failures) VALUES (1, 0);
             """
         )
@@ -308,6 +316,7 @@ class SQLiteStateStore:
 
     def record_success(self) -> None:
         self._connection.execute("UPDATE task_health SET consecutive_failures = 0 WHERE singleton = 1")
+        self._connection.execute("DELETE FROM task_failure_alert WHERE singleton = 1")
         self._connection.commit()
 
     def record_failure(self) -> int:
@@ -317,6 +326,73 @@ class SQLiteStateStore:
         self._connection.commit()
         row = self._connection.execute("SELECT consecutive_failures FROM task_health WHERE singleton = 1").fetchone()
         return int(row["consecutive_failures"])
+
+    def task_failure_requires_alert(self) -> bool:
+        row = self._connection.execute("SELECT 1 FROM task_failure_alert WHERE singleton = 1").fetchone()
+        return row is None
+
+    def mark_task_failure_alerted(self, alerted_at: pendulum.DateTime) -> None:
+        self._connection.execute(
+            "INSERT OR REPLACE INTO task_failure_alert(singleton, alerted_at) VALUES (1, ?)",
+            (_storage_time(alerted_at),),
+        )
+        self._connection.commit()
+
+    def record_rss_fetch_failure(self, source_id: str) -> int:
+        self._connection.execute(
+            """INSERT INTO rss_failure_tracker(source_id, consecutive_failures, failure_alerted_at)
+            VALUES (?, 1, NULL)
+            ON CONFLICT(source_id) DO UPDATE SET
+                consecutive_failures = consecutive_failures + 1""",
+            (source_id,),
+        )
+        self._connection.commit()
+        row = self._connection.execute(
+            "SELECT consecutive_failures FROM rss_failure_tracker WHERE source_id = ?",
+            (source_id,),
+        ).fetchone()
+        return int(row["consecutive_failures"])
+
+    def record_rss_fetch_success(self, source_id: str) -> None:
+        self._connection.execute(
+            "DELETE FROM rss_failure_tracker WHERE source_id = ?",
+            (source_id,),
+        )
+        self._connection.commit()
+
+    def rss_sources_requiring_failure_alert(
+        self,
+        source_ids: tuple[str, ...],
+        threshold: int,
+    ) -> list[str]:
+        if not source_ids:
+            return []
+        placeholders = ",".join("?" for _ in source_ids)
+        rows = self._connection.execute(
+            f"""SELECT source_id
+            FROM rss_failure_tracker
+            WHERE source_id IN ({placeholders})
+            AND consecutive_failures >= ?
+            AND failure_alerted_at IS NULL
+            ORDER BY source_id""",  # noqa: S608
+            (*source_ids, threshold),
+        )
+        return [str(row["source_id"]) for row in rows]
+
+    def mark_rss_failure_alerted(
+        self,
+        source_ids: tuple[str, ...],
+        alerted_at: pendulum.DateTime,
+    ) -> None:
+        if not source_ids:
+            return
+        placeholders = ",".join("?" for _ in source_ids)
+        self._connection.execute(
+            f"UPDATE rss_failure_tracker SET failure_alerted_at = ? "  # noqa: S608
+            f"WHERE source_id IN ({placeholders})",
+            (_storage_time(alerted_at), *source_ids),
+        )
+        self._connection.commit()
 
 
 def _parse_time(value: str) -> pendulum.DateTime:
