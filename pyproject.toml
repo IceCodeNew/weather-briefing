@@ -40,6 +40,9 @@ required-version = "==0.11.28"
 [tool.uv.build-backend]
 module-root = ""
 
+[[tool.uv.index]]
+url = "https://pypi.flatt.tech/simple/"
+
 [tool.ruff]
 line-length = 120
 target-version = "py311"
