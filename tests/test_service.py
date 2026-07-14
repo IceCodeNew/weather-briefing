@@ -13,6 +13,7 @@ from weather_briefing.models import (
     FeedConfig,
     RenderedMessage,
     ResolvedLocation,
+    Warning,
     WeatherContextSnapshot,
 )
 from weather_briefing.publishers import DeliveryProvider
@@ -295,6 +296,158 @@ async def test_hourly_api_only_update_can_be_remembered_without_delivery(
         "weather:test",
         "air-quality:test",
     }
+
+
+async def test_unchanged_active_warning_does_not_force_hourly_delivery(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    article = Article(
+        "warning-source",
+        "feed",
+        "Weather feed",
+        "Warning issued",
+        "https://example.invalid/warning",
+        now,
+        "Heat warning remains active",
+    )
+    warning = Warning(
+        "heat-warning",
+        "Heat warning",
+        "active",
+        "No material change",
+        (article.id,),
+        now,
+    )
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+
+    class UnchangedWarningLLM:
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "headline": "Warning unchanged",
+                "overview": "No material change.",
+                "conclusions": [],
+                "active_warnings": [
+                    {
+                        "id": warning.id,
+                        "title": warning.title,
+                        "status": warning.status,
+                        "detail": warning.detail,
+                        "source_ids": list(warning.source_ids),
+                    }
+                ],
+                "resolved_warning_ids": [],
+                "advice": [],
+                "disaster_tracking": [],
+                "should_publish": False,
+            }
+
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    with SQLiteStateStore(tmp_path / "warning.sqlite3") as state:
+        state.save_articles((article,), now)
+        state.update_warnings((warning,), (), now, {article.id})
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, EmptyRSSSource()),
+            cast(Any, EmptyContextSource()),
+            UnchangedWarningLLM(),
+            delivery,
+            delivery,
+        )
+
+        assert await service.run("hourly", now.add(hours=1)) is None
+        assert state.active_warnings(now.add(hours=1), 12)[0].id == warning.id
+
+    assert publisher.messages == []
+
+
+async def test_unpublished_article_is_included_until_a_later_briefing_is_published(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    article = Article(
+        id="deferred-article",
+        source_id="feed",
+        source_name="Weather feed",
+        title="Minor update",
+        url="https://example.invalid/minor",
+        published_at=now,
+        content="A small change that may become relevant later",
+    )
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+
+    class PublishingOnSecondRunLLM:
+        def __init__(self) -> None:
+            self.payloads: list[dict[str, object]] = []
+
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            self.payloads.append(payload)
+            sources = (
+                *cast(list[dict[str, object]], payload["new_articles"]),
+                *cast(list[dict[str, object]], payload["deferred_articles"]),
+            )
+            source_id = str(sources[0]["source_id"])
+            return {
+                "headline": "Accumulated update",
+                "overview": "Changes are now worth sending.",
+                "conclusions": [{"text": "Accumulated change", "source_ids": [source_id]}],
+                "active_warnings": [],
+                "resolved_warning_ids": [],
+                "advice": [],
+                "disaster_tracking": [],
+                "should_publish": len(self.payloads) == 2,
+            }
+
+    llm = PublishingOnSecondRunLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "deferred.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, StaticRSSSource(article)),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            delivery,
+        )
+        assert await service.run("hourly", now) is None
+        assert state.pending_articles() == (article,)
+
+        assert await service.run("hourly", now.add(hours=23)) is not None
+        assert state.pending_articles() == ()
+        assert state.known_article_ids((article.id,)) == {article.id}
+
+    assert cast(list[dict[str, object]], llm.payloads[0]["new_articles"])[0]["source_id"] == article.id
+    assert llm.payloads[0]["deferred_articles"] == []
+    assert llm.payloads[1]["new_articles"] == []
+    assert cast(list[dict[str, object]], llm.payloads[1]["deferred_articles"])[0]["source_id"] == article.id
+    assert len(publisher.messages) == 1
 
 
 @pytest.mark.parametrize(
