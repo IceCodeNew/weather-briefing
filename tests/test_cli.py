@@ -1,8 +1,11 @@
 import base64
 import logging
+from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pendulum
 import pytest
 
@@ -29,7 +32,8 @@ from weather_briefing.cli import (
     run,
 )
 from weather_briefing.config import Settings
-from weather_briefing.models import ResolvedLocation
+from weather_briefing.llm import OpenAICompatibleChatCompletionsProvider
+from weather_briefing.models import LocationSpec, ResolvedLocation
 
 
 def test_configure_logging_is_idempotent_and_updates_level() -> None:
@@ -287,70 +291,96 @@ def test_main_configures_info_logging_before_run_and_logs_failure_once(monkeypat
         logging.root.setLevel(original_root_level)
 
 
-def _make_fake_settings(**overrides: object) -> object:
-    from types import SimpleNamespace
+_DEFAULT_TZ = pendulum.timezone("Asia/Shanghai")
 
-    tz = pendulum.timezone("Asia/Shanghai")
-    defaults: dict[str, object] = {
-        "debug": False,
-        "timezone": tz,
-        "api_key": "k",
-        "llm_provider": "deepseek",
-        "llm_model": "m",
-        "llm_base_url": None,
-        "llm_max_output_tokens": 8192,
-        "llm_max_attempts": 3,
-        "http_timeout_seconds": 30,
-        "locations": (),
-        "locations_path": Path("locations.json"),
-        "geocoding_base_url": "https://geo.example.com",
-        "geocoding_api_key": None,
-        "nominatim_base_url": "https://nominatim.example.com",
-        "geocoding_user_agent": "test",
-        "geocoding_cache_path": Path("state/geocoding.json"),
-        "feeds": (),
-        "context_sources": (),
-        "weather_providers": None,
-        "qweather_project_id": None,
-        "qweather_credential_id": None,
-        "qweather_private_key": None,
-        "qweather_jwt_lifetime_seconds": 900,
-        "qweather_base_url": None,
-        "qweather_index_types": (),
-        "open_meteo_weather_base_url": "https://weather.example.com",
-        "open_meteo_air_quality_base_url": "https://air.example.com",
-        "open_meteo_api_key": None,
-        "aqicn_api_token": None,
-        "aqicn_base_url": "https://aqi.example.com",
-        "state_path": Path("state/weather.sqlite3"),
-        "publisher": "stdout",
-        "telegram_bot_token": None,
-        "telegram_chat_id": None,
-        "rss_max_attempts": 3,
-        "rss_retry_min_seconds": 3,
-        "rss_retry_max_seconds": 5,
-        "rss_stale_hours": 24,
-        "rss_failure_threshold": 3,
-        "warning_retention_hours": 12,
-        "history_hours": 48,
-        "briefing_max_characters": 3500,
-        "greeting_hour": 8,
-        "greeting_minute": 0,
-        "hourly_cron": "9-23",
-    }
-    defaults.update(overrides)
-    return SimpleNamespace(**defaults)
+_DEFAULT_SETTINGS = Settings(
+    debug=False,
+    timezone=_DEFAULT_TZ,
+    api_key="k",
+    llm_provider="deepseek",
+    llm_model="m",
+    llm_base_url=None,
+    llm_max_output_tokens=8192,
+    llm_max_attempts=3,
+    http_timeout_seconds=30.0,
+    locations=(),
+    locations_path=Path("locations.json"),
+    geocoding_base_url="https://geo.example.com",
+    geocoding_api_key=None,
+    nominatim_base_url="https://nominatim.example.com",
+    geocoding_user_agent="test",
+    geocoding_cache_path=Path("state/geocoding.json"),
+    rss_sources_path=Path("rss-sources.json"),
+    feeds=(),
+    context_sources=(),
+    weather_providers=None,
+    qweather_project_id=None,
+    qweather_credential_id=None,
+    qweather_private_key=None,
+    qweather_jwt_lifetime_seconds=900,
+    qweather_base_url=None,
+    qweather_index_types=(),
+    open_meteo_weather_base_url="https://weather.example.com",
+    open_meteo_air_quality_base_url="https://air.example.com",
+    open_meteo_api_key=None,
+    aqicn_api_token=None,
+    aqicn_base_url="https://aqi.example.com",
+    state_path=Path("state/weather.sqlite3"),
+    publisher="stdout",
+    telegram_bot_token=None,
+    telegram_chat_id=None,
+    rss_max_attempts=3,
+    rss_retry_min_seconds=3.0,
+    rss_retry_max_seconds=5.0,
+    rss_stale_hours=24,
+    rss_failure_threshold=3,
+    warning_retention_hours=12,
+    history_hours=48,
+    briefing_max_characters=3500,
+    greeting_hour=8,
+    greeting_minute=0,
+    hourly_cron="9-23",
+)
 
 
-class _FakeAsyncClient:
-    def __init__(self) -> None:
-        self.timeout = None
+def _make_fake_settings(
+    *,
+    debug: bool = False,
+    llm_provider: str = "deepseek",
+    llm_base_url: str | None = None,
+    publisher: str = "stdout",
+    telegram_bot_token: str | None = None,
+    telegram_chat_id: str | None = None,
+    weather_providers: tuple[str, ...] | None = None,
+    qweather_project_id: str | None = None,
+    qweather_credential_id: str | None = None,
+    qweather_private_key: str | None = None,
+    qweather_base_url: str | None = None,
+    aqicn_api_token: str | None = None,
+    locations: tuple[LocationSpec, ...] = (),
+) -> Settings:
+    return replace(
+        _DEFAULT_SETTINGS,
+        debug=debug,
+        llm_provider=llm_provider,
+        llm_base_url=llm_base_url,
+        publisher=publisher,
+        telegram_bot_token=telegram_bot_token,
+        telegram_chat_id=telegram_chat_id,
+        weather_providers=weather_providers,
+        qweather_project_id=qweather_project_id,
+        qweather_credential_id=qweather_credential_id,
+        qweather_private_key=qweather_private_key,
+        qweather_base_url=qweather_base_url,
+        aqicn_api_token=aqicn_api_token,
+        locations=locations,
+    )
 
-    async def __aenter__(self) -> "_FakeAsyncClient":
-        return self
 
-    async def __aexit__(self, *args: object) -> None:
-        pass
+@pytest.fixture
+async def async_client() -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient() as client:
+        yield client
 
 
 async def test_run_skips_and_logs_when_enforce_window_outside_schedule(monkeypatch, capsys) -> None:
@@ -396,18 +426,21 @@ async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
     tz = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 14, 8, tz=tz)
     location = ResolvedLocation("test", "Test City", 39.9, 116.3, "CN", "Beijing", tz.name, True)
-    settings = _make_fake_settings(debug=False, publisher="stdout", locations=(location,))
+    settings = _make_fake_settings(
+        debug=False,
+        publisher="stdout",
+        locations=(LocationSpec(id="test", name="Test City"),),
+    )
 
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
-    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
-            return SimpleNamespace(location=loc, from_cache=True)
+            return SimpleNamespace(location=location, from_cache=True)
 
     monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
 
@@ -470,7 +503,11 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
         precision_reduced=True,
         matched_name="Matched City",
     )
-    settings = _make_fake_settings(debug=False, publisher="stdout", locations=(location,))
+    settings = _make_fake_settings(
+        debug=False,
+        publisher="stdout",
+        locations=(LocationSpec(id="test", name="Test City"),),
+    )
 
     alerts: list[tuple[str, str]] = []
 
@@ -483,11 +520,10 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: AlertDelivery())
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
-    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
-            return SimpleNamespace(location=loc, from_cache=False)
+            return SimpleNamespace(location=location, from_cache=False)
 
     monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
 
@@ -537,18 +573,21 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     tz = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 14, 8, tz=tz)
     location = ResolvedLocation("test", "Test City", 39.9, 116.3, "CN", "Beijing", tz.name, True)
-    settings = _make_fake_settings(debug=False, publisher="stdout", locations=(location,))
+    settings = _make_fake_settings(
+        debug=False,
+        publisher="stdout",
+        locations=(LocationSpec(id="test", name="Test City"),),
+    )
 
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
-    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
-            return SimpleNamespace(location=loc, from_cache=True)
+            return SimpleNamespace(location=location, from_cache=True)
 
     monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
 
@@ -591,70 +630,73 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
 
 
 class TestLLMProvider:
-    def test_deepseek_with_custom_base_url(self) -> None:
+    async def test_deepseek_with_custom_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             llm_provider="deepseek",
             llm_base_url="https://custom.example.invalid",
         )
-        provider = _llm_provider(settings, _FakeAsyncClient())
-        assert provider._base_url == "https://custom.example.invalid"
+        provider = _llm_provider(settings, async_client)
+        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
+        assert provider.base_url == "https://custom.example.invalid"
 
-    def test_deepseek_without_base_url(self) -> None:
+    async def test_deepseek_without_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
-        provider = _llm_provider(settings, _FakeAsyncClient())
-        assert provider._base_url == "https://api.deepseek.com"
+        provider = _llm_provider(settings, async_client)
+        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
+        assert provider.base_url == "https://api.deepseek.com"
 
-    def test_openai_compatible_missing_base_url(self) -> None:
+    async def test_openai_compatible_missing_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             llm_provider="openai-compatible",
             llm_base_url=None,
         )
         with pytest.raises(ValueError, match="LLM_BASE_URL"):
-            _llm_provider(settings, _FakeAsyncClient())
+            _llm_provider(settings, async_client)
 
-    def test_openai_compatible_with_base_url(self) -> None:
+    async def test_openai_compatible_with_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             llm_provider="openai-compatible",
             llm_base_url="https://compatible.example.invalid/v1",
         )
-        provider = _llm_provider(settings, _FakeAsyncClient())
-        assert provider._base_url == "https://compatible.example.invalid/v1"
+        provider = _llm_provider(settings, async_client)
+        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
+        assert provider.base_url == "https://compatible.example.invalid/v1"
 
-    def test_unsupported_provider(self) -> None:
+    async def test_unsupported_provider(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(llm_provider="unsupported")
         with pytest.raises(ValueError, match="Unsupported LLM provider"):
-            _llm_provider(settings, _FakeAsyncClient())
+            _llm_provider(settings, async_client)
 
 
 class TestDeliveryProvider:
-    def test_stdout(self) -> None:
+    async def test_stdout(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="stdout")
-        provider = _delivery_provider(settings, _FakeAsyncClient())
+        provider = _delivery_provider(settings, async_client)
         assert provider.renderer is not None
         assert provider.publisher is not None
 
-    def test_telegram_missing_config(self) -> None:
+    async def test_telegram_missing_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="telegram", telegram_bot_token=None)
         with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
-            _delivery_provider(settings, _FakeAsyncClient())
+            _delivery_provider(settings, async_client)
 
-    def test_telegram_with_config(self) -> None:
+    async def test_telegram_with_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             publisher="telegram",
             telegram_bot_token="test-token",
             telegram_chat_id="test-chat",
         )
-        provider = _delivery_provider(settings, _FakeAsyncClient())
+        provider = _delivery_provider(settings, async_client)
         assert provider.single_message_limit == 4096
 
-    def test_unsupported_publisher(self) -> None:
+    async def test_unsupported_publisher(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="unsupported")
         with pytest.raises(ValueError, match="Unsupported publisher"):
-            _delivery_provider(settings, _FakeAsyncClient())
+            _delivery_provider(settings, async_client)
 
 
 class TestWeatherContextProvider:
-    def test_qweather_not_configured_skips_when_auto(self) -> None:
+    async def test_qweather_not_configured_skips_when_auto(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             weather_providers=None,
             qweather_project_id=None,
@@ -663,10 +705,10 @@ class TestWeatherContextProvider:
             qweather_base_url=None,
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
-        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
-    def test_qweather_explicit_not_configured_raises(self) -> None:
+    async def test_qweather_explicit_not_configured_raises(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             weather_providers=("qweather",),
             qweather_project_id=None,
@@ -676,17 +718,17 @@ class TestWeatherContextProvider:
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
         with pytest.raises(ValueError, match="JWT configuration"):
-            _weather_context_provider(settings, _FakeAsyncClient(), location)
+            _weather_context_provider(settings, async_client, location)
 
-    def test_single_provider_bypasses_fallback(self) -> None:
+    async def test_single_provider_bypasses_fallback(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             weather_providers=None,
         )
         location = ResolvedLocation("test", "Test", 40.7, -74.0, "US", "NY", "America/New_York", False)
-        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
-    def test_qweather_configured(self) -> None:
+    async def test_qweather_configured(self, async_client: httpx.AsyncClient) -> None:
         key = b"fake-private-key-content"
         settings = _make_fake_settings(
             weather_providers=("qweather",),
@@ -696,11 +738,11 @@ class TestWeatherContextProvider:
             qweather_base_url="https://qweather.example.invalid",
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
-        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
 
-def test_no_weather_provider_available(monkeypatch) -> None:
+async def test_no_weather_provider_available(monkeypatch, async_client: httpx.AsyncClient) -> None:
     monkeypatch.setattr(
         "weather_briefing.cli.weather_providers_for",
         lambda *_: ("qweather",),
@@ -714,7 +756,7 @@ def test_no_weather_provider_available(monkeypatch) -> None:
     )
     location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
     with pytest.raises(ValueError, match="No configured weather provider"):
-        _weather_context_provider(settings, _FakeAsyncClient(), location)
+        _weather_context_provider(settings, async_client, location)
 
 
 def test_qweather_is_configured_all_fields() -> None:
@@ -737,19 +779,19 @@ def test_qweather_is_configured_missing_field() -> None:
     assert not _qweather_is_configured(settings)
 
 
-def test_build_weather_provider_unsupported() -> None:
+async def test_build_weather_provider_unsupported(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings()
     with pytest.raises(ValueError, match="Unsupported weather provider"):
-        _build_weather_provider("unknown", settings, _FakeAsyncClient())
+        _build_weather_provider("unknown", settings, async_client)
 
 
-def test_build_open_meteo_returns_provider() -> None:
+async def test_build_open_meteo_returns_provider(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings()
-    provider = _build_open_meteo(settings, _FakeAsyncClient())
+    provider = _build_open_meteo(settings, async_client)
     assert provider is not None
 
 
-def test_build_qweather_returns_provider() -> None:
+async def test_build_qweather_returns_provider(async_client: httpx.AsyncClient) -> None:
     import base64 as b64
 
     settings = _make_fake_settings(
@@ -758,24 +800,24 @@ def test_build_qweather_returns_provider() -> None:
         qweather_private_key=b64.b64encode(b"fake-private-key-content").decode(),
         qweather_base_url="https://qweather.example.invalid",
     )
-    provider = _build_qweather(settings, _FakeAsyncClient())
+    provider = _build_qweather(settings, async_client)
     assert provider is not None
 
 
-def test_build_qweather_missing_config_raises() -> None:
+async def test_build_qweather_missing_config_raises(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings(qweather_project_id=None)
     with pytest.raises(ValueError, match="QWeather provider requires"):
-        _build_qweather(settings, _FakeAsyncClient())
+        _build_qweather(settings, async_client)
 
 
-def test_aqicn_provider_returns_none_when_no_token() -> None:
+async def test_aqicn_provider_returns_none_when_no_token(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings(aqicn_api_token=None)
-    assert _aqicn_provider(settings, _FakeAsyncClient()) is None
+    assert _aqicn_provider(settings, async_client) is None
 
 
-def test_aqicn_provider_returns_instance_when_token_set() -> None:
+async def test_aqicn_provider_returns_instance_when_token_set(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings(aqicn_api_token="test-token")
-    provider = _aqicn_provider(settings, _FakeAsyncClient())
+    provider = _aqicn_provider(settings, async_client)
     assert provider is not None
 
 
