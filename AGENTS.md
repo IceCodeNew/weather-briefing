@@ -97,3 +97,17 @@ Usage notes:
 - For container and workflow changes, verify observable behavior rather than relying on configuration inspection alone. Useful probes include the final process tree, runtime user, argument override behavior, filesystem contents, or an actual workflow log.
 - Use mocks and dummy configuration for routine tests. Use real services only for an explicitly requested end-to-end test, and never expose private inputs in output.
 - If a check cannot run because of the local environment, report the exact limitation and what remains unverified instead of installing an alternative stack.
+
+## Pre-commit checklist
+
+Before every commit, run the following checks. Do not commit if any check fails.
+
+### Coverage
+
+```bash
+uv run --with pytest --with pytest-cov -- pytest --cov --cov-branch --cov-report=xml
+```
+
+- Coverage must not decrease from the current baseline. If the report shows any drop, amend the change to restore coverage.
+- Follow the principle: one commit / one PR does one thing. When making a code change, only write or update tests directly related to that change. Do not bundle unrelated test additions.
+- Broad coverage improvements across the codebase must be proposed in a separate, dedicated PR.
