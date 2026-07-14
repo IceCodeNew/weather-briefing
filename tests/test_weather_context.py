@@ -23,6 +23,34 @@ class StaticAuthenticator:
         return "Bearer runtime-token"
 
 
+_QWEATHER_DAILY_ITEM = {
+    "fxDate": "2026-07-13",
+    "textDay": "晴",
+    "textNight": "晴",
+    "tempMin": "20",
+    "tempMax": "30",
+    "windDirDay": "南风",
+    "windScaleDay": "3-4",
+    "humidity": "60",
+    "precip": "0.0",
+}
+
+
+def _qweather_weather_response(*, fx_link: str | None = None) -> httpx.Response:
+    payload: dict[str, object] = {
+        "code": "200",
+        "updateTime": "2026-07-13T08:00",
+        "daily": [_QWEATHER_DAILY_ITEM],
+    }
+    if fx_link is not None:
+        payload["fxLink"] = fx_link
+    return httpx.Response(200, json=payload)
+
+
+def _qweather_successful_indices_response() -> httpx.Response:
+    return httpx.Response(200, json={"code": "200", "daily": []})
+
+
 def test_qweather_jwt_authenticator_delegates_eddsa_signing_to_pyjwt(monkeypatch) -> None:
     private_pem = "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----\n"
     encode_call: dict[str, object] = {}
@@ -400,29 +428,9 @@ async def test_qweather_rejects_empty_daily_forecast() -> None:
 async def test_qweather_air_quality_failure_is_silent() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(500)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -556,26 +564,7 @@ async def test_aqicn_fallback_raises_weather_context_error_on_air_quality_error(
 async def test_qweather_rejects_non_success_indices_status() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response()
         if request.url.path == "/v7/indices/1d":
             return httpx.Response(200, json={"code": "400"})
         raise AssertionError(f"Unexpected request: {request.url}")
@@ -717,29 +706,9 @@ async def test_snapshot_to_documents_without_air_quality() -> None:
 async def test_qweather_air_quality_parses_invalid_indexes_gracefully() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={"indexes": [{"code": "cn-mee", "aqi": 50}], "pollutants": []},
@@ -758,29 +727,9 @@ async def test_qweather_air_quality_parses_invalid_indexes_gracefully() -> None:
 async def test_qweather_air_quality_handles_missing_pollutant_code() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
@@ -818,29 +767,9 @@ async def test_qweather_air_quality_handles_missing_pollutant_code() -> None:
 async def test_qweather_air_quality_parse_failure_due_to_non_dict_indexes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
@@ -862,26 +791,7 @@ async def test_qweather_air_quality_parse_failure_due_to_non_dict_indexes() -> N
 async def test_qweather_lifestyle_handles_non_dict_items() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response()
         if request.url.path == "/v7/indices/1d":
             return httpx.Response(200, json={"code": "200", "daily": ["not-a-dict"]})
         raise AssertionError(f"Unexpected request: {request.url}")
@@ -904,23 +814,11 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
                     "code": "200",
                     "updateTime": "2026-07-13T08:00",
                     "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        },
+                        _QWEATHER_DAILY_ITEM,
                         "not-a-dict",
                     ],
                 },
             )
-        if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
         raise AssertionError(f"Unexpected request: {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -935,29 +833,9 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
 async def test_qweather_air_quality_handles_non_list_pollutants() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
@@ -988,29 +866,9 @@ async def test_qweather_air_quality_handles_non_list_pollutants() -> None:
 async def test_qweather_air_quality_handles_missing_pm2p5_pollutant() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
@@ -1046,29 +904,9 @@ async def test_qweather_air_quality_handles_missing_pm2p5_pollutant() -> None:
 async def test_qweather_air_quality_handles_non_list_subindexes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
@@ -1106,29 +944,9 @@ async def test_qweather_air_quality_handles_non_list_subindexes() -> None:
 async def test_qweather_air_quality_subindex_code_not_matching_standard() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
@@ -1166,29 +984,9 @@ async def test_qweather_air_quality_subindex_code_not_matching_standard() -> Non
 async def test_qweather_air_quality_handles_non_dict_metadata() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
@@ -1226,29 +1024,9 @@ async def test_qweather_air_quality_handles_non_dict_metadata() -> None:
 async def test_qweather_air_quality_handles_empty_attributions() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return httpx.Response(
-                200,
-                json={
-                    "code": "200",
-                    "updateTime": "2026-07-13T08:00",
-                    "fxLink": "https://www.qweather.com/",
-                    "daily": [
-                        {
-                            "fxDate": "2026-07-13",
-                            "textDay": "晴",
-                            "textNight": "晴",
-                            "tempMin": "20",
-                            "tempMax": "30",
-                            "windDirDay": "南风",
-                            "windScaleDay": "3-4",
-                            "humidity": "60",
-                            "precip": "0.0",
-                        }
-                    ],
-                },
-            )
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": []})
+            return _qweather_successful_indices_response()
         return httpx.Response(
             200,
             json={
