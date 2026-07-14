@@ -113,6 +113,11 @@ class SQLiteStateStore:
                 title TEXT NOT NULL, url TEXT NOT NULL, published_at TEXT NOT NULL,
                 content TEXT NOT NULL, is_verbatim INTEGER NOT NULL, processed_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS pending_articles (
+                id TEXT PRIMARY KEY, source_id TEXT NOT NULL, source_name TEXT NOT NULL,
+                title TEXT NOT NULL, url TEXT NOT NULL, published_at TEXT NOT NULL,
+                content TEXT NOT NULL, is_verbatim INTEGER NOT NULL, first_seen_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS briefings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
                 body TEXT NOT NULL, published_at TEXT NOT NULL
@@ -156,6 +161,10 @@ class SQLiteStateStore:
         return {str(row["id"]) for row in rows}
 
     def save_articles(self, articles: tuple[Article, ...], processed_at: pendulum.DateTime) -> None:
+        self._insert_articles(articles, processed_at)
+        self._connection.commit()
+
+    def _insert_articles(self, articles: tuple[Article, ...], processed_at: pendulum.DateTime) -> None:
         self._connection.executemany(
             """INSERT OR IGNORE INTO articles
             (id, source_id, source_name, title, url, published_at, content, is_verbatim, processed_at)
@@ -174,6 +183,47 @@ class SQLiteStateStore:
                 )
                 for article in articles
             ],
+        )
+
+    def save_pending_articles(self, articles: tuple[Article, ...], first_seen_at: pendulum.DateTime) -> None:
+        self._connection.executemany(
+            """INSERT OR IGNORE INTO pending_articles
+            (id, source_id, source_name, title, url, published_at, content, is_verbatim, first_seen_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    article.id,
+                    article.source_id,
+                    article.source_name,
+                    article.title,
+                    article.url,
+                    _storage_time(article.published_at),
+                    article.content,
+                    article.is_verbatim,
+                    _storage_time(first_seen_at),
+                )
+                for article in articles
+            ],
+        )
+        self._connection.commit()
+
+    def pending_articles(self) -> tuple[Article, ...]:
+        rows = self._connection.execute("SELECT * FROM pending_articles ORDER BY first_seen_at, published_at")
+        return tuple(_article_from_row(row) for row in rows)
+
+    def mark_articles_processed(
+        self,
+        articles: tuple[Article, ...],
+        processed_at: pendulum.DateTime,
+    ) -> None:
+        self._insert_articles(articles, processed_at)
+        if not articles:
+            self._connection.commit()
+            return
+        placeholders = ",".join("?" for _ in articles)
+        self._connection.execute(
+            f"DELETE FROM pending_articles WHERE id IN ({placeholders})",  # noqa: S608
+            tuple(article.id for article in articles),
         )
         self._connection.commit()
 
@@ -276,19 +326,7 @@ class SQLiteStateStore:
             "SELECT * FROM articles WHERE published_at >= ? ORDER BY published_at",
             (threshold,),
         )
-        return tuple(
-            Article(
-                id=str(row["id"]),
-                source_id=str(row["source_id"]),
-                source_name=str(row["source_name"]),
-                title=str(row["title"]),
-                url=str(row["url"]),
-                published_at=_parse_time(row["published_at"]),
-                content=str(row["content"]),
-                is_verbatim=bool(row["is_verbatim"]),
-            )
-            for row in rows
-        )
+        return tuple(_article_from_row(row) for row in rows)
 
     def save_briefing(self, kind: str, body: str, published_at: pendulum.DateTime) -> None:
         self._connection.execute(
@@ -469,6 +507,19 @@ class SQLiteStateStore:
             (_storage_time(alerted_at), *source_ids),
         )
         self._connection.commit()
+
+
+def _article_from_row(row: sqlite3.Row) -> Article:
+    return Article(
+        id=str(row["id"]),
+        source_id=str(row["source_id"]),
+        source_name=str(row["source_name"]),
+        title=str(row["title"]),
+        url=str(row["url"]),
+        published_at=_parse_time(row["published_at"]),
+        content=str(row["content"]),
+        is_verbatim=bool(row["is_verbatim"]),
+    )
 
 
 def _parse_time(value: str) -> pendulum.DateTime:

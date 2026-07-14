@@ -29,7 +29,7 @@ def test_rejects_model_invented_source() -> None:
         )
 
 
-def test_rejects_suppressed_message_with_active_warning() -> None:
+def test_accepts_suppressed_message_with_unchanged_active_warning() -> None:
     payload = {
         "headline": "Briefing",
         "overview": "Overview",
@@ -49,12 +49,14 @@ def test_rejects_suppressed_message_with_active_warning() -> None:
         "should_publish": False,
     }
 
-    with pytest.raises(LLMError, match="active warnings require"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
+    result = parse_result(
+        payload,
+        pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+        {"source"},
+    )
+
+    assert not result.should_publish
+    assert result.active_warnings[0].id == "warning"
 
 
 def test_rejects_result_time_without_timezone() -> None:

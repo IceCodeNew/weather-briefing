@@ -137,8 +137,6 @@ def parse_result(
     should_publish = payload.get("should_publish", True)
     if not isinstance(should_publish, bool):
         raise LLMError("should_publish must be a boolean")
-    if warnings and not should_publish:
-        raise LLMError("active warnings require should_publish=true")
     return BriefingResult(
         headline=str(payload["headline"]),
         overview=str(payload["overview"]),

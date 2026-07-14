@@ -128,11 +128,18 @@ class BriefingService:
             and self._is_forecast_article(article)
             and yesterday_start <= article.published_at < today_start
         )
+        deferred_articles = self._state.pending_articles()
+        deferred_ids = {article.id for article in deferred_articles}
         known = self._state.known_article_ids(
             tuple(article.id for article in (*todays_articles, *bootstrap_candidates))
         )
-        new_articles = tuple(article for article in todays_articles if article.id not in known)
-        bootstrap_articles = tuple(article for article in bootstrap_candidates if article.id not in known)
+        new_articles = tuple(
+            article for article in todays_articles if article.id not in known and article.id not in deferred_ids
+        )
+        bootstrap_articles = tuple(
+            article for article in bootstrap_candidates if article.id not in known and article.id not in deferred_ids
+        )
+        unpublished_articles = _unique_articles((*deferred_articles, *new_articles, *bootstrap_articles))
         context_items = list(
             await asyncio.gather(*(self._context_source.fetch(config) for config in self._settings.context_sources))
         )
@@ -145,16 +152,18 @@ class BriefingService:
         historical_context = self._state.recent_context_documents(now, self._settings.history_hours)
         reference_context = _unique_documents((*historical_context, *context))
         active_warnings = self._state.active_warnings(now, self._settings.warning_retention_hours)
-        if not new_articles and not bootstrap_articles and not context and not active_warnings:
+        if not unpublished_articles and not context and not active_warnings:
             _LOGGER.info("Skipping briefing: no new articles, context, or warnings")
             return None
         historical_articles = _unique_articles(
             (*self._state.recent_articles(now, self._settings.history_hours), *bootstrap_articles)
         )
-        source_articles = _unique_articles((*historical_articles, *new_articles))
+        source_articles = _unique_articles((*historical_articles, *unpublished_articles))
         _LOGGER.debug(
-            "%d new article(s), %d historical article(s), %d active warning(s), %d context document(s)",
+            "%d new article(s), %d deferred article(s), %d historical article(s), "
+            "%d active warning(s), %d context document(s)",
             len(new_articles),
+            len(deferred_articles),
             len(historical_articles),
             len(active_warnings),
             len(context),
@@ -163,6 +172,7 @@ class BriefingService:
             kind,
             now,
             new_articles,
+            deferred_articles,
             historical_articles,
             context,
             historical_context,
@@ -194,8 +204,7 @@ class BriefingService:
             self._save_result_state(
                 kind,
                 now,
-                new_articles,
-                bootstrap_articles,
+                unpublished_articles,
                 context,
                 result,
                 body=None,
@@ -203,7 +212,7 @@ class BriefingService:
             return None
 
         await self._delivery.publish_rendered(message, single_message=True)
-        for article in new_articles:
+        for article in unpublished_articles:
             if article.is_verbatim:
                 _LOGGER.debug(
                     "Publishing verbatim article: source=%s published_at=%s content_characters=%d",
@@ -220,8 +229,7 @@ class BriefingService:
         self._save_result_state(
             kind,
             now,
-            new_articles,
-            bootstrap_articles,
+            unpublished_articles,
             context,
             result,
             body=message.body,
@@ -244,18 +252,20 @@ class BriefingService:
         self,
         kind: str,
         now: pendulum.DateTime,
-        new_articles: tuple[Article, ...],
-        bootstrap_articles: tuple[Article, ...],
+        unpublished_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
         result: BriefingResult,
         *,
         body: str | None,
     ) -> None:
-        self._state.save_articles(_unique_articles((*new_articles, *bootstrap_articles)), now)
+        if body is None:
+            self._state.save_pending_articles(unpublished_articles, now)
+        else:
+            self._state.mark_articles_processed(unpublished_articles, now)
         self._state.save_context_documents(context, now)
         if body is not None:
             self._state.save_briefing(kind, body, now)
-        current_source_ids = {article.id for article in new_articles} | {document.id for document in context}
+        current_source_ids = {article.id for article in unpublished_articles} | {document.id for document in context}
         self._state.update_warnings(
             result.active_warnings,
             result.resolved_warning_ids,
@@ -320,6 +330,7 @@ class BriefingService:
         kind: str,
         now: pendulum.DateTime,
         articles: tuple[Article, ...],
+        deferred_articles: tuple[Article, ...],
         historical_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
         historical_context: tuple[SourceDocument, ...],
@@ -345,6 +356,18 @@ class BriefingService:
                     "verbatim": article.is_verbatim,
                 }
                 for article in articles
+            ],
+            "deferred_articles": [
+                {
+                    "source_id": article.id,
+                    "publisher": article.source_name,
+                    "title": article.title,
+                    "url": article.url,
+                    "published_at": article.published_at.isoformat(),
+                    "content": article.content,
+                    "verbatim": article.is_verbatim,
+                }
+                for article in deferred_articles
             ],
             "historical_articles": [
                 {

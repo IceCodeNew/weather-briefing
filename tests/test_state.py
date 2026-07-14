@@ -88,6 +88,21 @@ def test_articles_are_deduplicated(tmp_path: Path) -> None:
         assert stored.published_at.to_iso8601_string() == "2026-07-13T01:00:00Z"
 
 
+def test_pending_articles_remain_until_marked_processed(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    article = Article("id", "source", "Source", "Title", "https://example.invalid", now, "body")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.save_pending_articles((article,), now)
+
+        assert state.known_article_ids((article.id,)) == set()
+        assert state.pending_articles() == (article,)
+
+        state.mark_articles_processed((article,), now.add(hours=1))
+
+        assert state.pending_articles() == ()
+        assert state.known_article_ids((article.id,)) == {article.id}
+
+
 def test_source_becomes_stale_after_threshold(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     with SQLiteStateStore(tmp_path / "state.db") as state:
