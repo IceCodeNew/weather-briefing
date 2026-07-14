@@ -5,6 +5,7 @@ import hashlib
 import logging
 import random
 from time import struct_time
+from typing import Protocol
 
 import feedparser
 import httpx
@@ -19,6 +20,14 @@ _LOGGER = logging.getLogger("weather_briefing.sources")
 
 class SourceFetchError(RuntimeError):
     """Raised after a source exhausts all retry attempts."""
+
+
+class RSSFeedSource(Protocol):
+    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]: ...
+
+
+class ContextDocumentSource(Protocol):
+    async def fetch(self, config: ContextSourceConfig) -> SourceDocument: ...
 
 
 def _entry_time(entry: feedparser.FeedParserDict) -> pendulum.DateTime | None:

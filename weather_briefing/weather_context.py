@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import httpx
 import jwt
@@ -203,7 +203,7 @@ class QWeatherProvider:
                     raise WeatherContextError("QWeather returned no daily forecast")
                 raise WeatherContextError(f"QWeather returned no forecast for {forecast_date}")
 
-            indices_payload: dict[str, Any] = {}
+            indices_payload: dict[str, object] = {}
             lifestyle_advice: tuple[str, ...] = ()
             if forecast_date is None or str(forecast_date) == first_forecast_date:
                 operation = "lifestyle indices"
@@ -355,14 +355,15 @@ class OpenMeteoProvider:
             )
             response.raise_for_status()
             payload = response.json()
-            daily = cast(dict[str, list[object]], payload["daily"])
+            daily: dict[str, list[object]] = payload["daily"]
             times = daily["time"]
             forecast_count = min(2, len(times)) if forecast_date is None else len(times)
             weather_forecast = tuple(_format_open_meteo_day(daily, index) for index in range(forecast_count))
             if not weather_forecast:
                 raise WeatherContextError("Open-Meteo returned no daily forecast")
+            current: dict[str, object] = payload["current"]
             observed_at = parse_datetime_with_default_timezone(
-                str(cast(dict[str, object], payload["current"])["time"]),
+                str(current["time"]),
                 str(payload["timezone"]),
                 context="Open-Meteo weather update time",
             )
@@ -424,7 +425,7 @@ class OpenMeteoProvider:
             )
             response.raise_for_status()
             payload = response.json()
-            current = cast(dict[str, Any], payload["current"])
+            current: dict[str, object] = payload["current"]
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             _LOGGER.warning(
                 "Weather API optional call failed provider=open-meteo operation=air-quality reason=%s",
@@ -677,31 +678,25 @@ def _first_attribution(payload: dict[str, object]) -> str | None:
     return str(attributions[0])
 
 
-def _aqi_standard(index: dict[str, Any]) -> str:
+def _aqi_standard(index: dict[str, object]) -> str:
     code = str(index["code"])
     name = str(index.get("name") or code)
     return name if name == code else f"{name}（{code}）"
 
 
-def _format_qweather_lifestyle(item: object) -> str:
-    if not isinstance(item, dict):
-        raise ValueError("QWeather lifestyle index must be an object")
-    values = cast(dict[str, Any], item)
-    name = str(values["name"])
-    category = str(values.get("category", "未知"))
-    text = str(values.get("text") or "无详细建议")
+def _format_qweather_lifestyle(item: dict[str, object]) -> str:
+    name = str(item["name"])
+    category = str(item.get("category", "未知"))
+    text = str(item.get("text") or "无详细建议")
     return f"{name}（{category}）：{text}"
 
 
-def _format_qweather_day(item: object) -> str:
-    if not isinstance(item, dict):
-        raise ValueError("QWeather daily forecast must be an object")
-    values = cast(dict[str, Any], item)
+def _format_qweather_day(item: dict[str, object]) -> str:
     return (
-        f"{values['fxDate']}：{values['textDay']}转{values['textNight']}，"
-        f"{values['tempMin']}~{values['tempMax']}℃，"
-        f"{values['windDirDay']}{values['windScaleDay']}级，"
-        f"相对湿度{values['humidity']}%，预计降水量{values['precip']}毫米"
+        f"{item['fxDate']}：{item['textDay']}转{item['textNight']}，"
+        f"{item['tempMin']}~{item['tempMax']}℃，"
+        f"{item['windDirDay']}{item['windScaleDay']}级，"
+        f"相对湿度{item['humidity']}%，预计降水量{item['precip']}毫米"
     )
 
 

@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from typing import Protocol
 
 import pendulum
 
-from .config import Settings
 from .llm import LLMError, LLMProvider, parse_result
-from .models import Article, BriefingResult, ResolvedLocation, SourceDocument, Warning
+from .models import Article, BriefingResult, ContextSourceConfig, FeedConfig, ResolvedLocation, SourceDocument, Warning
 from .prompts import SYSTEM_PROMPT
 from .publishers import DeliveryProvider
-from .sources import HTTPContextSource, RSSSource
+from .sources import ContextDocumentSource, RSSFeedSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
 from .weather_context import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
@@ -19,14 +19,43 @@ from .weather_context import WeatherContextProvider, fetch_weather_context, snap
 _LOGGER = logging.getLogger("weather_briefing.service")
 
 
+class BriefingSettings(Protocol):
+    @property
+    def timezone(self) -> pendulum.Timezone: ...
+
+    @property
+    def feeds(self) -> tuple[FeedConfig, ...]: ...
+
+    @property
+    def context_sources(self) -> tuple[ContextSourceConfig, ...]: ...
+
+    @property
+    def rss_stale_hours(self) -> int: ...
+
+    @property
+    def rss_failure_threshold(self) -> int: ...
+
+    @property
+    def warning_retention_hours(self) -> int: ...
+
+    @property
+    def history_hours(self) -> int: ...
+
+    @property
+    def briefing_max_characters(self) -> int: ...
+
+    @property
+    def llm_max_attempts(self) -> int: ...
+
+
 class BriefingService:
     def __init__(
         self,
-        settings: Settings,
+        settings: BriefingSettings,
         location: ResolvedLocation,
         state: SQLiteStateStore,
-        rss_source: RSSSource,
-        context_source: HTTPContextSource,
+        rss_source: RSSFeedSource,
+        context_source: ContextDocumentSource,
         llm: LLMProvider,
         delivery: DeliveryProvider,
         ops_delivery: DeliveryProvider,

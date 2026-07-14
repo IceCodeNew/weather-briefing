@@ -134,7 +134,7 @@ class NominatimGeocodingProvider:
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
         async with self._lock:
-            result: dict[str, Any] | None = None
+            result: dict[str, object] | None = None
             for query in _nominatim_queries(location.name):
                 delay = 1.0 - (time.monotonic() - self._last_request_at)
                 if delay > 0:
@@ -299,13 +299,13 @@ def _nominatim_queries(name: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys((normalized, name)))
 
 
-def _nominatim_result_matches(name: str, result: dict[str, Any]) -> bool:
+def _nominatim_result_matches(name: str, result: dict[str, object]) -> bool:
     display_name = str(result.get("display_name", "")).casefold()
     specific_name = _specific_location_name(name)
     return specific_name.casefold() in display_name
 
 
-def _open_meteo_result_matches(name: str, result: dict[str, Any]) -> bool:
+def _open_meteo_result_matches(name: str, result: dict[str, object]) -> bool:
     result_description = " ".join(
         str(result.get(field, "")) for field in ("name", "admin1", "admin2", "admin3", "admin4", "country")
     ).casefold()
