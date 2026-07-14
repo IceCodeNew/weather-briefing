@@ -305,3 +305,258 @@ async def test_nominatim_handles_invalid_response_structure() -> None:
     ) as client:
         with pytest.raises(GeocodingError, match="response validation failed"):
             await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "test"))
+
+
+async def test_open_meteo_passes_api_key_when_provided() -> None:
+    handler_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        handler_requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "name": "Test City",
+                        "latitude": 51.5,
+                        "longitude": -0.1,
+                        "country_code": "GB",
+                        "admin1": "England",
+                        "timezone": "Europe/London",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await OpenMeteoGeocodingProvider(client, api_key="test-api-key").geocode(
+            LocationSpec("test", "Test City")
+        )
+
+    assert "test-api-key" in handler_requests[0].url.params["apikey"]
+    assert result.is_mainland_china is False
+
+
+async def test_open_meteo_handles_empty_results() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": []}))
+    ) as client:
+        with pytest.raises(GeocodingError, match="No geocoding result"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+
+async def test_open_meteo_handles_results_not_a_list() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": "not-a-list"}))
+    ) as client:
+        with pytest.raises(GeocodingError, match="No geocoding result"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+
+async def test_open_meteo_handles_no_matching_result() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "name": "Other",
+                            "latitude": 0,
+                            "longitude": 0,
+                            "country_code": "XX",
+                        }
+                    ]
+                },
+            )
+        )
+    ) as client:
+        with pytest.raises(GeocodingError, match="No matching geocoding result"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test City"))
+
+
+async def test_open_meteo_handles_http_error() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
+        with pytest.raises(GeocodingError, match="Geocoding request or response validation failed"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+
+async def test_nominatim_queries_with_removable_terms_retry_on_mismatch() -> None:
+    queries_received: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries_received.append(str(request.url.params["q"]))
+        q = str(request.url.params["q"])
+        if q == "中国Test地区":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "lat": "51.5",
+                        "lon": "-0.1",
+                        "display_name": "Test City, England, GB",
+                        "address": {"country_code": "gb", "state": "England"},
+                    }
+                ],
+            )
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "lat": "40.0",
+                    "lon": "120.0",
+                    "display_name": "Some other location",
+                    "address": {},
+                }
+            ],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await NominatimGeocodingProvider(client, user_agent="test").geocode(
+            LocationSpec("test", "中国Test地区")
+        )
+
+    assert len(queries_received) == 2
+    assert result.latitude == 51.5
+
+
+async def test_nominatim_handles_results_not_a_list() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json="not-a-list"))
+    ) as client:
+        with pytest.raises(GeocodingError, match="No Nominatim result"):
+            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
+
+
+async def test_nominatim_handles_http_error() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
+        with pytest.raises(GeocodingError, match="Nominatim request failed"):
+            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
+
+
+async def test_nominatim_handles_no_matching_results() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json=[
+                    {
+                        "lat": "1",
+                        "lon": "2",
+                        "display_name": "nothing related to query",
+                        "address": {},
+                    }
+                ],
+            )
+        )
+    ) as client:
+        with pytest.raises(GeocodingError, match="No Nominatim result"):
+            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
+
+
+async def test_nominatim_rate_limits_consecutive_requests() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "lat": "51.5",
+                    "lon": "-0.1",
+                    "display_name": "Test City, England, GB",
+                    "address": {"country_code": "gb", "state": "England"},
+                }
+            ],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = NominatimGeocodingProvider(client, user_agent="test")
+        await provider.geocode(LocationSpec("test", "Test City"))
+        await provider.geocode(LocationSpec("test", "Test City"))
+
+    assert calls == 2
+
+
+async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
+    calls: list[str] = []
+
+    class FailingGeocoder:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            calls.append(location.name)
+            raise GeocodingError("no match")
+
+    with pytest.raises(GeocodingError, match="No geocoder could resolve location at a safe precision"):
+        await PrecisionReducingGeocodingProvider(FailingGeocoder()).geocode(
+            LocationSpec("test", "中国北京市西城区中南海1号")
+        )
+
+    assert len(calls) >= 2
+
+
+async def test_precision_reducing_provider_continues_after_geocoding_error() -> None:
+    calls: list[str] = []
+
+    class PartialGeocoder:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            calls.append(location.name)
+            if "1号" in location.name:
+                raise GeocodingError("no building match")
+            return ResolvedLocation(
+                location.id,
+                location.name,
+                39.9,
+                116.3,
+                "CN",
+                "北京市",
+                "Asia/Shanghai",
+                True,
+            )
+
+    result = await PrecisionReducingGeocodingProvider(PartialGeocoder()).geocode(
+        LocationSpec("test", "中国北京市西城区中南海1号")
+    )
+
+    assert result.precision_reduced is True
+    assert len(calls) == 2
+
+
+async def test_cached_resolver_rejects_non_dict_cached_value(tmp_path: Path) -> None:
+    cache_path = tmp_path / "geocoding.json"
+    cache_path.write_text('{"test:Test":"not-a-dict"}', encoding="utf-8")
+
+    class FailingProvider:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            raise GeocodingError("test failure")
+
+    resolver = CachedLocationResolver(
+        FallbackGeocodingProvider(FailingProvider()),
+        cache_path,
+    )
+
+    with pytest.raises(GeocodingError, match="Invalid cached geocoding record"):
+        await resolver.resolve(LocationSpec("test", "Test"))
+
+
+async def test_cached_resolver_handles_writes_to_new_directory(tmp_path: Path) -> None:
+    class RecordingGeocoder:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            return ResolvedLocation(
+                location.id,
+                location.name,
+                1.0,
+                2.0,
+                None,
+                None,
+                None,
+                False,
+            )
+
+    cache_dir = tmp_path / "nested" / "path"
+    resolver = CachedLocationResolver(RecordingGeocoder(), cache_dir / "geocoding.json")
+    result = await resolver.resolve(LocationSpec("test", "Test"))
+
+    assert result.latitude == 1.0
+    assert (cache_dir / "geocoding.json").exists()

@@ -1,7 +1,8 @@
 import httpx
 import pytest
 
-from weather_briefing.air_quality import AirQualityError, AQICNProvider, air_quality_to_document
+from weather_briefing.air_quality import AirQualityError, AQICNProvider, air_quality_to_document, health_guidance
+from weather_briefing.reference_data import ReferenceDataError
 
 
 async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> None:
@@ -133,3 +134,210 @@ async def test_aqicn_rejects_missing_data_key() -> None:
                 token="token",
                 base_url="https://api.example.invalid",
             ).fetch(0, 0, "UTC")
+
+
+async def test_aqicn_observed_at_returns_none_for_non_dict_time() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "data": {
+                        "aqi": 42,
+                        "time": "not-a-dict",
+                        "city": {
+                            "name": "Test",
+                            "url": "https://example.invalid/",
+                        },
+                        "iaqi": {},
+                    },
+                },
+            )
+        )
+    ) as client:
+        snapshot = await AQICNProvider(
+            client,
+            token="token",
+            base_url="https://api.example.invalid",
+        ).fetch(0, 0, "UTC")
+
+    assert snapshot.observed_at is None
+
+
+async def test_aqicn_observed_at_returns_none_for_empty_time_string() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "data": {
+                        "aqi": 42,
+                        "time": {"s": "  ", "iso": "  "},
+                        "city": {
+                            "name": "Test",
+                            "url": "https://example.invalid/",
+                        },
+                        "iaqi": {},
+                    },
+                },
+            )
+        )
+    ) as client:
+        snapshot = await AQICNProvider(
+            client,
+            token="token",
+            base_url="https://api.example.invalid",
+        ).fetch(0, 0, "UTC")
+
+    assert snapshot.observed_at is None
+
+
+def test_health_guidance_unbounded_band_required(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [
+            {"maximum_aqi": "10", "category": "bad", "guidance": "do not go out"},
+        ],
+    )
+    with pytest.raises(ReferenceDataError, match="must end with an unbounded band"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_air_quality_guidance_bands_must_be_non_empty_list(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [],
+    )
+    with pytest.raises(ReferenceDataError, match="non-empty list"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_air_quality_guidance_bands_must_be_list(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: "not-a-list",
+    )
+    with pytest.raises(ReferenceDataError, match="non-empty list"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_air_quality_guidance_invalid_band_entry(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [
+            {"maximum_aqi": "10", "category": "bad"},
+            {"maximum_aqi": None, "category": "good", "guidance": "ok"},
+        ],
+    )
+    with pytest.raises(ReferenceDataError, match="Invalid air quality guidance band"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_air_quality_guidance_bounded_last_band(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [
+            {"maximum_aqi": "10", "category": "bad", "guidance": "avoid"},
+            {"maximum_aqi": "20", "category": "worse", "guidance": "stay inside"},
+        ],
+    )
+    with pytest.raises(ReferenceDataError, match="must end with an unbounded band"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_air_quality_guidance_middle_none_bounded(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [
+            {"maximum_aqi": None, "category": "bad", "guidance": "avoid"},
+            {"maximum_aqi": "20", "category": "worse", "guidance": "stay inside"},
+            {"maximum_aqi": None, "category": "worst", "guidance": "hide"},
+        ],
+    )
+    with pytest.raises(ReferenceDataError, match="must end with an unbounded band"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_air_quality_guidance_non_unique_bounds(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [
+            {"maximum_aqi": "10", "category": "bad", "guidance": "avoid"},
+            {"maximum_aqi": "10", "category": "worse", "guidance": "stay inside"},
+            {"maximum_aqi": None, "category": "worst", "guidance": "hide"},
+        ],
+    )
+    with pytest.raises(ReferenceDataError, match="must be unique, increasing"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_air_quality_guidance_negative_bound(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [
+            {"maximum_aqi": "-5", "category": "bad", "guidance": "avoid"},
+            {"maximum_aqi": None, "category": "worst", "guidance": "hide"},
+        ],
+    )
+    with pytest.raises(ReferenceDataError, match="must be unique, increasing, and non-negative"):
+        _guidance_bands()
+
+    _guidance_bands.cache_clear()
+
+
+def test_health_guidance_uses_unbounded_last_band(monkeypatch) -> None:
+    from weather_briefing.air_quality import _guidance_bands
+
+    _guidance_bands.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.reference_value",
+        lambda filename, *path: [
+            {"maximum_aqi": "50", "category": "优", "guidance": "Good"},
+            {"maximum_aqi": None, "category": "差", "guidance": "Bad"},
+        ],
+    )
+    category, guidance = health_guidance(999)
+    assert category == "差"
+    assert guidance == "Bad"
+
+    _guidance_bands.cache_clear()

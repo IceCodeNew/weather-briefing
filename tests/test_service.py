@@ -546,3 +546,93 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
 
     assert body is not None
     assert llm.attempts == 2
+
+
+async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(),
+        context_sources=(),
+        task_failure_threshold=3,
+        rss_stale_hours=24,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=10,
+        llm_max_attempts=1,
+    )
+
+    class LongLLM:
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            return {
+                "headline": "A" * 100,
+                "overview": "B" * 100,
+                "conclusions": [],
+                "active_warnings": [],
+                "resolved_warning_ids": [],
+                "advice": [],
+                "disaster_tracking": [],
+            }
+
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "long.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, EmptyRSSSource()),
+            cast(Any, EmptyContextSource()),
+            LongLLM(),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        with pytest.raises(LLMError, match="validation failed"):
+            await service.run("hourly", now)
+
+
+async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
+    yesterday = now.subtract(days=1)
+    article = Article(
+        id="article-id",
+        source_id="unknown-feed",
+        source_name="Unknown",
+        title="Some content",
+        url="https://example.invalid/a",
+        published_at=yesterday,
+        content="content",
+    )
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("known-feed", "Known", "https://example.invalid/rss"),),
+        context_sources=(),
+        task_failure_threshold=3,
+        rss_stale_hours=24,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "unknown.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, StaticRSSSource(article)),
+            cast(Any, EmptyContextSource()),
+            RecordingLLM(),
+            delivery,
+            delivery,
+        )
+        body = await service.run("daily", now)
+
+    assert body is None
+    assert publisher.messages == []

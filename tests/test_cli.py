@@ -1,18 +1,30 @@
+import base64
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pendulum
 import pytest
 
 from weather_briefing.cli import (
     _LOGGER,
+    WEATHER_PROVIDER_BUILDERS,
+    _aqicn_provider,
+    _build_open_meteo,
+    _build_qweather,
+    _build_weather_provider,
     _configure_logging,
+    _delivery_provider,
     _hour_in_cron,
     _in_schedule,
+    _llm_provider,
     _location_state_path,
     _parse_run_time,
     _precision_reduction_notice,
+    _qweather_is_configured,
+    _weather_context_provider,
     build_parser,
+    daemon,
     main,
     run,
 )
@@ -438,3 +450,437 @@ async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
         logging.root.handlers.clear()
         logging.root.handlers.extend(original_root_handlers)
         logging.root.setLevel(original_root_level)
+
+
+async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsys) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    tz = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 14, 8, tz=tz)
+    location = ResolvedLocation(
+        "test",
+        "Test City",
+        39.9,
+        116.3,
+        "CN",
+        "Beijing",
+        tz.name,
+        True,
+        precision_reduced=True,
+        matched_name="Matched City",
+    )
+    settings = _make_fake_settings(debug=False, publisher="stdout", locations=(location,))
+
+    alerts: list[tuple[str, str]] = []
+
+    class AlertDelivery:
+        async def publish_alert(self, title: str, body: str) -> None:
+            alerts.append((title, body))
+
+    monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
+    monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
+    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: AlertDelivery())
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
+    monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
+    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
+
+    class FakeResolver:
+        async def resolve_with_metadata(self, loc: object) -> object:
+            return SimpleNamespace(location=loc, from_cache=False)
+
+    monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
+
+    class FakeState:
+        def __enter__(self) -> "FakeState":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
+
+    async def fake_service_run(kind: str, n: object) -> str:
+        return "published body"
+
+    monkeypatch.setattr("weather_briefing.cli.BriefingService", lambda *a, **kw: SimpleNamespace(run=fake_service_run))
+
+    original_handlers = _LOGGER.handlers[:]
+    original_level = _LOGGER.level
+    original_propagate = _LOGGER.propagate
+    original_root_handlers = logging.root.handlers[:]
+    original_root_level = logging.root.level
+    try:
+        _LOGGER.handlers.clear()
+        logging.root.handlers.clear()
+
+        with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
+            await run("hourly", enforce_window=False)
+
+    finally:
+        _LOGGER.handlers.clear()
+        _LOGGER.handlers.extend(original_handlers)
+        _LOGGER.setLevel(original_level)
+        _LOGGER.propagate = original_propagate
+        logging.root.handlers.clear()
+        logging.root.handlers.extend(original_root_handlers)
+        logging.root.setLevel(original_root_level)
+
+    assert len(alerts) == 1
+    assert "位置匹配需要确认" in alerts[0][0]
+
+
+async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    tz = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 14, 8, tz=tz)
+    location = ResolvedLocation("test", "Test City", 39.9, 116.3, "CN", "Beijing", tz.name, True)
+    settings = _make_fake_settings(debug=False, publisher="stdout", locations=(location,))
+
+    monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
+    monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
+    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: None)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
+    monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
+    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
+
+    class FakeResolver:
+        async def resolve_with_metadata(self, loc: object) -> object:
+            return SimpleNamespace(location=loc, from_cache=True)
+
+    monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
+
+    class FakeState:
+        def __enter__(self) -> "FakeState":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
+
+    async def fake_service_run(kind: str, n: object) -> str | None:
+        return None
+
+    monkeypatch.setattr("weather_briefing.cli.BriefingService", lambda *a, **kw: SimpleNamespace(run=fake_service_run))
+
+    original_handlers = _LOGGER.handlers[:]
+    original_level = _LOGGER.level
+    original_propagate = _LOGGER.propagate
+    original_root_handlers = logging.root.handlers[:]
+    original_root_level = logging.root.level
+    try:
+        _LOGGER.handlers.clear()
+        logging.root.handlers.clear()
+
+        with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
+            await run("hourly", enforce_window=False)
+
+        stderr = capsys.readouterr().err
+        assert "briefing skipped (no content)" in stderr
+    finally:
+        _LOGGER.handlers.clear()
+        _LOGGER.handlers.extend(original_handlers)
+        _LOGGER.setLevel(original_level)
+        _LOGGER.propagate = original_propagate
+        logging.root.handlers.clear()
+        logging.root.handlers.extend(original_root_handlers)
+        logging.root.setLevel(original_root_level)
+
+
+class TestLLMProvider:
+    def test_deepseek_with_custom_base_url(self) -> None:
+        settings = _make_fake_settings(
+            llm_provider="deepseek",
+            llm_base_url="https://custom.example.invalid",
+        )
+        provider = _llm_provider(settings, _FakeAsyncClient())
+        assert provider._base_url == "https://custom.example.invalid"
+
+    def test_deepseek_without_base_url(self) -> None:
+        settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
+        provider = _llm_provider(settings, _FakeAsyncClient())
+        assert provider._base_url == "https://api.deepseek.com"
+
+    def test_openai_compatible_missing_base_url(self) -> None:
+        settings = _make_fake_settings(
+            llm_provider="openai-compatible",
+            llm_base_url=None,
+        )
+        with pytest.raises(ValueError, match="LLM_BASE_URL"):
+            _llm_provider(settings, _FakeAsyncClient())
+
+    def test_openai_compatible_with_base_url(self) -> None:
+        settings = _make_fake_settings(
+            llm_provider="openai-compatible",
+            llm_base_url="https://compatible.example.invalid/v1",
+        )
+        provider = _llm_provider(settings, _FakeAsyncClient())
+        assert provider._base_url == "https://compatible.example.invalid/v1"
+
+    def test_unsupported_provider(self) -> None:
+        settings = _make_fake_settings(llm_provider="unsupported")
+        with pytest.raises(ValueError, match="Unsupported LLM provider"):
+            _llm_provider(settings, _FakeAsyncClient())
+
+
+class TestDeliveryProvider:
+    def test_stdout(self) -> None:
+        settings = _make_fake_settings(publisher="stdout")
+        provider = _delivery_provider(settings, _FakeAsyncClient())
+        assert provider.renderer is not None
+        assert provider.publisher is not None
+
+    def test_telegram_missing_config(self) -> None:
+        settings = _make_fake_settings(publisher="telegram", telegram_bot_token=None)
+        with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
+            _delivery_provider(settings, _FakeAsyncClient())
+
+    def test_telegram_with_config(self) -> None:
+        settings = _make_fake_settings(
+            publisher="telegram",
+            telegram_bot_token="test-token",
+            telegram_chat_id="test-chat",
+        )
+        provider = _delivery_provider(settings, _FakeAsyncClient())
+        assert provider.single_message_limit == 4096
+
+    def test_unsupported_publisher(self) -> None:
+        settings = _make_fake_settings(publisher="unsupported")
+        with pytest.raises(ValueError, match="Unsupported publisher"):
+            _delivery_provider(settings, _FakeAsyncClient())
+
+
+class TestWeatherContextProvider:
+    def test_qweather_not_configured_skips_when_auto(self) -> None:
+        settings = _make_fake_settings(
+            weather_providers=None,
+            qweather_project_id=None,
+            qweather_credential_id=None,
+            qweather_private_key=None,
+            qweather_base_url=None,
+        )
+        location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
+        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        assert provider is not None
+
+    def test_qweather_explicit_not_configured_raises(self) -> None:
+        settings = _make_fake_settings(
+            weather_providers=("qweather",),
+            qweather_project_id=None,
+            qweather_credential_id=None,
+            qweather_private_key=None,
+            qweather_base_url=None,
+        )
+        location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
+        with pytest.raises(ValueError, match="JWT configuration"):
+            _weather_context_provider(settings, _FakeAsyncClient(), location)
+
+    def test_single_provider_bypasses_fallback(self) -> None:
+        settings = _make_fake_settings(
+            weather_providers=None,
+        )
+        location = ResolvedLocation("test", "Test", 40.7, -74.0, "US", "NY", "America/New_York", False)
+        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        assert provider is not None
+
+    def test_qweather_configured(self) -> None:
+        key = b"fake-private-key-content"
+        settings = _make_fake_settings(
+            weather_providers=("qweather",),
+            qweather_project_id="project",
+            qweather_credential_id="credential",
+            qweather_private_key=base64.b64encode(key).decode(),
+            qweather_base_url="https://qweather.example.invalid",
+        )
+        location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
+        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        assert provider is not None
+
+
+def test_qweather_is_configured_all_fields() -> None:
+    settings = _make_fake_settings(
+        qweather_project_id="p",
+        qweather_credential_id="c",
+        qweather_private_key="k",
+        qweather_base_url="https://example.invalid",
+    )
+    assert _qweather_is_configured(settings)
+
+
+def test_qweather_is_configured_missing_field() -> None:
+    settings = _make_fake_settings(
+        qweather_project_id=None,
+        qweather_credential_id="c",
+        qweather_private_key="k",
+        qweather_base_url="https://example.invalid",
+    )
+    assert not _qweather_is_configured(settings)
+
+
+def test_build_weather_provider_unsupported() -> None:
+    settings = _make_fake_settings()
+    with pytest.raises(ValueError, match="Unsupported weather provider"):
+        _build_weather_provider("unknown", settings, _FakeAsyncClient())
+
+
+def test_build_open_meteo_returns_provider() -> None:
+    settings = _make_fake_settings()
+    provider = _build_open_meteo(settings, _FakeAsyncClient())
+    assert provider is not None
+
+
+def test_build_qweather_returns_provider() -> None:
+    import base64 as b64
+
+    settings = _make_fake_settings(
+        qweather_project_id="project",
+        qweather_credential_id="credential",
+        qweather_private_key=b64.b64encode(b"fake-private-key-content").decode(),
+        qweather_base_url="https://qweather.example.invalid",
+    )
+    provider = _build_qweather(settings, _FakeAsyncClient())
+    assert provider is not None
+
+
+def test_build_qweather_missing_config_raises() -> None:
+    settings = _make_fake_settings(qweather_project_id=None)
+    with pytest.raises(ValueError, match="QWeather provider requires"):
+        _build_qweather(settings, _FakeAsyncClient())
+
+
+def test_aqicn_provider_returns_none_when_no_token() -> None:
+    settings = _make_fake_settings(aqicn_api_token=None)
+    assert _aqicn_provider(settings, _FakeAsyncClient()) is None
+
+
+def test_aqicn_provider_returns_instance_when_token_set() -> None:
+    settings = _make_fake_settings(aqicn_api_token="test-token")
+    provider = _aqicn_provider(settings, _FakeAsyncClient())
+    assert provider is not None
+
+
+def test_parse_run_time_returns_now_when_value_is_none(monkeypatch) -> None:
+    tz = pendulum.timezone("Asia/Shanghai")
+    result = _parse_run_time(None, tz)
+    assert result.timezone_name == "Asia/Shanghai"
+
+
+def test_weather_provider_builders_contains_expected_keys() -> None:
+    assert set(WEATHER_PROVIDER_BUILDERS) == {"qweather", "open-meteo"}
+
+
+async def test_daemon_runs_initial_briefing_when_run_now(monkeypatch) -> None:
+    import base64 as b64
+    from unittest.mock import patch
+
+    calls: list[tuple[str, bool, str | None]] = []
+
+    async def fake_run(kind: str, enforce_window: bool, at: str | None = None) -> None:
+        calls.append((kind, enforce_window, at))
+
+    class FakeEvent:
+        async def wait(self) -> None:
+            pass
+
+    monkeypatch.setattr("weather_briefing.cli.run", fake_run)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr(
+        "weather_briefing.cli.AsyncIOScheduler",
+        lambda **kw: SimpleNamespace(
+            add_job=lambda *a, **kw: None,
+            start=lambda: None,
+        ),
+    )
+    monkeypatch.setattr("weather_briefing.cli.asyncio.Event", FakeEvent)
+
+    settings = _make_fake_settings(
+        qweather_project_id="p",
+        qweather_credential_id="c",
+        qweather_private_key=b64.b64encode(b"fake-private-key-content").decode(),
+        qweather_base_url="https://example.invalid",
+    )
+
+    with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
+        await daemon(run_now=True)
+
+    assert calls == [("hourly", False, None)]
+
+
+async def test_daemon_skips_initial_briefing_without_run_now(monkeypatch) -> None:
+    from unittest.mock import patch
+
+    calls: list[tuple[str, bool, str | None]] = []
+
+    async def fake_run(kind: str, enforce_window: bool, at: str | None = None) -> None:
+        calls.append((kind, enforce_window, at))
+
+    class FakeEvent:
+        async def wait(self) -> None:
+            pass
+
+    monkeypatch.setattr("weather_briefing.cli.run", fake_run)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr(
+        "weather_briefing.cli.AsyncIOScheduler",
+        lambda **kw: SimpleNamespace(
+            add_job=lambda *a, **kw: None,
+            start=lambda: None,
+        ),
+    )
+    monkeypatch.setattr("weather_briefing.cli.asyncio.Event", FakeEvent)
+
+    settings = _make_fake_settings()
+
+    with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
+        await daemon(run_now=False)
+
+    assert calls == []
+
+
+def test_main_calls_daemon_correctly(monkeypatch) -> None:
+
+    calls: list[bool] = []
+
+    async def fake_daemon(run_now: bool = False) -> None:
+        calls.append(run_now)
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.cli.daemon", fake_daemon)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "daemon"])
+
+    main()
+    assert calls == [False]
+
+
+def test_main_calls_daemon_run_now(monkeypatch) -> None:
+
+    calls: list[bool] = []
+
+    async def fake_daemon(run_now: bool = False) -> None:
+        calls.append(run_now)
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.cli.daemon", fake_daemon)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "daemon", "--run-now"])
+    main()
+    assert calls == [True]
+
+
+def test_main_calls_run_correctly(monkeypatch) -> None:
+    calls: list[tuple[str, bool, str | None]] = []
+
+    async def fake_run(kind: str, enforce_window: bool, at: str | None = None) -> None:
+        calls.append((kind, enforce_window, at))
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.cli.run", fake_run)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "run", "daily", "--at", "2026-07-14T08:00:00+08:00"])
+
+    main()
+    assert calls == [("daily", False, "2026-07-14T08:00:00+08:00")]

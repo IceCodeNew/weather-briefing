@@ -49,3 +49,24 @@ def test_reference_value_rejects_missing_path() -> None:
 def test_reference_string_tuple_rejects_non_list_value() -> None:
     with pytest.raises(ReferenceDataError, match="non-empty string list"):
         reference_string_tuple("geography.json", "mainland_china_service_bounds")
+
+
+def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:
+    from weather_briefing.reference_data import load_reference_data
+
+    class FakeResource:
+        def joinpath(self, filename):
+            return self
+
+        def read_text(self, encoding=None):
+            return "42"
+
+    monkeypatch.setattr(
+        "weather_briefing.reference_data.resources.files",
+        lambda package: FakeResource(),
+    )
+
+    load_reference_data.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="must be an object"):
+        load_reference_data("test.json")

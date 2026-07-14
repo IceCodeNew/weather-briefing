@@ -551,3 +551,731 @@ async def test_aqicn_fallback_raises_weather_context_error_on_air_quality_error(
 
     with pytest.raises(WeatherContextError, match="AQICN fallback failed"):
         await provider.fetch(1, 2)
+
+
+async def test_qweather_rejects_non_success_indices_status() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "400"})
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WeatherContextError, match="non-success indices status"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+async def test_qweather_rejects_http_error() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
+        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+async def test_qweather_rejects_jwt_error(monkeypatch) -> None:
+    class FailingAuthenticator:
+        def authorization_header(self) -> str:
+            raise jwt.PyJWTError("test jwt failure")
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+            await QWeatherProvider(
+                client,
+                authenticator=FailingAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+async def test_open_meteo_passes_api_key() -> None:
+    handler_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        handler_requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "UTC",
+                "current": {"time": "2026-07-13T08:00"},
+                "daily": {
+                    "time": ["2026-07-13"],
+                    "weather_code": [1],
+                    "temperature_2m_max": [30],
+                    "temperature_2m_min": [20],
+                    "apparent_temperature_max": [31],
+                    "apparent_temperature_min": [21],
+                    "precipitation_sum": [0],
+                    "precipitation_probability_max": [10],
+                    "wind_speed_10m_max": [10],
+                    "wind_gusts_10m_max": [15],
+                    "wind_direction_10m_dominant": [90],
+                    "uv_index_max": [5],
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client, api_key="test-api-key").fetch(1, 2)
+
+    assert snapshot.source_id == "weather:open-meteo"
+    assert handler_requests[0].url.params["apikey"] == "test-api-key"
+
+
+async def test_open_meteo_rejects_http_error() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
+        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+            await OpenMeteoProvider(client).fetch(1, 2)
+
+
+async def test_open_meteo_air_quality_passes_api_key() -> None:
+    air_requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(
+                200,
+                json={
+                    "timezone": "UTC",
+                    "current": {"time": "2026-07-13T08:00"},
+                    "daily": {
+                        "time": ["2026-07-13"],
+                        "weather_code": [1],
+                        "temperature_2m_max": [30],
+                        "temperature_2m_min": [20],
+                        "apparent_temperature_max": [31],
+                        "apparent_temperature_min": [21],
+                        "precipitation_sum": [0],
+                        "precipitation_probability_max": [10],
+                        "wind_speed_10m_max": [10],
+                        "wind_gusts_10m_max": [15],
+                        "wind_direction_10m_dominant": [90],
+                        "uv_index_max": [5],
+                    },
+                },
+            )
+        air_requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "UTC",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client, api_key="test-api-key").fetch(1, 2)
+
+    assert snapshot.air_quality is not None
+    assert "test-api-key" in air_requests[0].url.params["apikey"]
+
+
+async def test_snapshot_to_documents_without_air_quality() -> None:
+    snapshot = WeatherContextSnapshot(
+        source_id="weather:test",
+        source_name="Test",
+        source_url="https://example.invalid/",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        weather_forecast=("forecast",),
+    )
+
+    documents = snapshot_to_documents(snapshot)
+
+    assert [doc.id for doc in documents] == ["weather:test"]
+
+
+async def test_qweather_air_quality_parses_invalid_indexes_gracefully() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={"indexes": [{"code": "cn-mee", "aqi": 50}], "pollutants": []},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is None
+
+
+async def test_qweather_air_quality_handles_missing_pollutant_code() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"attributions": ["https://developer.qweather.com/attribution.html"]},
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": [
+                    {
+                        "code": "pm2p5",
+                        "concentration": {"value": 10.0, "unit": "μg/m3"},
+                        "subIndexes": [],
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.air_quality.pm25_aqi is None
+
+
+async def test_qweather_air_quality_parse_failure_due_to_non_dict_indexes() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "indexes": "not-a-list",
+                "pollutants": [],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is None
+
+
+async def test_qweather_lifestyle_handles_non_dict_items() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": ["not-a-dict"]})
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+async def test_qweather_forecast_handles_non_dict_items() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        },
+                        "not-a-dict",
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+async def test_qweather_air_quality_handles_non_list_pollutants() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"attributions": ["https://developer.qweather.com/attribution.html"]},
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": "not-a-list",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is None
+
+
+async def test_qweather_air_quality_handles_missing_pm2p5_pollutant() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"attributions": ["https://developer.qweather.com/attribution.html"]},
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": [
+                    {
+                        "code": "no2",
+                        "concentration": {"value": 10.0, "unit": "μg/m3"},
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is None
+
+
+async def test_qweather_air_quality_handles_non_list_subindexes() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"attributions": ["https://developer.qweather.com/attribution.html"]},
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": [
+                    {
+                        "code": "pm2p5",
+                        "concentration": {"value": 22.0, "unit": "μg/m3"},
+                        "subIndexes": "not-a-list",
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.air_quality.pm25_aqi is None
+
+
+async def test_qweather_air_quality_subindex_code_not_matching_standard() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"attributions": ["https://developer.qweather.com/attribution.html"]},
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": [
+                    {
+                        "code": "pm2p5",
+                        "concentration": {"value": 22.0, "unit": "μg/m3"},
+                        "subIndexes": [{"code": "cn-mep", "aqi": 70}],
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.air_quality.pm25_aqi is None
+
+
+async def test_qweather_air_quality_handles_non_dict_metadata() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "metadata": "not-a-dict",
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": [
+                    {
+                        "code": "pm2p5",
+                        "concentration": {"value": 22.0, "unit": "μg/m3"},
+                        "subIndexes": [{"code": "cn-mee", "aqi": 68}],
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is not None
+
+
+async def test_qweather_air_quality_handles_empty_attributions() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "fxLink": "https://www.qweather.com/",
+                    "daily": [
+                        {
+                            "fxDate": "2026-07-13",
+                            "textDay": "晴",
+                            "textNight": "晴",
+                            "tempMin": "20",
+                            "tempMax": "30",
+                            "windDirDay": "南风",
+                            "windScaleDay": "3-4",
+                            "humidity": "60",
+                            "precip": "0.0",
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"attributions": []},
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": [
+                    {
+                        "code": "pm2p5",
+                        "concentration": {"value": 22.0, "unit": "μg/m3"},
+                        "subIndexes": [{"code": "cn-mee", "aqi": 68}],
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is not None
