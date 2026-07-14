@@ -463,3 +463,16 @@ class TestConfigErrorPaths:
 
         with pytest.raises(ConfigurationError, match="must be a JSON array"):
             Settings.from_env()
+
+    def test_non_numeric_coordinates_raise_error(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        location_file = tmp_path / "locations.json"
+        location_file.write_text(
+            '[{"id":"beijing","name":"Beijing","latitude":"abc","longitude":"def"}]',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+        with pytest.raises(ConfigurationError, match="coordinates must be numbers"):
+            Settings.from_env()
