@@ -14,7 +14,7 @@ from .publishers import DeliveryProvider
 from .sources import HTTPContextSource, RSSSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
-from .weather_context import WeatherContextProvider, snapshot_to_documents
+from .weather_context import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
 
 _LOGGER = logging.getLogger("weather_briefing.service")
 
@@ -42,10 +42,26 @@ class BriefingService:
         self._ops_delivery = ops_delivery
         self._weather_context_provider = weather_context_provider
 
-    async def run(self, kind: str, now: pendulum.DateTime | None = None) -> str | None:
+    async def run(
+        self,
+        kind: str,
+        now: pendulum.DateTime | None = None,
+        *,
+        forecast_date: pendulum.Date | None = None,
+        force_publish: bool = False,
+        silent: bool = False,
+    ) -> str | None:
         current_time = require_aware_datetime(now or pendulum.now(self._settings.timezone), context="Briefing run time")
+        if forecast_date is not None and kind != "forecast":
+            raise ValueError("Forecast date is only supported in forecast mode")
         try:
-            body = await self._run(kind, current_time)
+            body = await self._run(
+                kind,
+                current_time,
+                forecast_date=forecast_date,
+                force_publish=force_publish,
+                silent=silent,
+            )
         except Exception as exc:
             self._state.record_failure()
             exc.add_note("Briefing run failed")
@@ -62,7 +78,15 @@ class BriefingService:
         self._state.record_success()
         return body
 
-    async def _run(self, kind: str, now: pendulum.DateTime) -> str | None:
+    async def _run(
+        self,
+        kind: str,
+        now: pendulum.DateTime,
+        *,
+        forecast_date: pendulum.Date | None,
+        force_publish: bool,
+        silent: bool,
+    ) -> str | None:
         feeds = tuple(
             feed for feed in self._settings.feeds if not feed.location_ids or self._location.id in feed.location_ids
         )
@@ -124,7 +148,7 @@ class BriefingService:
         bootstrap_candidates = tuple(
             article
             for article in all_articles
-            if kind == "daily"
+            if kind == "forecast"
             and self._is_forecast_article(article)
             and yesterday_start <= article.published_at < today_start
         )
@@ -144,8 +168,11 @@ class BriefingService:
             await asyncio.gather(*(self._context_source.fetch(config) for config in self._settings.context_sources))
         )
         if self._weather_context_provider is not None:
-            weather_context = await self._weather_context_provider.fetch(
-                self._location.latitude, self._location.longitude
+            weather_context = await fetch_weather_context(
+                self._weather_context_provider,
+                self._location.latitude,
+                self._location.longitude,
+                forecast_date,
             )
             context_items.extend(snapshot_to_documents(weather_context))
         context = tuple(context_items)
@@ -171,6 +198,7 @@ class BriefingService:
         payload = self._build_payload(
             kind,
             now,
+            forecast_date,
             new_articles,
             deferred_articles,
             historical_articles,
@@ -184,10 +212,10 @@ class BriefingService:
 
         def validate_length(candidate: BriefingResult) -> None:
             candidate_message = self._delivery.render_briefing(candidate, source_articles, reference_context)
-            if kind == "hourly" and candidate.advice:
-                raise LLMError("hourly briefing must not repeat lifestyle advice")
-            if kind == "daily" and not candidate.should_publish:
-                raise LLMError("daily briefing must set should_publish=true")
+            if kind == "briefing" and candidate.advice:
+                raise LLMError("briefing must not repeat lifestyle advice")
+            if kind == "forecast" and not candidate.should_publish:
+                raise LLMError("forecast must set should_publish=true")
             if candidate_message.visible_length > briefing_limit:
                 raise LLMError(
                     f"briefing has {candidate_message.visible_length} visible characters; limit is {briefing_limit}"
@@ -199,8 +227,8 @@ class BriefingService:
             source_articles,
             reference_context,
         )
-        if kind == "hourly" and not result.should_publish:
-            _LOGGER.info("Hourly briefing skipped: should_publish=False")
+        if kind == "briefing" and not result.should_publish and not force_publish:
+            _LOGGER.info("Briefing skipped: should_publish=False")
             self._save_result_state(
                 kind,
                 now,
@@ -211,7 +239,8 @@ class BriefingService:
             )
             return None
 
-        await self._delivery.publish_rendered(message, single_message=True)
+        publish_silently = silent and kind == "briefing" and not result.should_publish
+        await self._delivery.publish_rendered(message, single_message=True, silent=publish_silently)
         for article in unpublished_articles:
             if article.is_verbatim:
                 _LOGGER.debug(
@@ -220,7 +249,7 @@ class BriefingService:
                     article.published_at.isoformat(),
                     len(article.content),
                 )
-                await self._delivery.publish_verbatim(article)
+                await self._delivery.publish_verbatim(article, silent=publish_silently)
                 _LOGGER.info(
                     "Verbatim article published: source=%s published_at=%s",
                     article.source_id,
@@ -329,6 +358,7 @@ class BriefingService:
         self,
         kind: str,
         now: pendulum.DateTime,
+        forecast_date: pendulum.Date | None,
         articles: tuple[Article, ...],
         deferred_articles: tuple[Article, ...],
         historical_articles: tuple[Article, ...],
@@ -339,6 +369,7 @@ class BriefingService:
         return {
             "mode": kind,
             "now": now.isoformat(),
+            "forecast_date": str(forecast_date or now.in_timezone(self._settings.timezone).date()),
             "region": self._location.name,
             "location_id": self._location.id,
             "coordinates": {
@@ -380,7 +411,7 @@ class BriefingService:
                     "verbatim": article.is_verbatim,
                 }
                 for article in historical_articles
-                if kind == "daily" or article.is_verbatim
+                if kind == "forecast" or article.is_verbatim
             ],
             "context_documents": [
                 {"source_id": item.id, "name": item.name, "url": item.url, "content": item.content} for item in context
@@ -394,7 +425,14 @@ class BriefingService:
                 }
                 for item in historical_context
             ],
-            "recent_briefings": self._state.recent_briefings(now, self._settings.history_hours),
+            "recent_briefings": [
+                {
+                    "mode": briefing.kind,
+                    "published_at": briefing.published_at.in_timezone(self._settings.timezone).isoformat(),
+                    "body": briefing.body,
+                }
+                for briefing in self._state.recent_briefings(now, self._settings.history_hours)
+            ],
             "currently_active_warnings": [
                 {
                     "id": warning.id,

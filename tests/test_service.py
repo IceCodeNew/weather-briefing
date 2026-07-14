@@ -99,16 +99,19 @@ class RecordingLLM:
         self,
         *,
         should_publish: bool = True,
-        include_hourly_advice: bool = False,
+        include_briefing_advice: bool = False,
     ) -> None:
         self.payload: dict[str, object] | None = None
         self._should_publish = should_publish
-        self._include_hourly_advice = include_hourly_advice
+        self._include_briefing_advice = include_briefing_advice
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         self.payload = payload
         context = cast(list[dict[str, object]], payload["context_documents"])
-        articles = cast(list[dict[str, object]], payload["new_articles"])
+        articles = (
+            *cast(list[dict[str, object]], payload["new_articles"]),
+            *cast(list[dict[str, object]], payload["deferred_articles"]),
+        )
         source_id = str((context or articles)[0]["source_id"])
         conclusion = {
             "text": "AQI is 42 under test-standard.",
@@ -120,7 +123,7 @@ class RecordingLLM:
             "conclusions": [conclusion],
             "active_warnings": [],
             "resolved_warning_ids": [],
-            "advice": ([conclusion] if payload["mode"] == "daily" or self._include_hourly_advice else []),
+            "advice": ([conclusion] if payload["mode"] == "forecast" or self._include_briefing_advice else []),
             "disaster_tracking": [],
             "should_publish": self._should_publish,
         }
@@ -128,10 +131,16 @@ class RecordingLLM:
 
 class RecordingPublisher:
     def __init__(self) -> None:
-        self.messages: list[tuple[RenderedMessage, bool]] = []
+        self.messages: list[tuple[RenderedMessage, bool, bool]] = []
 
-    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
-        self.messages.append((message, single_message))
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
+        self.messages.append((message, single_message, silent))
 
 
 class FailOncePublisher(RecordingPublisher):
@@ -139,11 +148,17 @@ class FailOncePublisher(RecordingPublisher):
         super().__init__()
         self.attempts = 0
 
-    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
         self.attempts += 1
         if self.attempts == 1:
             raise RuntimeError("delivery unavailable")
-        await super().publish(message, single_message=single_message)
+        await super().publish(message, single_message=single_message, silent=silent)
 
 
 def _location() -> ResolvedLocation:
@@ -159,7 +174,7 @@ def _location() -> ResolvedLocation:
     )
 
 
-async def test_daily_briefing_uses_configured_coordinates_and_air_quality_context(
+async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
@@ -181,6 +196,7 @@ async def test_daily_briefing_uses_configured_coordinates_and_air_quality_contex
     now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        state.save_briefing("briefing", "Earlier update", now.subtract(hours=1))
         service = BriefingService(
             cast(Any, settings),
             _location(),
@@ -192,7 +208,7 @@ async def test_daily_briefing_uses_configured_coordinates_and_air_quality_contex
             delivery,
             weather_context,
         )
-        body = await service.run("daily", now)
+        body = await service.run("forecast", now)
 
     assert weather_context.coordinates == (39.911389, 116.380556)
     assert llm.payload is not None
@@ -202,11 +218,87 @@ async def test_daily_briefing_uses_configured_coordinates_and_air_quality_contex
     assert air_document["url"] == "https://example.invalid/air-quality"
     assert "AQI：42（标准：test-standard" in air_document["content"]
     assert "PM2.5 原始浓度：12 µg/m³" in air_document["content"]
+    recent_briefings = cast(list[dict[str, str]], llm.payload["recent_briefings"])
+    assert recent_briefings == [
+        {
+            "mode": "briefing",
+            "published_at": "2026-07-13T07:00:00+08:00",
+            "body": "Earlier update",
+        }
+    ]
     assert body is not None
-    assert publisher.messages == [(RenderedMessage(body, len(body)), True)]
+    assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
 
 
-async def test_hourly_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
+async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provider(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    run_time = pendulum.datetime(2026, 7, 13, 22, 30, tz=timezone)
+    target_date = pendulum.date(2026, 7, 15)
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+
+    class TargetDateWeatherProvider:
+        def __init__(self) -> None:
+            self.forecast_date: pendulum.Date | None = None
+
+        async def fetch(
+            self,
+            latitude: float,
+            longitude: float,
+        ) -> WeatherContextSnapshot:
+            return await StaticWeatherContextProvider().fetch(latitude, longitude)
+
+        async def fetch_for_date(
+            self,
+            latitude: float,
+            longitude: float,
+            forecast_date: pendulum.Date,
+        ) -> WeatherContextSnapshot:
+            self.forecast_date = forecast_date
+            return await self.fetch(latitude, longitude)
+
+    weather_provider = TargetDateWeatherProvider()
+    llm = RecordingLLM()
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+
+    with SQLiteStateStore(tmp_path / "future-forecast.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, EmptyRSSSource()),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            delivery,
+            weather_provider,
+        )
+        await service.run("forecast", run_time, forecast_date=target_date)
+
+    assert weather_provider.forecast_date == target_date
+    assert llm.payload is not None
+    assert llm.payload["now"] == "2026-07-13T22:30:00+08:00"
+    assert llm.payload["forecast_date"] == "2026-07-15"
+
+
+async def test_forecast_date_is_rejected_for_briefing_mode() -> None:
+    service = object.__new__(BriefingService)
+    service._settings = cast(Any, SimpleNamespace(timezone=pendulum.timezone("Asia/Shanghai")))
+
+    with pytest.raises(ValueError, match="only supported in forecast mode"):
+        await service.run("briefing", forecast_date=pendulum.date(2026, 7, 15))
+
+
+async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
     article = Article(
@@ -244,15 +336,15 @@ async def test_hourly_briefing_also_uses_the_llm_provider(tmp_path: Path) -> Non
             delivery,
             delivery,
         )
-        await service.run("hourly", now)
+        await service.run("briefing", now)
 
     assert llm.payload is not None
-    assert llm.payload["mode"] == "hourly"
+    assert llm.payload["mode"] == "briefing"
     assert cast(list[dict[str, object]], llm.payload["new_articles"])[0]["source_id"] == "article-id"
     assert len(publisher.messages) == 1
 
 
-async def test_hourly_api_only_update_can_be_remembered_without_delivery(
+async def test_briefing_api_only_update_can_be_remembered_without_delivery(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
@@ -285,12 +377,12 @@ async def test_hourly_api_only_update_can_be_remembered_without_delivery(
             delivery,
             weather_context,
         )
-        result = await service.run("hourly", now)
+        result = await service.run("briefing", now)
         remembered = state.recent_context_documents(now, 1)
 
     assert result is None
     assert llm.payload is not None
-    assert llm.payload["mode"] == "hourly"
+    assert llm.payload["mode"] == "briefing"
     assert publisher.messages == []
     assert {document.id for document in remembered} == {
         "weather:test",
@@ -298,7 +390,7 @@ async def test_hourly_api_only_update_can_be_remembered_without_delivery(
     }
 
 
-async def test_unchanged_active_warning_does_not_force_hourly_delivery(tmp_path: Path) -> None:
+async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
     article = Article(
@@ -367,7 +459,7 @@ async def test_unchanged_active_warning_does_not_force_hourly_delivery(tmp_path:
             delivery,
         )
 
-        assert await service.run("hourly", now.add(hours=1)) is None
+        assert await service.run("briefing", now.add(hours=1)) is None
         assert state.active_warnings(now.add(hours=1), 12)[0].id == warning.id
 
     assert publisher.messages == []
@@ -436,10 +528,10 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
             delivery,
             delivery,
         )
-        assert await service.run("hourly", now) is None
+        assert await service.run("briefing", now) is None
         assert state.pending_articles() == (article,)
 
-        assert await service.run("hourly", now.add(hours=23)) is not None
+        assert await service.run("briefing", now.add(hours=23)) is not None
         assert state.pending_articles() == ()
         assert state.known_article_ids((article.id,)) == {article.id}
 
@@ -450,11 +542,113 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
     assert len(publisher.messages) == 1
 
 
+async def test_forced_briefing_publishes_deferred_information_and_clears_pending_state(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 15, tz=timezone)
+    article = Article(
+        id="deferred-temperature",
+        source_id="feed",
+        source_name="Weather feed",
+        title="Afternoon temperature",
+        url="https://example.invalid/temperature",
+        published_at=now,
+        content="The temperature was 31 C at 15:00",
+        is_verbatim=True,
+    )
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    llm = RecordingLLM(should_publish=False)
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "forced.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, StaticRSSSource(article)),
+            cast(Any, EmptyContextSource()),
+            llm,
+            delivery,
+            delivery,
+        )
+        assert await service.run("briefing", now) is None
+        assert state.pending_articles() == (article,)
+
+        body = await service.run(
+            "briefing",
+            now.add(hours=7),
+            force_publish=True,
+            silent=True,
+        )
+
+        assert body is not None
+        assert state.pending_articles() == ()
+
+    assert llm.payload is not None
+    deferred = cast(list[dict[str, object]], llm.payload["deferred_articles"])
+    assert deferred[0]["source_id"] == article.id
+    assert publisher.messages[0] == (RenderedMessage(body, len(body)), True, True)
+    assert len(publisher.messages) == 2
+    assert publisher.messages[1][1:] == (False, True)
+
+
+async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 23, tz=timezone)
+    settings = SimpleNamespace(
+        timezone=timezone,
+        feeds=(),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=1,
+    )
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "worthy-final.sqlite3") as state:
+        service = BriefingService(
+            cast(Any, settings),
+            _location(),
+            state,
+            cast(Any, EmptyRSSSource()),
+            cast(Any, EmptyContextSource()),
+            RecordingLLM(should_publish=True),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        body = await service.run(
+            "briefing",
+            now,
+            force_publish=True,
+            silent=True,
+        )
+
+    assert body is not None
+    assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
+
+
 @pytest.mark.parametrize(
     ("kind", "llm", "message"),
     (
-        ("hourly", RecordingLLM(include_hourly_advice=True), "must not repeat"),
-        ("daily", RecordingLLM(should_publish=False), "should_publish=true"),
+        ("briefing", RecordingLLM(include_briefing_advice=True), "must not repeat"),
+        ("forecast", RecordingLLM(should_publish=False), "should_publish=true"),
     ),
 )
 async def test_service_rejects_mode_specific_llm_contract_violations(
@@ -532,14 +726,14 @@ async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
         )
         # First failure: alert fires immediately
         with pytest.raises(WeatherContextError, match="weather context unavailable") as error:
-            await service.run("hourly", now)
+            await service.run("briefing", now)
         assert error.value.__notes__ == ["Briefing run failed"]
         assert len(publisher.messages) == 1
         assert "任务执行失败" in publisher.messages[0][0].body
 
         # Second consecutive failure: no new alert
         with pytest.raises(WeatherContextError, match="weather context unavailable") as error:
-            await service.run("hourly", now.add(hours=1))
+            await service.run("briefing", now.add(hours=1))
         assert error.value.__notes__ == ["Briefing run failed"]
         assert len(publisher.messages) == 1
 
@@ -581,22 +775,22 @@ async def test_task_failure_alert_delivery_failure_is_retried(
             caplog.at_level("ERROR", logger="weather_briefing.service"),
             pytest.raises(WeatherContextError, match="weather context unavailable") as error,
         ):
-            await service.run("hourly", now)
+            await service.run("briefing", now)
 
         with pytest.raises(WeatherContextError, match="weather context unavailable"):
-            await service.run("hourly", now.add(hours=1))
+            await service.run("briefing", now.add(hours=1))
         assert len(ops_publisher.messages) == 1
         assert "任务执行失败" in ops_publisher.messages[0][0].body
 
         with pytest.raises(WeatherContextError, match="weather context unavailable"):
-            await service.run("hourly", now.add(hours=2))
+            await service.run("briefing", now.add(hours=2))
         assert len(ops_publisher.messages) == 1
 
     assert error.value.__notes__ == ["Briefing run failed"]
     assert "Failed to publish or record briefing failure alert" in caplog.text
 
 
-async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path, caplog) -> None:
+async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
     verbatim = Article(
@@ -634,7 +828,7 @@ async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path, caplog
             delivery,
             delivery,
         )
-        await service.run("daily", now)
+        await service.run("forecast", now)
 
     assert len(publisher.messages) == 2
     assert publisher.messages[1][0].body == "Forecast bulletin\n\nRaw forecast"
@@ -675,7 +869,7 @@ async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) 
             delivery,
             delivery,
         )
-        result = await service.run("hourly", now)
+        result = await service.run("briefing", now)
 
     assert result is None
 
@@ -722,7 +916,7 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
             delivery,
             ops_delivery,
         )
-        await service.run("hourly", now)
+        await service.run("briefing", now)
 
     assert len(ops_publisher.messages) >= 1
     assert "长时间无更新" in ops_publisher.messages[0][0].body
@@ -793,7 +987,7 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
             delivery,
             delivery,
         )
-        body = await service.run("hourly", now)
+        body = await service.run("briefing", now)
 
     assert body is not None
     assert llm.attempts == 2
@@ -842,7 +1036,7 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
             StaticWeatherContextProvider(),
         )
         with pytest.raises(LLMError, match="validation failed"):
-            await service.run("hourly", now)
+            await service.run("briefing", now)
 
 
 async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path) -> None:
@@ -883,14 +1077,14 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
             delivery,
             delivery,
         )
-        body = await service.run("daily", now)
+        body = await service.run("forecast", now)
 
     assert body is None
     assert llm.payload is None
     assert publisher.messages == []
 
 
-async def test_rss_failure_does_not_crash_daily_task_with_weather_context(
+async def test_rss_failure_does_not_crash_forecast_with_weather_context(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
@@ -922,7 +1116,7 @@ async def test_rss_failure_does_not_crash_daily_task_with_weather_context(
             delivery,
             StaticWeatherContextProvider(),
         )
-        body = await service.run("daily", now)
+        body = await service.run("forecast", now)
 
     assert body is not None
     assert len(publisher.messages) == 1
@@ -961,7 +1155,7 @@ async def test_rss_cancellation_aborts_task_without_recording_failure(
         )
 
         with pytest.raises(asyncio.CancelledError):
-            await service.run("hourly", now)
+            await service.run("briefing", now)
 
         assert state.rss_sources_requiring_failure_alert(("canceled-feed",), 1) == []
 
@@ -1006,7 +1200,7 @@ async def test_rss_cancellation_records_other_completed_feed_results(
         )
 
         with pytest.raises(asyncio.CancelledError):
-            await service.run("hourly", now)
+            await service.run("briefing", now)
 
         assert state.rss_sources_requiring_failure_alert(("recovered-feed",), 1) == []
         assert state.rss_sources_requiring_failure_alert(("failing-feed",), 1) == ["failing-feed"]
@@ -1047,16 +1241,16 @@ async def test_rss_failure_alert_is_sent_after_threshold(
             StaticWeatherContextProvider(),
         )
         # First failure: no alert yet (threshold is 2)
-        await service.run("hourly", now)
+        await service.run("briefing", now)
         assert ops_publisher.messages == []
 
         # Second failure: alert should trigger
-        await service.run("hourly", now.add(hours=1))
+        await service.run("briefing", now.add(hours=1))
         assert len(ops_publisher.messages) == 1
         assert "持续获取失败" in ops_publisher.messages[0][0].body
 
         # Third failure: no new alert (already alerted)
-        await service.run("hourly", now.add(hours=2))
+        await service.run("briefing", now.add(hours=2))
         assert len(ops_publisher.messages) == 1
 
 
@@ -1096,12 +1290,12 @@ async def test_failed_rss_alert_delivery_is_retried(
         )
 
         with caplog.at_level("ERROR", logger="weather_briefing.service"):
-            await service.run("hourly", now)
+            await service.run("briefing", now)
         assert state.rss_sources_requiring_failure_alert(("fail-feed",), 1) == ["fail-feed"]
         assert len(publisher.messages) == 1
 
-        await service.run("hourly", now.add(hours=1))
+        await service.run("briefing", now.add(hours=1))
         assert state.rss_sources_requiring_failure_alert(("fail-feed",), 1) == []
 
     assert "Failed to publish or record RSS health alert" in caplog.text
-    assert any("持续获取失败" in message.body for message, _ in ops_publisher.messages)
+    assert any("持续获取失败" in message.body for message, _, _ in ops_publisher.messages)

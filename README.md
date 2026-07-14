@@ -32,7 +32,7 @@ uv lock --check
 uv sync --frozen
 cp env.example .env
 cp locations.example.json locations.json
-uv run --frozen weather-briefing run hourly
+uv run --frozen weather-briefing run briefing
 ```
 
 `env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id` 和 `name`，`latitude` 与 `longitude` 可同时删除，此时程序用 Open-Meteo Geocoding 解析并把结果缓存到 `state/`。
@@ -58,14 +58,18 @@ QWeather 使用 Ed25519 JWT 认证。将控制台中的项目 ID、JWT 凭据 ID
 Telegram 投递 provider 组合平台专用 HTML renderer 与 Bot API publisher，负责渲染粗体章节、预警和可点击来源链接并完成投递。日常简报限制为一条不超过 Telegram 4096 可见字符上限的消息；权威预报清洗正文单独完整发送。需要回放历史数据进行隔离测试时，可覆盖业务时间和状态数据库：
 
 ```bash
-BRIEFING_STATE_PATH=state/replay.sqlite3 weather-briefing run daily --at 2026-07-11T08:00:00+08:00
+BRIEFING_STATE_PATH=state/replay.sqlite3 weather-briefing run forecast --at 2026-07-11T08:00:00+08:00
 ```
 
 ## 调度
 
 项目提供单一 OCI 镜像，不需要 Docker Compose。构建并运行常驻调度器：
 
-日报默认在 `BRIEFING_TIMEZONE` 的 08:00 运行，可用 `GREETING_HOUR` 和 `GREETING_MINUTE` 调整。小时简报默认在 09:00–23:00 的整点运行；`BRIEFING_CRON` 是 APScheduler 的小时字段表达式，例如 `9-23`、`8,12,16` 或 `*/2`。启动常驻调度器时传入 `daemon --run-now` 可在建立定时任务前立即运行一次小时简报。
+`run forecast` 生成当日预报，默认由 daemon 在 `BRIEFING_TIMEZONE` 的 08:00 调度，可用 `GREETING_HOUR` 和 `GREETING_MINUTE` 调整。`run briefing` 生成增量简报，daemon 默认在 09:00–23:00 的整点运行；`BRIEFING_CRON` 是 APScheduler 的小时字段表达式，例如 `9-23`、`8,12,16` 或 `*/2`。
+
+已有 daemon 运行时，可从另一个进程执行 `weather-briefing run forecast --run-now` 或 `weather-briefing run briefing --run-now`。两种命令都不创建第二个 scheduler，忽略调度窗口，执行一次后退出；briefing 还会汇总并强制投递此前因不值得打扰而积压的信息。如果当天尚未成功投递 briefing，daemon 会在最后一个 `BRIEFING_CRON` 小时强制投递；Telegram 使用无声消息，避免在较晚时段打扰。
+
+`run forecast --date YYYY-MM-DD` 可查看当地今天或指定未来日期（例如后天）的 forecast，也可以与 `--run-now` 组合。目标日期只影响要查询和总结的预报日期，实际运行时间、状态写入时间和历史窗口仍使用当前时间。`--at` 只在测试历史回放时覆盖实际运行时间。
 
 ```bash
 cp env.example .env
@@ -84,8 +88,8 @@ docker run -d --name weather-briefing --restart unless-stopped \
 也可在持久主机上使用 cron：
 
 ```cron
-0 8 * * * cd /srv/weather-briefing && .venv/bin/weather-briefing run daily
-0 9-23 * * * cd /srv/weather-briefing && .venv/bin/weather-briefing run hourly
+0 8 * * * cd /srv/weather-briefing && .venv/bin/weather-briefing run forecast
+0 9-23 * * * cd /srv/weather-briefing && .venv/bin/weather-briefing run briefing
 ```
 
 ## 安全

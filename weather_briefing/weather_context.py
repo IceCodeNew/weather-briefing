@@ -6,10 +6,11 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 import httpx
 import jwt
+import pendulum
 
 from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_document, health_guidance
 from .api_client import api_call_extensions
@@ -31,6 +32,16 @@ class WeatherContextProvider(Protocol):
     async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot: ...
 
 
+@runtime_checkable
+class DatedWeatherContextProvider(Protocol):
+    async def fetch_for_date(
+        self,
+        latitude: float,
+        longitude: float,
+        forecast_date: pendulum.Date,
+    ) -> WeatherContextSnapshot: ...
+
+
 class LoggedWeatherContextProvider:
     """Record a non-sensitive history of logical weather provider calls."""
 
@@ -38,11 +49,17 @@ class LoggedWeatherContextProvider:
         self._name = name
         self._provider = provider
 
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        forecast_date: pendulum.Date | None = None,
+    ) -> WeatherContextSnapshot:
         started_at = time.monotonic()
         _LOGGER.info("Weather API call started provider=%s", self._name)
         try:
-            snapshot = await self._provider.fetch(latitude, longitude)
+            snapshot = await fetch_weather_context(self._provider, latitude, longitude, forecast_date)
         except WeatherContextError as exc:
             _LOGGER.warning(
                 "Weather API call failed provider=%s duration_ms=%d reason=%s",
@@ -67,6 +84,14 @@ class LoggedWeatherContextProvider:
             snapshot.observed_at.to_iso8601_string(),
         )
         return snapshot
+
+    async def fetch_for_date(
+        self,
+        latitude: float,
+        longitude: float,
+        forecast_date: pendulum.Date,
+    ) -> WeatherContextSnapshot:
+        return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
 
 class QWeatherAuthenticator(Protocol):
@@ -125,7 +150,13 @@ class QWeatherProvider:
             "provider_defaults.json", "qweather_lifestyle_index_types"
         )
 
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        forecast_date: pendulum.Date | None = None,
+    ) -> WeatherContextSnapshot:
         operation = "authentication"
         try:
             headers = {"Authorization": self._authenticator.authorization_header()}
@@ -147,29 +178,51 @@ class QWeatherProvider:
                     "QWeather returned a non-success weather status "
                     f"code={_safe_api_status(weather_payload.get('code'))}"
                 )
-            weather_forecast = tuple(_format_qweather_day(item) for item in weather_payload.get("daily", ())[:2])
-            if not weather_forecast:
-                raise WeatherContextError("QWeather returned no daily forecast")
-
-            operation = "lifestyle indices"
-            indices_response = await self._client.get(
-                f"{self._base_url}/v7/indices/1d",
-                params={
-                    "type": ",".join(self._index_types),
-                    "location": f"{longitude:.2f},{latitude:.2f}",
-                    "lang": "zh",
-                },
-                headers=headers,
-                extensions=api_call_extensions("qweather", "lifestyle-indices"),
+            daily_forecasts = weather_payload.get("daily", ())
+            first_forecast_date = next(
+                (
+                    str(item["fxDate"])
+                    for item in daily_forecasts
+                    if isinstance(item, dict) and item.get("fxDate") is not None
+                ),
+                None,
             )
-            indices_response.raise_for_status()
-            indices_payload = indices_response.json()
-            if indices_payload.get("code") != "200":
-                raise WeatherContextError(
-                    "QWeather returned a non-success indices status "
-                    f"code={_safe_api_status(indices_payload.get('code'))}"
+            if forecast_date is None:
+                selected_forecasts = daily_forecasts[:2]
+            else:
+                selected_forecasts = tuple(
+                    item
+                    for item in daily_forecasts
+                    if isinstance(item, dict) and item.get("fxDate") == str(forecast_date)
                 )
-            lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in indices_payload.get("daily", ()))
+            weather_forecast = tuple(_format_qweather_day(item) for item in selected_forecasts)
+            if not weather_forecast:
+                if forecast_date is None:
+                    raise WeatherContextError("QWeather returned no daily forecast")
+                raise WeatherContextError(f"QWeather returned no forecast for {forecast_date}")
+
+            indices_payload: dict[str, Any] = {}
+            lifestyle_advice: tuple[str, ...] = ()
+            if forecast_date is None or str(forecast_date) == first_forecast_date:
+                operation = "lifestyle indices"
+                indices_response = await self._client.get(
+                    f"{self._base_url}/v7/indices/1d",
+                    params={
+                        "type": ",".join(self._index_types),
+                        "location": f"{longitude:.2f},{latitude:.2f}",
+                        "lang": "zh",
+                    },
+                    headers=headers,
+                    extensions=api_call_extensions("qweather", "lifestyle-indices"),
+                )
+                indices_response.raise_for_status()
+                indices_payload = indices_response.json()
+                if indices_payload.get("code") != "200":
+                    raise WeatherContextError(
+                        "QWeather returned a non-success indices status "
+                        f"code={_safe_api_status(indices_payload.get('code'))}"
+                    )
+                lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in indices_payload.get("daily", ()))
             source_url = str(
                 weather_payload.get("fxLink") or indices_payload.get("fxLink") or "https://www.qweather.com/"
             )
@@ -194,6 +247,14 @@ class QWeatherProvider:
             lifestyle_advice=lifestyle_advice,
             air_quality=air_quality,
         )
+
+    async def fetch_for_date(
+        self,
+        latitude: float,
+        longitude: float,
+        forecast_date: pendulum.Date,
+    ) -> WeatherContextSnapshot:
+        return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
     async def _fetch_air_quality(
         self, latitude: float, longitude: float, headers: dict[str, str]
@@ -249,7 +310,13 @@ class OpenMeteoProvider:
         self._air_quality_base_url = air_quality_base_url
         self._api_key = api_key
 
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        forecast_date: pendulum.Date | None = None,
+    ) -> WeatherContextSnapshot:
         params: dict[str, str | int | float] = {
             "latitude": latitude,
             "longitude": longitude,
@@ -270,8 +337,12 @@ class OpenMeteoProvider:
             ),
             "current": "relative_humidity_2m",
             "timezone": "auto",
-            "forecast_days": 2,
         }
+        if forecast_date is None:
+            params["forecast_days"] = 2
+        else:
+            params["start_date"] = str(forecast_date)
+            params["end_date"] = str(forecast_date)
         if self._api_key:
             params["apikey"] = self._api_key
         try:
@@ -284,7 +355,8 @@ class OpenMeteoProvider:
             payload = response.json()
             daily = cast(dict[str, list[object]], payload["daily"])
             times = daily["time"]
-            weather_forecast = tuple(_format_open_meteo_day(daily, index) for index in range(min(2, len(times))))
+            forecast_count = min(2, len(times)) if forecast_date is None else len(times)
+            weather_forecast = tuple(_format_open_meteo_day(daily, index) for index in range(forecast_count))
             if not weather_forecast:
                 raise WeatherContextError("Open-Meteo returned no daily forecast")
             observed_at = parse_datetime_with_default_timezone(
@@ -306,6 +378,14 @@ class OpenMeteoProvider:
             weather_forecast=weather_forecast,
             air_quality=air_quality,
         )
+
+    async def fetch_for_date(
+        self,
+        latitude: float,
+        longitude: float,
+        forecast_date: pendulum.Date,
+    ) -> WeatherContextSnapshot:
+        return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
     async def _fetch_air_quality(self, latitude: float, longitude: float) -> AirQualitySnapshot | None:
         params: dict[str, str | int | float] = {
@@ -359,13 +439,40 @@ class FallbackWeatherContextProvider:
             raise ValueError("At least one weather context provider is required")
         self._providers = providers
 
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        forecast_date: pendulum.Date | None = None,
+    ) -> WeatherContextSnapshot:
         for provider in self._providers[:-1]:
             try:
-                return await provider.fetch(latitude, longitude)
+                return await fetch_weather_context(provider, latitude, longitude, forecast_date)
             except WeatherContextError:
                 continue
-        return await self._providers[-1].fetch(latitude, longitude)
+        return await fetch_weather_context(self._providers[-1], latitude, longitude, forecast_date)
+
+    async def fetch_for_date(
+        self,
+        latitude: float,
+        longitude: float,
+        forecast_date: pendulum.Date,
+    ) -> WeatherContextSnapshot:
+        return await self.fetch(latitude, longitude, forecast_date=forecast_date)
+
+
+async def fetch_weather_context(
+    provider: WeatherContextProvider,
+    latitude: float,
+    longitude: float,
+    forecast_date: pendulum.Date | None,
+) -> WeatherContextSnapshot:
+    if forecast_date is None:
+        return await provider.fetch(latitude, longitude)
+    if not isinstance(provider, DatedWeatherContextProvider):
+        raise WeatherContextError(f"{type(provider).__name__} does not support target forecast dates")
+    return await provider.fetch_for_date(latitude, longitude, forecast_date)
 
 
 def _elapsed_milliseconds(started_at: float) -> int:
@@ -393,8 +500,14 @@ class AirQualitySupplementingWeatherProvider:
         self._weather_provider = weather_provider
         self._air_quality_provider = air_quality_provider
 
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-        snapshot = await self._weather_provider.fetch(latitude, longitude)
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        forecast_date: pendulum.Date | None = None,
+    ) -> WeatherContextSnapshot:
+        snapshot = await fetch_weather_context(self._weather_provider, latitude, longitude, forecast_date)
         if snapshot.air_quality is not None:
             return snapshot
         if self._air_quality_provider is None:
@@ -411,6 +524,14 @@ class AirQualitySupplementingWeatherProvider:
         except AirQualityError:
             raise WeatherContextError("Weather source did not provide air quality and AQICN fallback failed") from None
         return replace(snapshot, air_quality=air_quality)
+
+    async def fetch_for_date(
+        self,
+        latitude: float,
+        longitude: float,
+        forecast_date: pendulum.Date,
+    ) -> WeatherContextSnapshot:
+        return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
 
 def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocument, ...]:

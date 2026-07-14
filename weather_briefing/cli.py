@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import AsyncExitStack, contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import httpx
@@ -59,11 +59,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run")
-    run_parser.add_argument("kind", choices=("daily", "hourly"))
-    run_parser.add_argument("--enforce-window", action="store_true")
-    run_parser.add_argument("--at", help="Override run time with an ISO-8601 timestamp including UTC offset")
-    daemon_parser = subparsers.add_parser("daemon")
-    daemon_parser.add_argument("--run-now", action="store_true", help="Run a briefing immediately before scheduling")
+    run_parser.add_argument("kind", choices=("forecast", "briefing"))
+    timing_group = run_parser.add_mutually_exclusive_group()
+    timing_group.add_argument("--enforce-window", action="store_true")
+    timing_group.add_argument(
+        "--run-now",
+        action="store_true",
+        help="Run the selected one-shot task immediately; briefings also publish deferred information",
+    )
+    run_time_group = run_parser.add_mutually_exclusive_group()
+    run_time_group.add_argument("--at", help="Override run time with an ISO-8601 timestamp including UTC offset")
+    run_time_group.add_argument("--date", help="Generate a forecast for a local date in YYYY-MM-DD format")
+    subparsers.add_parser("daemon")
     diagnostics_parser = subparsers.add_parser("diagnostics")
     diagnostics_topics = diagnostics_parser.add_subparsers(dest="diagnostics_topic", required=True)
     rendered_text_parser = diagnostics_topics.add_parser("rendered-text")
@@ -97,7 +104,7 @@ def _diagnostic_duration_seconds(value: str) -> int:
 
 
 def _in_schedule(kind: str, now: pendulum.DateTime, settings: Settings) -> bool:
-    if kind == "daily":
+    if kind == "forecast":
         return now.hour == settings.greeting_hour
     return _hour_in_cron(now.hour, settings.hourly_cron)
 
@@ -108,6 +115,43 @@ def _hour_in_cron(hour: int, cron_hour: str) -> bool:
     current_hour = datetime(2000, 1, 1, hour, tzinfo=UTC)
     trigger = CronTrigger(hour=cron_hour, timezone=UTC)
     return trigger.get_next_fire_time(None, current_hour) == current_hour
+
+
+def _is_last_briefing_window(now: pendulum.DateTime, cron_hour: str) -> bool:
+    return _hour_in_cron(now.hour, cron_hour) and not any(
+        _hour_in_cron(hour, cron_hour) for hour in range(now.hour + 1, 24)
+    )
+
+
+def _briefing_delivery_policy(
+    kind: str,
+    now: pendulum.DateTime,
+    settings: Settings,
+    *,
+    run_now: bool,
+    briefing_sent_today: bool,
+) -> tuple[bool, bool]:
+    if kind != "briefing":
+        return False, False
+    if run_now:
+        return True, False
+    if _is_last_briefing_window(now, settings.hourly_cron) and not briefing_sent_today:
+        return True, True
+    return False, False
+
+
+def _briefing_sent_today(
+    kind: str,
+    now: pendulum.DateTime,
+    settings: Settings,
+    state: SQLiteStateStore,
+    *,
+    run_now: bool,
+) -> bool:
+    if kind != "briefing" or run_now or not _is_last_briefing_window(now, settings.hourly_cron):
+        return False
+    local_now = now.in_timezone(settings.timezone)
+    return state.has_briefing_between("briefing", local_now.start_of("day"), local_now)
 
 
 _LOGGER = logging.getLogger("weather_briefing")
@@ -149,14 +193,26 @@ def _configure_logging(*, debug: bool) -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
+async def run(
+    kind: str,
+    enforce_window: bool,
+    at: str | None = None,
+    *,
+    forecast_date: str | None = None,
+    run_now: bool = False,
+) -> None:
     settings = Settings.from_env()
     _configure_logging(debug=settings.debug)
+    if forecast_date is not None and kind != "forecast":
+        raise ValueError("--date is only supported for run forecast")
     now = _parse_run_time(at, settings.timezone)
+    target_forecast_date = _parse_forecast_date(forecast_date) if forecast_date is not None else None
+    if target_forecast_date is not None and target_forecast_date < now.in_timezone(settings.timezone).date():
+        raise ValueError("--date cannot be earlier than the current local date; use --at for historical tests")
     if enforce_window and not _in_schedule(kind, now, settings):
         _LOGGER.info("Skipping delayed %s run outside configured local-time window", kind)
         return
-    _LOGGER.info("Starting %s briefing run at %s", kind, now.to_iso8601_string())
+    _LOGGER.info("Starting %s run at %s", kind, now.to_iso8601_string())
     async with AsyncExitStack() as stack:
         diagnostics = stack.enter_context(_runtime_diagnostics(settings.state_path))
         client = await stack.enter_async_context(
@@ -194,6 +250,14 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
         for location in locations:
             _LOGGER.info("Processing location %s (%s)", location.id, location.name)
             with SQLiteStateStore(_location_state_path(settings.state_path, location, len(locations))) as state:
+                briefing_sent_today = _briefing_sent_today(kind, now, settings, state, run_now=run_now)
+                force_publish, silent = _briefing_delivery_policy(
+                    kind,
+                    now,
+                    settings,
+                    run_now=run_now,
+                    briefing_sent_today=briefing_sent_today,
+                )
                 service = BriefingService(
                     settings,
                     location,
@@ -210,11 +274,17 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
                     delivery,
                     _weather_context_provider(settings, client, location),
                 )
-                body = await service.run(kind, now)
+                body = await service.run(
+                    kind,
+                    now,
+                    forecast_date=target_forecast_date,
+                    force_publish=force_publish,
+                    silent=silent,
+                )
                 if body is not None:
-                    _LOGGER.info("Location %s %s briefing published (%d characters)", location.id, kind, len(body))
+                    _LOGGER.info("Location %s %s published (%d characters)", location.id, kind, len(body))
                 else:
-                    _LOGGER.info("Location %s %s briefing skipped (no content)", location.id, kind)
+                    _LOGGER.info("Location %s %s skipped (no content)", location.id, kind)
 
 
 def _llm_provider(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
@@ -383,13 +453,20 @@ def _parse_run_time(value: str | None, timezone: pendulum.Timezone) -> pendulum.
     return parse_aware_datetime(value, context="Run time").in_timezone(timezone)
 
 
-async def daemon(run_now: bool = False) -> None:
+def _parse_forecast_date(value: str) -> pendulum.Date:
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        raise ValueError("Forecast date must use YYYY-MM-DD")
+    try:
+        target = date.fromisoformat(value)
+        return pendulum.date(target.year, target.month, target.day)
+    except ValueError:
+        raise ValueError("Forecast date must be a valid date") from None
+
+
+async def daemon() -> None:
     settings = Settings.from_env()
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
-    if run_now:
-        _LOGGER.info("Running initial briefing")
-        await run("hourly", False)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     scheduler.add_job(
         run,
@@ -398,7 +475,7 @@ async def daemon(run_now: bool = False) -> None:
             minute=settings.greeting_minute,
             timezone=settings.timezone,
         ),
-        args=("daily", False),
+        args=("forecast", True),
         max_instances=1,
     )
     scheduler.add_job(
@@ -408,7 +485,7 @@ async def daemon(run_now: bool = False) -> None:
             minute=0,
             timezone=settings.timezone,
         ),
-        args=("hourly", False),
+        args=("briefing", True),
         max_instances=1,
     )
     scheduler.start()
@@ -450,14 +527,22 @@ def main() -> None:
     _configure_logging(debug=False)
     try:
         if args.command == "daemon":
-            asyncio.run(daemon(args.run_now))
+            asyncio.run(daemon())
         elif args.command == "diagnostics":
             _manage_rendered_text_diagnostics(
                 args.diagnostics_action,
                 getattr(args, "duration_seconds", None),
             )
         else:
-            asyncio.run(run(args.kind, args.enforce_window, args.at))
+            asyncio.run(
+                run(
+                    args.kind,
+                    args.enforce_window,
+                    args.at,
+                    forecast_date=args.date,
+                    run_now=args.run_now,
+                )
+            )
     except Exception:
         _LOGGER.exception("weather-briefing terminated with an error")
         raise SystemExit(1) from None

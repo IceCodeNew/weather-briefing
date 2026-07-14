@@ -188,6 +188,94 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
     ]
 
 
+async def test_qweather_provider_selects_requested_future_date() -> None:
+    target_date = pendulum.date(2026, 7, 15)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T08:00",
+                    "daily": [
+                        {**_QWEATHER_DAILY_ITEM, "fxDate": "2026-07-13"},
+                        {**_QWEATHER_DAILY_ITEM, "fxDate": "2026-07-14", "tempMax": "31"},
+                        {**_QWEATHER_DAILY_ITEM, "fxDate": "2026-07-15", "tempMax": "32"},
+                    ],
+                },
+            )
+        assert request.url.path != "/v7/indices/1d", "Future forecasts must not request one-day lifestyle indices"
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(39.9, 116.3, forecast_date=target_date)
+
+    assert len(snapshot.weather_forecast) == 1
+    assert snapshot.weather_forecast[0].startswith("2026-07-15：")
+    assert "20~32℃" in snapshot.weather_forecast[0]
+    assert snapshot.lifestyle_advice == ()
+
+
+async def test_qweather_provider_keeps_lifestyle_indices_for_first_forecast_date() -> None:
+    target_date = pendulum.date(2026, 7, 13)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-12T23:55",
+                    "daily": [{**_QWEATHER_DAILY_ITEM, "fxDate": str(target_date)}],
+                },
+            )
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "daily": [{"name": "运动指数", "category": "适宜", "text": "今天适宜运动"}],
+                },
+            )
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch_for_date(39.9, 116.3, target_date)
+
+    assert snapshot.lifestyle_advice == ("运动指数（适宜）：今天适宜运动",)
+
+
+async def test_qweather_provider_rejects_unavailable_forecast_date() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v7/weather/3d"
+        return httpx.Response(
+            200,
+            json={
+                "code": "200",
+                "updateTime": "2026-07-13T08:00",
+                "daily": [{**_QWEATHER_DAILY_ITEM, "fxDate": "2026-07-13"}],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        )
+        with pytest.raises(WeatherContextError, match="no forecast for 2026-07-15"):
+            await provider.fetch(39.9, 116.3, forecast_date=pendulum.date(2026, 7, 15))
+
+
 async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "weather.example.invalid":
@@ -246,6 +334,48 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
     assert snapshot.air_quality.pm25_concentration == 9.5
 
 
+async def test_open_meteo_provider_requests_only_selected_future_date() -> None:
+    target_date = pendulum.date(2026, 7, 15)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "weather.example.invalid":
+            assert request.url.params["start_date"] == "2026-07-15"
+            assert request.url.params["end_date"] == "2026-07-15"
+            assert "forecast_days" not in request.url.params
+            return httpx.Response(
+                200,
+                json={
+                    "timezone": "Asia/Shanghai",
+                    "current": {"time": "2026-07-13T22:00"},
+                    "daily": {
+                        "time": ["2026-07-15"],
+                        "weather_code": [61],
+                        "temperature_2m_max": [29],
+                        "temperature_2m_min": [22],
+                        "apparent_temperature_max": [31],
+                        "apparent_temperature_min": [23],
+                        "precipitation_sum": [8],
+                        "precipitation_probability_max": [80],
+                        "wind_speed_10m_max": [18],
+                        "wind_gusts_10m_max": [28],
+                        "wind_direction_10m_dominant": [120],
+                        "uv_index_max": [3],
+                    },
+                },
+            )
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(
+            client,
+            weather_base_url="https://weather.example.invalid",
+            air_quality_base_url="https://air.example.invalid",
+        ).fetch_for_date(39.9, 116.3, target_date)
+
+    assert len(snapshot.weather_forecast) == 1
+    assert snapshot.weather_forecast[0].startswith("2026-07-15：")
+
+
 async def test_weather_provider_falls_back_after_primary_weather_failure() -> None:
     expected = WeatherContextSnapshot(
         source_id="weather:fallback",
@@ -268,6 +398,45 @@ async def test_weather_provider_falls_back_after_primary_weather_failure() -> No
     assert await provider.fetch(1, 2) == expected
 
 
+async def test_weather_provider_preserves_forecast_date_during_fallback() -> None:
+    target_date = pendulum.date(2026, 7, 15)
+    received_dates: list[pendulum.Date | None] = []
+    undated_calls: list[tuple[float, float]] = []
+    expected = WeatherContextSnapshot(
+        source_id="weather:fallback",
+        source_name="Fallback weather",
+        source_url="https://example.invalid/weather",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        weather_forecast=("2026-07-15 forecast",),
+    )
+
+    class UndatedProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            undated_calls.append((latitude, longitude))
+            return expected
+
+    class SuccessfulProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return expected
+
+        async def fetch_for_date(
+            self,
+            latitude: float,
+            longitude: float,
+            forecast_date: pendulum.Date,
+        ) -> WeatherContextSnapshot:
+            received_dates.append(forecast_date)
+            return await self.fetch(latitude, longitude)
+
+    undated_provider = UndatedProvider()
+    assert await undated_provider.fetch(1, 2) == expected
+    provider = FallbackWeatherContextProvider(undated_provider, SuccessfulProvider())
+
+    assert await provider.fetch_for_date(1, 2, target_date) == expected
+    assert received_dates == [target_date]
+    assert undated_calls == [(1, 2)]
+
+
 async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog) -> None:
     expected = WeatherContextSnapshot(
         source_id="weather:fallback",
@@ -281,9 +450,25 @@ async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog)
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
             raise WeatherContextError("QWeather weather forecast failed: HTTP 401")
 
+        async def fetch_for_date(
+            self,
+            latitude: float,
+            longitude: float,
+            forecast_date: pendulum.Date,
+        ) -> WeatherContextSnapshot:
+            return await self.fetch(latitude, longitude)
+
     class SuccessfulProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
             return expected
+
+        async def fetch_for_date(
+            self,
+            latitude: float,
+            longitude: float,
+            forecast_date: pendulum.Date,
+        ) -> WeatherContextSnapshot:
+            return await self.fetch(latitude, longitude)
 
     provider = FallbackWeatherContextProvider(
         LoggedWeatherContextProvider("qweather", FailingProvider()),
@@ -291,7 +476,7 @@ async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog)
     )
 
     with caplog.at_level("INFO", logger="weather_briefing.weather_context"):
-        assert await provider.fetch(1, 2) == expected
+        assert await provider.fetch_for_date(1, 2, pendulum.date(2026, 7, 15)) == expected
 
     assert "Weather API call started provider=qweather" in caplog.text
     assert "Weather API call failed provider=qweather" in caplog.text
@@ -364,6 +549,14 @@ async def test_aqicn_supplements_weather_without_air_quality() -> None:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
             return weather
 
+        async def fetch_for_date(
+            self,
+            latitude: float,
+            longitude: float,
+            forecast_date: pendulum.Date,
+        ) -> WeatherContextSnapshot:
+            return await self.fetch(latitude, longitude)
+
     class AirProvider:
         async def fetch(
             self,
@@ -376,7 +569,7 @@ async def test_aqicn_supplements_weather_without_air_quality() -> None:
 
     provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), AirProvider())
 
-    assert (await provider.fetch(1, 2)).air_quality == air
+    assert (await provider.fetch_for_date(1, 2, pendulum.date(2026, 7, 15))).air_quality == air
 
 
 async def test_aqicn_receives_explicit_offset_when_weather_time_has_no_timezone_name() -> None:

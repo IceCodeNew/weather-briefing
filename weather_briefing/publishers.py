@@ -14,7 +14,13 @@ _LOGGER = logging.getLogger("weather_briefing.publishers")
 
 
 class Publisher(Protocol):
-    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None: ...
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None: ...
 
 
 class RenderedTextDiagnostics(Protocol):
@@ -48,11 +54,12 @@ class DeliveryProvider:
         message: RenderedMessage,
         *,
         single_message: bool = False,
+        silent: bool = False,
     ) -> None:
         _log_rendered_text(self.diagnostics, "briefing", message.body)
-        await self.publisher.publish(message, single_message=single_message)
+        await self.publisher.publish(message, single_message=single_message, silent=silent)
 
-    async def publish_verbatim(self, article: Article) -> None:
+    async def publish_verbatim(self, article: Article, *, silent: bool = False) -> None:
         message = self.renderer.render_verbatim(article)
         _LOGGER.debug(
             "Rendered verbatim message: visible_characters=%d payload_characters=%d",
@@ -60,7 +67,7 @@ class DeliveryProvider:
             len(message.body),
         )
         _log_rendered_text(self.diagnostics, "verbatim", message.body)
-        await self.publisher.publish(message)
+        await self.publisher.publish(message, silent=silent)
 
     async def publish_alert(self, title: str, body: str) -> None:
         message = self.renderer.render_alert(title, body)
@@ -69,7 +76,13 @@ class DeliveryProvider:
 
 
 class StdoutPublisher:
-    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
         print(message.body)
 
 
@@ -92,7 +105,13 @@ class TelegramPublisher:
         self._chat_id = chat_id
         self._diagnostics = diagnostics
 
-    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
             raise DeliveryError("Telegram single message exceeds the platform limit")
         chunks = (message.body,) if single_message else _split_message(message.body, self.MAX_MESSAGE_LENGTH)
@@ -120,6 +139,7 @@ class TelegramPublisher:
                         "text": chunk,
                         "parse_mode": "HTML",
                         "link_preview_options": {"is_disabled": True},
+                        "disable_notification": silent,
                     },
                     extensions=api_call_extensions("telegram", "send-message"),
                 )

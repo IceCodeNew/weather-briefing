@@ -14,6 +14,8 @@ from weather_briefing.cli import (
     _LOGGER,
     WEATHER_PROVIDER_BUILDERS,
     _aqicn_provider,
+    _briefing_delivery_policy,
+    _briefing_sent_today,
     _build_open_meteo,
     _build_qweather,
     _build_weather_provider,
@@ -24,6 +26,7 @@ from weather_briefing.cli import (
     _llm_provider,
     _location_state_path,
     _manage_rendered_text_diagnostics,
+    _parse_forecast_date,
     _parse_run_time,
     _precision_reduction_notice,
     _qweather_is_configured,
@@ -36,6 +39,7 @@ from weather_briefing.cli import (
 from weather_briefing.config import Settings
 from weather_briefing.llm import OpenAICompatibleChatCompletionsProvider
 from weather_briefing.models import LocationSpec, ResolvedLocation
+from weather_briefing.state import SQLiteStateStore
 
 
 def test_configure_logging_is_idempotent_and_updates_level() -> None:
@@ -87,6 +91,24 @@ def test_parse_run_time_converts_explicit_offset_to_configured_timezone() -> Non
     parsed = _parse_run_time("2026-07-11T00:00:00Z", pendulum.timezone("Asia/Shanghai"))
 
     assert parsed.to_iso8601_string() == "2026-07-11T08:00:00+08:00"
+
+
+def test_parse_run_time_preserves_existing_minute_precision_support() -> None:
+    parsed = _parse_run_time("2026-07-11T08:30+08:00", pendulum.timezone("Asia/Shanghai"))
+
+    assert parsed.to_iso8601_string() == "2026-07-11T08:30:00+08:00"
+
+
+def test_parse_forecast_date_uses_configured_local_schedule_time() -> None:
+    parsed = _parse_forecast_date("2026-07-11")
+
+    assert str(parsed) == "2026-07-11"
+
+
+@pytest.mark.parametrize("value", ("20260711", "2026-02-30"))
+def test_parse_forecast_date_rejects_invalid_date(value: str) -> None:
+    with pytest.raises(ValueError, match="Forecast date"):
+        _parse_forecast_date(value)
 
 
 def test_multiple_locations_receive_isolated_state_paths() -> None:
@@ -163,7 +185,7 @@ class TestHourInCron:
 
 
 class TestInSchedule:
-    def test_daily_matches_greeting_hour(self, monkeypatch) -> None:
+    def test_forecast_matches_greeting_hour(self, monkeypatch) -> None:
         monkeypatch.setenv("GREETING_HOUR", "7")
         monkeypatch.setenv("GREETING_MINUTE", "30")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
@@ -175,10 +197,10 @@ class TestInSchedule:
         now_match = pendulum.datetime(2026, 7, 14, 7, 0, tz=settings.timezone)
         now_no_match = pendulum.datetime(2026, 7, 14, 8, 0, tz=settings.timezone)
 
-        assert _in_schedule("daily", now_match, settings)
-        assert not _in_schedule("daily", now_no_match, settings)
+        assert _in_schedule("forecast", now_match, settings)
+        assert not _in_schedule("forecast", now_no_match, settings)
 
-    def test_hourly_matches_cron_range(self, monkeypatch) -> None:
+    def test_briefing_matches_cron_range(self, monkeypatch) -> None:
         monkeypatch.setenv("BRIEFING_CRON", "10-18")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
         monkeypatch.setenv("DEEPSEEK_MODEL", "m")
@@ -189,8 +211,8 @@ class TestInSchedule:
         now_in = pendulum.datetime(2026, 7, 14, 10, 0, tz=settings.timezone)
         now_out = pendulum.datetime(2026, 7, 14, 9, 0, tz=settings.timezone)
 
-        assert _in_schedule("hourly", now_in, settings)
-        assert not _in_schedule("hourly", now_out, settings)
+        assert _in_schedule("briefing", now_in, settings)
+        assert not _in_schedule("briefing", now_out, settings)
 
 
 def test_version_flag() -> None:
@@ -204,6 +226,155 @@ def test_rendered_text_diagnostics_parser_accepts_bounded_duration() -> None:
 
     assert args.diagnostics_action == "enable"
     assert args.duration_seconds == 900
+
+
+@pytest.mark.parametrize("kind", ("forecast", "briefing"))
+def test_run_now_is_a_one_shot_option_for_each_task(kind: str) -> None:
+    args = build_parser().parse_args(["run", kind, "--run-now"])
+
+    assert args.kind == kind
+    assert args.run_now
+    assert not args.enforce_window
+
+
+@pytest.mark.parametrize("kind", ("daily", "hourly"))
+def test_removed_run_mode_names_are_rejected(kind: str) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", kind])
+
+
+def test_run_now_and_enforce_window_are_mutually_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "briefing", "--run-now", "--enforce-window"])
+
+
+def test_forecast_date_and_at_are_mutually_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "forecast", "--date", "2026-07-11", "--at", "2026-07-11T08:00:00+08:00"])
+
+
+async def test_briefing_rejects_forecast_date(monkeypatch) -> None:
+    from unittest.mock import patch
+
+    settings = _make_fake_settings()
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+
+    with (
+        patch.object(Settings, "from_env", classmethod(lambda cls: settings)),
+        pytest.raises(ValueError, match="only supported for run forecast"),
+    ):
+        await run("briefing", enforce_window=False, forecast_date="2026-07-11")
+
+
+async def test_forecast_date_rejects_past_date_and_points_to_at(monkeypatch) -> None:
+    from unittest.mock import patch
+
+    settings = _make_fake_settings()
+    now = pendulum.datetime(2026, 7, 13, 8, tz=settings.timezone)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda value, timezone: now)
+
+    with (
+        patch.object(Settings, "from_env", classmethod(lambda cls: settings)),
+        pytest.raises(ValueError, match="use --at for historical tests"),
+    ):
+        await run("forecast", enforce_window=False, forecast_date="2026-07-12")
+
+
+def test_briefing_delivery_policy_forces_final_window_silently() -> None:
+    settings = replace(_make_fake_settings(), hourly_cron="9,12,16")
+    now = pendulum.datetime(2026, 7, 14, 16, tz=settings.timezone)
+
+    assert _briefing_delivery_policy(
+        "briefing",
+        now,
+        settings,
+        run_now=False,
+        briefing_sent_today=False,
+    ) == (True, True)
+
+
+def test_briefing_delivery_policy_does_not_flush_after_earlier_delivery() -> None:
+    settings = replace(_make_fake_settings(), hourly_cron="9,12,16")
+    now = pendulum.datetime(2026, 7, 14, 16, tz=settings.timezone)
+
+    assert _briefing_delivery_policy(
+        "briefing",
+        now,
+        settings,
+        run_now=False,
+        briefing_sent_today=True,
+    ) == (False, False)
+
+
+def test_briefing_delivery_policy_keeps_manual_run_now_audible() -> None:
+    settings = replace(_make_fake_settings(), hourly_cron="9,12,16")
+    now = pendulum.datetime(2026, 7, 14, 10, tz=settings.timezone)
+
+    assert _briefing_delivery_policy(
+        "briefing",
+        now,
+        settings,
+        run_now=True,
+        briefing_sent_today=True,
+    ) == (True, False)
+
+
+def test_briefing_delivery_policy_does_not_force_earlier_window() -> None:
+    settings = replace(_make_fake_settings(), hourly_cron="9,12,16")
+    now = pendulum.datetime(2026, 7, 14, 12, tz=settings.timezone)
+
+    assert _briefing_delivery_policy(
+        "briefing",
+        now,
+        settings,
+        run_now=False,
+        briefing_sent_today=False,
+    ) == (False, False)
+
+
+def test_forecast_delivery_policy_never_forces_briefing_delivery() -> None:
+    settings = _make_fake_settings()
+    now = pendulum.datetime(2026, 7, 14, 8, tz=settings.timezone)
+
+    assert _briefing_delivery_policy(
+        "forecast",
+        now,
+        settings,
+        run_now=False,
+        briefing_sent_today=False,
+    ) == (False, False)
+
+
+def test_briefing_sent_today_reads_final_window_state(tmp_path: Path) -> None:
+    settings = replace(_make_fake_settings(), hourly_cron="9,12,16")
+    now = pendulum.datetime(2026, 7, 14, 16, tz=settings.timezone)
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.save_briefing("briefing", "Earlier briefing", now.subtract(hours=4))
+
+        assert _briefing_sent_today("briefing", now, settings, state, run_now=False)
+
+
+@pytest.mark.parametrize(
+    ("kind", "hour", "run_now"),
+    (
+        ("forecast", 16, False),
+        ("briefing", 16, True),
+        ("briefing", 12, False),
+    ),
+)
+def test_briefing_sent_today_skips_irrelevant_state_queries(
+    tmp_path: Path,
+    kind: str,
+    hour: int,
+    run_now: bool,
+) -> None:
+    settings = replace(_make_fake_settings(), hourly_cron="9,12,16")
+    now = pendulum.datetime(2026, 7, 14, hour, tz=settings.timezone)
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.save_briefing("briefing", "Earlier briefing", now.subtract(hours=1))
+
+        assert not _briefing_sent_today(kind, now, settings, state, run_now=run_now)
 
 
 @pytest.mark.parametrize("duration", ("0m", "15", "25h"))
@@ -286,7 +457,7 @@ def test_main_configures_info_logging_before_daemon_and_logs_failure_once(monkey
     original_root_handlers = logging.root.handlers[:]
     original_root_level = logging.root.level
 
-    async def fail_daemon(run_now: bool = False) -> None:
+    async def fail_daemon() -> None:
         assert len(_LOGGER.handlers) == 1
         assert _LOGGER.level == logging.INFO
         raise RuntimeError("daemon-boom")
@@ -323,17 +494,26 @@ def test_main_configures_info_logging_before_run_and_logs_failure_once(monkeypat
     original_root_handlers = logging.root.handlers[:]
     original_root_level = logging.root.level
 
-    async def fail_run(kind: str, enforce_window: bool, at: str | None) -> None:
-        assert kind == "hourly"
+    async def fail_run(
+        kind: str,
+        enforce_window: bool,
+        at: str | None,
+        *,
+        forecast_date: str | None = None,
+        run_now: bool = False,
+    ) -> None:
+        assert kind == "briefing"
         assert not enforce_window
         assert at is None
+        assert forecast_date is None
+        assert not run_now
         assert len(_LOGGER.handlers) == 1
         assert _LOGGER.level == logging.INFO
         raise RuntimeError("boom")
 
     monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
     monkeypatch.setattr("weather_briefing.cli.run", fail_run)
-    monkeypatch.setattr("sys.argv", ["weather-briefing", "run", "hourly"])
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "run", "briefing"])
     try:
         _LOGGER.handlers.clear()
         logging.root.handlers.clear()
@@ -467,10 +647,10 @@ async def test_run_skips_and_logs_when_enforce_window_outside_schedule(monkeypat
         monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
         monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: False)
         with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
-            await run("hourly", enforce_window=True)
+            await run("briefing", enforce_window=True)
 
         stderr = capsys.readouterr().err
-        assert "Skipping delayed hourly run outside configured local-time window" in stderr
+        assert "Skipping delayed briefing run outside configured local-time window" in stderr
         assert "[INFO] weather_briefing:" in stderr
     finally:
         _LOGGER.handlers.clear()
@@ -527,7 +707,7 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
 
     monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", unavailable_diagnostics)
 
-    async def fake_service_run(kind: str, n: object) -> str:
+    async def fake_service_run(kind: str, n: object, **kwargs: object) -> str:
         return "published body"
 
     monkeypatch.setattr("weather_briefing.cli.BriefingService", lambda *a, **kw: SimpleNamespace(run=fake_service_run))
@@ -542,10 +722,10 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
         logging.root.handlers.clear()
 
         with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
-            await run("hourly", enforce_window=False)
+            await run("briefing", enforce_window=False)
 
         stderr = capsys.readouterr().err
-        assert "Starting hourly briefing run" in stderr
+        assert "Starting briefing run" in stderr
         assert "Runtime diagnostics unavailable; continuing without sensitive rendered text logging" in stderr
         assert "Resolving 1 location(s)" in stderr
         assert "Processing location test (Test City)" in stderr
@@ -612,7 +792,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
     monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", lambda p: FakeState())
 
-    async def fake_service_run(kind: str, n: object) -> str:
+    async def fake_service_run(kind: str, n: object, **kwargs: object) -> str:
         return "published body"
 
     monkeypatch.setattr("weather_briefing.cli.BriefingService", lambda *a, **kw: SimpleNamespace(run=fake_service_run))
@@ -627,7 +807,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
         logging.root.handlers.clear()
 
         with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
-            await run("hourly", enforce_window=False)
+            await run("briefing", enforce_window=False)
 
     finally:
         _LOGGER.handlers.clear()
@@ -677,7 +857,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
     monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", lambda p: FakeState())
 
-    async def fake_service_run(kind: str, n: object) -> str | None:
+    async def fake_service_run(kind: str, n: object, **kwargs: object) -> str | None:
         return None
 
     monkeypatch.setattr("weather_briefing.cli.BriefingService", lambda *a, **kw: SimpleNamespace(run=fake_service_run))
@@ -692,7 +872,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
         logging.root.handlers.clear()
 
         with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
-            await run("hourly", enforce_window=False)
+            await run("briefing", enforce_window=False)
 
         stderr = capsys.readouterr().err
         assert "briefing skipped (no content)" in stderr
@@ -911,61 +1091,20 @@ def test_weather_provider_builders_contains_expected_keys() -> None:
     assert set(WEATHER_PROVIDER_BUILDERS) == {"qweather", "open-meteo"}
 
 
-async def test_daemon_runs_initial_briefing_when_run_now(monkeypatch) -> None:
-    import base64 as b64
+async def test_daemon_schedules_forecast_and_briefing_without_running_either_immediately(monkeypatch) -> None:
     from unittest.mock import patch
 
-    calls: list[tuple[str, bool, str | None]] = []
-
-    async def fake_run(kind: str, enforce_window: bool, at: str | None = None) -> None:
-        calls.append((kind, enforce_window, at))
+    jobs: list[tuple[object, tuple[object, ...]]] = []
 
     class FakeEvent:
         async def wait(self) -> None:
             pass
 
-    monkeypatch.setattr("weather_briefing.cli.run", fake_run)
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
     monkeypatch.setattr(
         "weather_briefing.cli.AsyncIOScheduler",
         lambda **kw: SimpleNamespace(
-            add_job=lambda *a, **kw: None,
-            start=lambda: None,
-        ),
-    )
-    monkeypatch.setattr("weather_briefing.cli.asyncio.Event", FakeEvent)
-
-    settings = _make_fake_settings(
-        qweather_project_id="p",
-        qweather_credential_id="c",
-        qweather_private_key=b64.b64encode(b"fake-private-key-content").decode(),
-        qweather_base_url="https://example.invalid",
-    )
-
-    with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
-        await daemon(run_now=True)
-
-    assert calls == [("hourly", False, None)]
-
-
-async def test_daemon_skips_initial_briefing_without_run_now(monkeypatch) -> None:
-    from unittest.mock import patch
-
-    calls: list[tuple[str, bool, str | None]] = []
-
-    async def fake_run(kind: str, enforce_window: bool, at: str | None = None) -> None:
-        calls.append((kind, enforce_window, at))
-
-    class FakeEvent:
-        async def wait(self) -> None:
-            pass
-
-    monkeypatch.setattr("weather_briefing.cli.run", fake_run)
-    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
-    monkeypatch.setattr(
-        "weather_briefing.cli.AsyncIOScheduler",
-        lambda **kw: SimpleNamespace(
-            add_job=lambda *a, **kw: None,
+            add_job=lambda function, trigger, *, args, max_instances: jobs.append((function, tuple(args))),
             start=lambda: None,
         ),
     )
@@ -974,17 +1113,17 @@ async def test_daemon_skips_initial_briefing_without_run_now(monkeypatch) -> Non
     settings = _make_fake_settings()
 
     with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
-        await daemon(run_now=False)
+        await daemon()
 
-    assert calls == []
+    assert jobs == [(run, ("forecast", True)), (run, ("briefing", True))]
 
 
 def test_main_calls_daemon_correctly(monkeypatch) -> None:
+    calls = 0
 
-    calls: list[bool] = []
-
-    async def fake_daemon(run_now: bool = False) -> None:
-        calls.append(run_now)
+    async def fake_daemon() -> None:
+        nonlocal calls
+        calls += 1
 
     monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
@@ -992,34 +1131,59 @@ def test_main_calls_daemon_correctly(monkeypatch) -> None:
     monkeypatch.setattr("sys.argv", ["weather-briefing", "daemon"])
 
     main()
-    assert calls == [False]
+    assert calls == 1
 
 
-def test_main_calls_daemon_run_now(monkeypatch) -> None:
-
-    calls: list[bool] = []
-
-    async def fake_daemon(run_now: bool = False) -> None:
-        calls.append(run_now)
-
-    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
-    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
-    monkeypatch.setattr("weather_briefing.cli.daemon", fake_daemon)
-    monkeypatch.setattr("sys.argv", ["weather-briefing", "daemon", "--run-now"])
-    main()
-    assert calls == [True]
+def test_daemon_parser_rejects_run_now() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["daemon", "--run-now"])
 
 
 def test_main_calls_run_correctly(monkeypatch) -> None:
     calls: list[tuple[str, bool, str | None]] = []
 
-    async def fake_run(kind: str, enforce_window: bool, at: str | None = None) -> None:
-        calls.append((kind, enforce_window, at))
+    async def fake_run(
+        kind: str,
+        enforce_window: bool,
+        at: str | None = None,
+        *,
+        forecast_date: str | None = None,
+        run_now: bool = False,
+    ) -> None:
+        calls.append((kind, enforce_window, forecast_date or at))
+        assert not run_now
 
     monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
     monkeypatch.setattr("weather_briefing.cli.run", fake_run)
-    monkeypatch.setattr("sys.argv", ["weather-briefing", "run", "daily", "--at", "2026-07-14T08:00:00+08:00"])
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "run", "forecast", "--at", "2026-07-14T08:00:00+08:00"])
 
     main()
-    assert calls == [("daily", False, "2026-07-14T08:00:00+08:00")]
+    assert calls == [("forecast", False, "2026-07-14T08:00:00+08:00")]
+
+
+def test_main_passes_forecast_date(monkeypatch) -> None:
+    calls: list[tuple[str, bool, str | None, bool]] = []
+
+    async def fake_run(
+        kind: str,
+        enforce_window: bool,
+        at: str | None = None,
+        *,
+        forecast_date: str | None = None,
+        run_now: bool = False,
+    ) -> None:
+        assert at is None
+        calls.append((kind, enforce_window, forecast_date, run_now))
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.cli.run", fake_run)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["weather-briefing", "run", "forecast", "--date", "2026-07-11", "--run-now"],
+    )
+
+    main()
+
+    assert calls == [("forecast", False, "2026-07-11", True)]

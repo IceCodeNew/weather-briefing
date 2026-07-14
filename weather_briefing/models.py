@@ -73,6 +73,13 @@ class SourceDocument:
 
 
 @dataclass(frozen=True, slots=True)
+class BriefingRecord:
+    kind: str
+    body: str
+    published_at: pendulum.DateTime
+
+
+@dataclass(frozen=True, slots=True)
 class AirQualitySnapshot:
     source_id: str
     source_name: str
