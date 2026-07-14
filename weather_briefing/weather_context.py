@@ -685,8 +685,6 @@ def _aqi_standard(index: dict[str, object]) -> str:
 
 
 def _format_qweather_lifestyle(item: dict[str, object]) -> str:
-    if not isinstance(item, dict):
-        raise ValueError("QWeather lifestyle index must be an object")
     name = str(item["name"])
     category = str(item.get("category", "未知"))
     text = str(item.get("text") or "无详细建议")
@@ -694,8 +692,6 @@ def _format_qweather_lifestyle(item: dict[str, object]) -> str:
 
 
 def _format_qweather_day(item: dict[str, object]) -> str:
-    if not isinstance(item, dict):
-        raise ValueError("QWeather daily forecast must be an object")
     return (
         f"{item['fxDate']}：{item['textDay']}转{item['textNight']}，"
         f"{item['tempMin']}~{item['tempMax']}℃，"

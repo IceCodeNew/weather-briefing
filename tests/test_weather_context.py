@@ -1071,7 +1071,7 @@ async def test_qweather_lifestyle_handles_non_dict_items() -> None:
         raise AssertionError(f"Unexpected request: {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="lifestyle indices failed: ValueError"):
+        with pytest.raises(WeatherContextError, match="lifestyle indices failed: TypeError"):
             await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),
@@ -1096,7 +1096,7 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
         raise AssertionError(f"Unexpected request: {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="weather forecast failed: ValueError"):
+        with pytest.raises(WeatherContextError, match="weather forecast failed: TypeError"):
             await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),
