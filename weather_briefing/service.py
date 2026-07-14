@@ -47,13 +47,17 @@ class BriefingService:
         try:
             body = await self._run(kind, current_time)
         except Exception as exc:
-            failure_count = self._state.record_failure()
-            exc.add_note(f"Briefing run failed after {failure_count} consecutive failure(s)")
-            if failure_count == self._settings.task_failure_threshold:
-                await self._ops_delivery.publish_alert(
-                    "天气简报任务连续失败",
-                    f"任务已连续失败 {failure_count} 次，请检查运行日志和私密源配置。",
-                )
+            self._state.record_failure()
+            exc.add_note("Briefing run failed")
+            try:
+                if self._state.task_failure_requires_alert():
+                    await self._ops_delivery.publish_alert(
+                        "天气简报任务执行失败",
+                        "任务执行失败，请检查运行日志、天气 API 及私密源配置。",
+                    )
+                    self._state.mark_task_failure_alerted(current_time)
+            except Exception:
+                _LOGGER.exception("Failed to publish or record briefing failure alert")
             raise
         self._state.record_success()
         return body
@@ -63,12 +67,41 @@ class BriefingService:
             feed for feed in self._settings.feeds if not feed.location_ids or self._location.id in feed.location_ids
         )
         _LOGGER.debug("Fetching %d RSS feed(s)", len(feeds))
-        fetched = await asyncio.gather(*(self._rss_source.fetch(config) for config in feeds))
+        results = await asyncio.gather(
+            *(self._rss_source.fetch(config) for config in feeds),
+            return_exceptions=True,
+        )
+        fetched: list[tuple[Article, ...]] = []
+        pending_cancellation: BaseException | None = None
+        for result, config in zip(results, feeds, strict=True):
+            if isinstance(result, BaseException):
+                if not isinstance(result, Exception):
+                    if pending_cancellation is None:
+                        pending_cancellation = result
+                    continue
+                _LOGGER.warning("RSS source %s failed: %s", config.id, result)
+                fetched.append(())
+                self._state.record_source_check(config.id, now, None)
+                self._state.record_rss_fetch_failure(config.id)
+            else:
+                fetched.append(result)
+                latest_at = max((article.published_at for article in result), default=None)
+                self._state.record_source_check(config.id, now, latest_at)
+                self._state.record_rss_fetch_success(config.id)
+        if pending_cancellation is not None:
+            raise pending_cancellation
         all_articles = tuple(article for group in fetched for article in group)
         _LOGGER.info("Fetched %d article(s) from %d feed(s)", len(all_articles), len(fetched))
-        for config, articles in zip(feeds, fetched, strict=True):
-            latest_at = max((article.published_at for article in articles), default=None)
-            self._state.record_source_check(config.id, now, latest_at)
+        rss_failure_alert_ids = self._state.rss_sources_requiring_failure_alert(
+            tuple(config.id for config in feeds),
+            self._settings.rss_failure_threshold,
+        )
+        if rss_failure_alert_ids:
+            await self._publish_rss_health_alert(
+                "天气 RSS 源持续获取失败",
+                f"以下 RSS 源已连续失败 {self._settings.rss_failure_threshold} 次：{', '.join(rss_failure_alert_ids)}",
+                lambda: self._state.mark_rss_failure_alerted(tuple(rss_failure_alert_ids), now),
+            )
         stale = self._state.stale_sources_requiring_alert(
             tuple(config.id for config in feeds),
             now,
@@ -76,11 +109,11 @@ class BriefingService:
         )
         if stale:
             _LOGGER.warning("Stale RSS source(s): %s", ", ".join(stale))
-            await self._ops_delivery.publish_alert(
+            await self._publish_rss_health_alert(
                 "天气 RSS 源长时间无更新",
                 f"以下源超过 {self._settings.rss_stale_hours} 小时无新文章：{', '.join(stale)}",
+                lambda: self._state.mark_stale_sources_alerted(tuple(stale), now),
             )
-            self._state.mark_stale_sources_alerted(tuple(stale), now)
         local_now = now.in_timezone(self._settings.timezone)
         today_start = local_now.start_of("day")
         tomorrow_start = today_start.add(days=1)
@@ -183,6 +216,18 @@ class BriefingService:
             body=message.body,
         )
         return message.body
+
+    async def _publish_rss_health_alert(
+        self,
+        title: str,
+        body: str,
+        mark_alerted: Callable[[], None],
+    ) -> None:
+        try:
+            await self._ops_delivery.publish_alert(title, body)
+            mark_alerted()
+        except Exception:
+            _LOGGER.exception("Failed to publish or record RSS health alert")
 
     def _save_result_state(
         self,

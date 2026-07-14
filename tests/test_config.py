@@ -223,8 +223,8 @@ def test_debug_accepts_truthy_values_with_optional_outer_quotes(monkeypatch, val
     "name",
     (
         "HTTP_TIMEOUT_SECONDS",
+        "RSS_FAILURE_THRESHOLD",
         "RSS_STALE_HOURS",
-        "TASK_FAILURE_THRESHOLD",
         "WARNING_RETENTION_HOURS",
         "HISTORY_HOURS",
     ),

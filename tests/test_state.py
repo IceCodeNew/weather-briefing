@@ -31,6 +31,15 @@ def test_new_empty_source_is_not_immediately_stale(tmp_path: Path) -> None:
         assert state.stale_sources(("source",), now, 24) == []
 
 
+def test_failed_source_check_preserves_last_article_time(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.record_source_check("source", now, now.subtract(hours=25))
+        state.record_source_check("source", now.add(hours=1), None)
+
+        assert state.stale_sources(("source",), now.add(hours=2), 24) == ["source"]
+
+
 def test_stale_source_alert_is_sent_once_until_a_new_article_arrives(tmp_path: Path) -> None:
     first_article = pendulum.datetime(2026, 7, 11, 8, tz="UTC")
     stale_check = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
@@ -113,6 +122,39 @@ def test_mark_stale_sources_alerted_with_empty_ids_is_noop(tmp_path: Path) -> No
         state.mark_stale_sources_alerted((), now)
 
 
+def test_mark_rss_failure_alerted_with_empty_ids_is_noop(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.mark_rss_failure_alerted((), now)
+
+
+def test_rss_failure_alert_is_suppressed_until_fetch_success(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        assert state.record_rss_fetch_failure("source") == 1
+        assert state.rss_sources_requiring_failure_alert(("source",), 2) == []
+
+        assert state.record_rss_fetch_failure("source") == 2
+        assert state.rss_sources_requiring_failure_alert(("source",), 2) == ["source"]
+        state.mark_rss_failure_alerted(("source",), now)
+        assert state.rss_sources_requiring_failure_alert(("source",), 2) == []
+
+        assert state.record_rss_fetch_failure("source") == 3
+        assert state.rss_sources_requiring_failure_alert(("source",), 2) == []
+
+        state.record_rss_fetch_success("source")
+        assert state.record_rss_fetch_failure("source") == 1
+        assert state.rss_sources_requiring_failure_alert(("source",), 1) == ["source"]
+
+
+def test_rss_failure_alert_sources_are_sorted(tmp_path: Path) -> None:
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.record_rss_fetch_failure("beta")
+        state.record_rss_fetch_failure("alpha")
+
+        assert state.rss_sources_requiring_failure_alert(("beta", "alpha"), 1) == ["alpha", "beta"]
+
+
 def test_record_failure_increments_consecutive_count(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "state.db") as state:
         assert state.record_failure() == 1
@@ -126,6 +168,17 @@ def test_record_success_resets_failure_count(tmp_path: Path) -> None:
         state.record_failure()
         state.record_success()
         assert state.record_failure() == 1
+
+
+def test_record_success_reopens_task_failure_alert(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        assert state.task_failure_requires_alert()
+        state.mark_task_failure_alerted(now)
+        assert not state.task_failure_requires_alert()
+
+        state.record_success()
+        assert state.task_failure_requires_alert()
 
 
 def test_parse_time_rejects_invalid_format() -> None:
