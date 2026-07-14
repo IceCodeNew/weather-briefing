@@ -9,8 +9,8 @@
 When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
 
 How to use skills:
-- Invoke: `npx openskills read <skill-name>` (run in your shell)
-  - For multiple: `npx openskills read skill-one,skill-two`
+- Invoke: `openskills read <skill-name>` (run in your shell)
+  - For multiple: `openskills read skill-one,skill-two`
 - The skill content will load with detailed instructions on how to complete the task
 - Base directory provided in output for resolving bundled resources (references/, scripts/, assets/)
 
@@ -78,6 +78,7 @@ Usage notes:
 ## Tool and reference discovery
 
 - When a tool appears missing, check less-obvious environment managers and project activation mechanisms such as Nix, mise, asdf, or direnv before proposing installation.
+- Run installed tools directly from the configured environment. In particular, use the mise-installed `openskills` binary instead of launching it through `npx` or `uvx`.
 - Do not install tools, create substitute environments, or download workaround caches without user approval. If the configured toolchain is broken, stop and let the user repair it.
 - Preserve unexpected staged, unstaged, and untracked user work. Re-check repository state when it changes during a task rather than assuming the earlier snapshot is still current.
 
@@ -89,6 +90,12 @@ Usage notes:
 - Keep packaging and deployment commits after the application behavior they package.
 - During a history rewrite, validate the repository at each meaningful snapshot and remove temporary branches, handoff files, and TODO files when finished.
 - Do not push, force-push, or open a pull request without explicit user approval.
+
+## Pull request review workflow
+
+- Run proportional local verification, then manually review the complete diff before creating or updating a pull request. Fix every known issue and repeat both steps until they are clean.
+- Open the pull request as a draft and request a GitHub Copilot review. Address valid feedback, then repeat local verification, manual review, and Copilot review until no known issue remains.
+- Only after that loop is clean, mark the pull request ready for review and run the `code-review` skill followed by the `autofix` skill. Revalidate any resulting changes before considering the pull request complete.
 
 ## Verification strategy
 
