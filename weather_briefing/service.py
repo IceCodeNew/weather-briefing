@@ -205,7 +205,18 @@ class BriefingService:
         await self._delivery.publish_rendered(message, single_message=True)
         for article in new_articles:
             if article.is_verbatim:
+                _LOGGER.debug(
+                    "Publishing verbatim article: source=%s published_at=%s content_characters=%d",
+                    article.source_id,
+                    article.published_at.isoformat(),
+                    len(article.content),
+                )
                 await self._delivery.publish_verbatim(article)
+                _LOGGER.info(
+                    "Verbatim article published: source=%s published_at=%s",
+                    article.source_id,
+                    article.published_at.isoformat(),
+                )
         self._save_result_state(
             kind,
             now,
