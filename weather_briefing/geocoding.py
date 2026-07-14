@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from .api_client import api_call_extensions
 from .models import LocationResolution, LocationSpec, ResolvedLocation
 from .reference_data import ReferenceDataError, reference_string_tuple, reference_value
 
@@ -73,7 +74,11 @@ class OpenMeteoGeocodingProvider:
         if self._api_key:
             params["apikey"] = self._api_key
         try:
-            response = await self._client.get(f"{self._base_url}/v1/search", params=params)
+            response = await self._client.get(
+                f"{self._base_url}/v1/search",
+                params=params,
+                extensions=api_call_extensions("open-meteo", "geocoding"),
+            )
             response.raise_for_status()
             payload = response.json()
             results = payload.get("results", [])
@@ -144,6 +149,7 @@ class NominatimGeocodingProvider:
                             "limit": 5,
                         },
                         headers={"User-Agent": self._user_agent},
+                        extensions=api_call_extensions("nominatim", "geocoding"),
                     )
                     self._last_request_at = time.monotonic()
                     response.raise_for_status()

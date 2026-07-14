@@ -22,6 +22,7 @@ from .air_quality import (
     AirQualityProvider,
     AQICNProvider,
 )
+from .api_client import LoggedAsyncClient
 from .config import Settings, state_path_from_env, weather_providers_for
 from .geocoding import (
     CachedLocationResolver,
@@ -159,7 +160,7 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
     async with AsyncExitStack() as stack:
         diagnostics = stack.enter_context(_runtime_diagnostics(settings.state_path))
         client = await stack.enter_async_context(
-            httpx.AsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
+            LoggedAsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
         )
         delivery = _delivery_provider(settings, client, diagnostics)
         llm_provider = _llm_provider(settings, client)

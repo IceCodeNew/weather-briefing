@@ -39,7 +39,7 @@ uv run --frozen weather-briefing run hourly
 
 `LLM_PROVIDER=deepseek` 使用 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和可选的 `DEEPSEEK_BASE_URL`；DeepSeek provider 已预置官方 Base URL。`LLM_PROVIDER=openai-compatible` 使用 `LLM_API_KEY`、`LLM_MODEL` 和 `LLM_BASE_URL`。两套配置互不回退。
 
-应用将带时间、级别和 logger 名称的运行日志写入标准错误；INFO 日志记录每个地点的天气 provider 顺序，以及每次天气 API 尝试、成功、失败、耗时、实际来源和安全的失败原因，因此发生自动降级时可从容器日志还原调用历史。设置 `DEBUG=true` 可输出 RSS 获取、LLM 重试，以及从 RSS 清洗、权威预报转发和平台渲染到 Telegram 分片接受状态的非敏感诊断信息。该链路不记录坐标、标题、正文、URL、token、chat ID 或请求 endpoint。若仍需排查平台渲染或分片内容，可在不重启 daemon 的情况下临时记录完整渲染正文：
+应用将带时间、级别和 logger 名称的运行日志写入标准错误；INFO 日志记录每个地点的天气 provider 顺序和逻辑降级过程，并为天气、空气质量、地理编码、LLM、RSS、辅助上下文及 Telegram 的每个实际 HTTP 请求记录 provider、operation、方法、成功或失败、耗时和 HTTP 状态或异常类型，因此可从容器日志还原外部 API 调用历史。RSS 重试与 Telegram 分片分别按实际请求次数记录。常规 INFO 日志及仅由 `DEBUG=true` 启用的非敏感诊断不记录坐标、标题、正文、URL、token、chat ID、请求 endpoint 或异常消息；DEBUG 元数据覆盖从 RSS 清洗、权威预报转发和平台渲染到 Telegram 分片接受状态的链路。若仍需排查平台渲染或分片内容，可在不重启 daemon 的情况下临时记录完整渲染正文：
 
 ```bash
 weather-briefing diagnostics rendered-text enable --for 15m
@@ -47,7 +47,7 @@ weather-briefing diagnostics rendered-text status
 weather-briefing diagnostics rendered-text disable
 ```
 
-容器部署通过同一运行实例执行，例如 `docker exec weather-briefing weather-briefing diagnostics rendered-text enable --for 15m`。该开关最长启用 24 小时并自动过期，状态保存在 `BRIEFING_STATE_PATH`。只有同时启用 `DEBUG` 和临时开关时才记录正文；日志包含简报、告警、权威预报以及 Telegram 分片的完整文本，可能暴露来源内容和位置上下文，排障后应立即关闭并妥善保护日志。token、chat ID 和请求 endpoint 不会写入这些诊断日志。
+容器部署通过同一运行实例执行，例如 `docker exec weather-briefing weather-briefing diagnostics rendered-text enable --for 15m`。该开关最长启用 24 小时并自动过期，状态保存在 `BRIEFING_STATE_PATH`。只有同时启用 `DEBUG` 和临时开关时才记录正文；日志包含简报、告警、权威预报以及 Telegram 分片的完整文本，可能暴露来源内容、来源 URL、坐标和其他位置上下文，排障后应立即关闭并妥善保护日志。token、chat ID 和请求 endpoint 不会写入这些诊断日志。
 
 定位层从地名解析国家或行政区代码。Open-Meteo 负责城市/邮编查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；结果会持久缓存。只有坐标时使用中国大陆服务范围四至宽松包围盒作快速可能性判断。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
 
