@@ -1353,6 +1353,7 @@ async def test_open_meteo_provider_returns_allergen_when_pollen_available() -> N
     assert snapshot.air_quality is not None
     assert snapshot.allergen is not None
     assert snapshot.allergen.source_id == "allergen:open-meteo"
+    assert snapshot.allergen.source_name == "Open-Meteo / CAMS ENSEMBLE 花粉过敏原"
     level_names = {level.name for level in snapshot.allergen.levels}
     assert {"桤木", "桦木", "禾本"} == level_names
     birch = next(level for level in snapshot.allergen.levels if level.name == "桦木")

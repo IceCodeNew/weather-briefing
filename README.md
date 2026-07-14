@@ -98,4 +98,4 @@ docker run -d --name weather-briefing --restart unless-stopped \
 - CI 使用 Gitleaks 扫描凭据，并运行自定义隐私哨兵测试。
 - Telegram token 与 chat ID 只从运行环境读取；测试可选择 stdout publisher。
 
-地点解析使用 [Open-Meteo Geocoding](https://open-meteo.com/en/docs/geocoding-api)；详细地名备用数据 © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)，通过 Nominatim 获取。公共 Nominatim 仅在本地缓存未命中时调用，并遵守其使用政策。
+花粉数据由 [Open-Meteo](https://open-meteo.com/en/docs/air-quality-api) 基于 [CAMS ENSEMBLE](https://confluence.ecmwf.int/spaces/CKB/pages/202173092/CAMS+Regional+European+air+quality+analysis+and+forecast+data+documentation) 提供。地点解析使用 [Open-Meteo Geocoding](https://open-meteo.com/en/docs/geocoding-api)；详细地名备用数据 © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)，通过 Nominatim 获取。公共 Nominatim 仅在本地缓存未命中时调用，并遵守其使用政策。

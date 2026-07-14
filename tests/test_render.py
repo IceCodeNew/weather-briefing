@@ -1,6 +1,6 @@
 import pendulum
 
-from weather_briefing.models import Article, BriefingResult, Conclusion, Warning
+from weather_briefing.models import Article, BriefingResult, Conclusion, SourceDocument, Warning
 from weather_briefing.render import PlainTextRenderer, TelegramHTMLRenderer
 
 
@@ -36,6 +36,46 @@ def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
 
     assert rendered.body == "Daily\n\nOverview"
     assert "<b>" not in rendered.body
+
+
+def test_telegram_html_renderer_uses_context_source_name_as_attribution() -> None:
+    context = SourceDocument(
+        "allergen:open-meteo",
+        "Open-Meteo / CAMS ENSEMBLE 花粉过敏原",
+        "https://open-meteo.com/en/docs/air-quality-api",
+        "Pollen data",
+    )
+    result = BriefingResult(
+        "Daily",
+        "Overview",
+        (),
+        advice=(Conclusion("花粉浓度较高", ("allergen:open-meteo",)),),
+    )
+
+    rendered = TelegramHTMLRenderer().render_briefing(result, (), (context,))
+
+    assert (
+        '<a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo / CAMS ENSEMBLE 花粉过敏原</a>'
+    ) in rendered.body
+
+
+def test_plain_text_renderer_uses_context_source_name_as_attribution() -> None:
+    context = SourceDocument(
+        "allergen:open-meteo",
+        "Open-Meteo / CAMS ENSEMBLE 花粉过敏原",
+        "https://open-meteo.com/en/docs/air-quality-api",
+        "Pollen data",
+    )
+    result = BriefingResult(
+        "Daily",
+        "Overview",
+        (),
+        advice=(Conclusion("花粉浓度较高", ("allergen:open-meteo",)),),
+    )
+
+    rendered = PlainTextRenderer().render_briefing(result, (), (context,))
+
+    assert ("Open-Meteo / CAMS ENSEMBLE 花粉过敏原: https://open-meteo.com/en/docs/air-quality-api") in rendered.body
 
 
 def test_telegram_html_renders_active_warnings_section() -> None:
