@@ -39,7 +39,9 @@ class _TestSettings:
 
 
 def _is_dict_list(value: object) -> TypeGuard[list[dict[str, object]]]:
-    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
+    return isinstance(value, list) and all(
+        isinstance(item, dict) and all(isinstance(k, str) for k in item) for item in value
+    )
 
 
 class EmptyRSSSource:
@@ -239,8 +241,10 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     assert len(context_documents) == 2
     air_document = next(item for item in context_documents if item["source_id"] == "air-quality:test")
     assert air_document["url"] == "https://example.invalid/air-quality"
-    assert "AQI：42（标准：test-standard" in str(air_document["content"])
-    assert "PM2.5 原始浓度：12 µg/m³" in str(air_document["content"])
+    content = air_document["content"]
+    assert isinstance(content, str)
+    assert "AQI：42（标准：test-standard" in content
+    assert "PM2.5 原始浓度：12 µg/m³" in content
     recent_briefings = llm.payload["recent_briefings"]
     assert _is_dict_list(recent_briefings)
     assert recent_briefings == [
