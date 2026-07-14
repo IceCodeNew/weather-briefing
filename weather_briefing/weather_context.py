@@ -508,7 +508,7 @@ class OpenMeteoProvider:
                 )
         return AllergenSnapshot(
             source_id="allergen:open-meteo",
-            source_name="Open-Meteo 花粉过敏原",
+            source_name="Open-Meteo / CAMS ENSEMBLE 花粉过敏原",
             source_url="https://open-meteo.com/en/docs/air-quality-api",
             observed_at=observed_at,
             levels=tuple(levels),

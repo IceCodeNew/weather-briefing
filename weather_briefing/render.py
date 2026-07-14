@@ -34,21 +34,21 @@ class TelegramHTMLRenderer:
         reference_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
-        source_urls = {article.id: article.url for article in reference_articles}
-        source_urls.update({document.id: document.url for document in context})
+        source_links = {article.id: _html_link(article.url) for article in reference_articles}
+        source_links.update({document.id: _html_link(document.url, document.name) for document in context})
         lines = [f"<b>{_html_text(result.headline)}</b>", "", _html_text(result.overview), ""]
         if result.active_warnings:
             lines.extend(["<b>当前生效的气象预警</b>", ""])
             for warning in result.active_warnings:
-                links = " ".join(_html_link(source_urls[source_id]) for source_id in warning.source_ids)
+                links = " ".join(source_links[source_id] for source_id in warning.source_ids)
                 lines.append(
                     f"• <b>{_html_text(warning.title)}（{_html_text(warning.status)}）</b>："
                     f"{_html_text(warning.detail)} {links}".rstrip()
                 )
             lines.append("")
-        lines.extend(_html_items("天气信息", result.conclusions, source_urls))
-        lines.extend(_html_items("灾害动态", result.disaster_tracking, source_urls))
-        lines.extend(_html_items("生活建议", result.advice, source_urls))
+        lines.extend(_html_items("天气信息", result.conclusions, source_links))
+        lines.extend(_html_items("灾害动态", result.disaster_tracking, source_links))
+        lines.extend(_html_items("生活建议", result.advice, source_links))
         return _html_message("\n".join(lines).strip())
 
     def render_verbatim(self, article: Article) -> RenderedMessage:
@@ -73,18 +73,18 @@ class PlainTextRenderer:
         reference_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
-        source_urls = {article.id: article.url for article in reference_articles}
-        source_urls.update({document.id: document.url for document in context})
+        source_references = {article.id: article.url for article in reference_articles}
+        source_references.update({document.id: f"{document.name}: {document.url}" for document in context})
         lines = [result.headline, "", result.overview, ""]
         if result.active_warnings:
             lines.extend(["当前生效的气象预警", ""])
             for warning in result.active_warnings:
-                sources = " ".join(source_urls[item] for item in warning.source_ids)
+                sources = " ".join(source_references[item] for item in warning.source_ids)
                 lines.append(f"- {warning.title}（{warning.status}）：{warning.detail} {sources}".rstrip())
             lines.append("")
-        lines.extend(_plain_items("天气信息", result.conclusions, source_urls))
-        lines.extend(_plain_items("灾害动态", result.disaster_tracking, source_urls))
-        lines.extend(_plain_items("生活建议", result.advice, source_urls))
+        lines.extend(_plain_items("天气信息", result.conclusions, source_references))
+        lines.extend(_plain_items("灾害动态", result.disaster_tracking, source_references))
+        lines.extend(_plain_items("生活建议", result.advice, source_references))
         return _plain_message("\n".join(lines).strip())
 
     def render_verbatim(self, article: Article) -> RenderedMessage:
@@ -98,27 +98,27 @@ def _html_text(value: str) -> str:
     return escape(unescape(value), quote=False)
 
 
-def _html_link(url: str) -> str:
-    return f'<a href="{escape(url, quote=True)}">来源</a>'
+def _html_link(url: str, label: str = "来源") -> str:
+    return f'<a href="{escape(url, quote=True)}">{_html_text(label)}</a>'
 
 
-def _html_items(title: str, items: tuple[Conclusion, ...], source_urls: dict[str, str]) -> list[str]:
+def _html_items(title: str, items: tuple[Conclusion, ...], source_links: dict[str, str]) -> list[str]:
     if not items:
         return []
     lines = [f"<b>{_html_text(title)}</b>", ""]
     for item in items:
-        links = " ".join(_html_link(source_urls[source_id]) for source_id in item.source_ids)
+        links = " ".join(source_links[source_id] for source_id in item.source_ids)
         lines.append(f"• {_html_text(item.text)} {links}".rstrip())
     lines.append("")
     return lines
 
 
-def _plain_items(title: str, items: tuple[Conclusion, ...], source_urls: dict[str, str]) -> list[str]:
+def _plain_items(title: str, items: tuple[Conclusion, ...], source_references: dict[str, str]) -> list[str]:
     if not items:
         return []
     lines = [title, ""]
     for item in items:
-        sources = " ".join(source_urls[source_id] for source_id in item.source_ids)
+        sources = " ".join(source_references[source_id] for source_id in item.source_ids)
         lines.append(f"- {item.text} {sources}".rstrip())
     lines.append("")
     return lines
