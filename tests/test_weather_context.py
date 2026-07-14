@@ -697,7 +697,7 @@ async def test_open_meteo_air_quality_passes_api_key() -> None:
         snapshot = await OpenMeteoProvider(client, api_key="test-api-key").fetch(1, 2)
 
     assert snapshot.air_quality is not None
-    assert "test-api-key" in air_requests[0].url.params["apikey"]
+    assert air_requests[0].url.params["apikey"] == "test-api-key"
 
 
 async def test_snapshot_to_documents_without_air_quality() -> None:
@@ -1220,6 +1220,7 @@ async def test_qweather_air_quality_handles_non_dict_metadata() -> None:
         ).fetch(1, 2)
 
     assert snapshot.air_quality is not None
+    assert snapshot.air_quality.pm25_aqi == 68
 
 
 async def test_qweather_air_quality_handles_empty_attributions() -> None:
@@ -1279,3 +1280,4 @@ async def test_qweather_air_quality_handles_empty_attributions() -> None:
         ).fetch(1, 2)
 
     assert snapshot.air_quality is not None
+    assert snapshot.air_quality.pm25_aqi == 68

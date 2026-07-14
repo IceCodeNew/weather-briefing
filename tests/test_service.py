@@ -597,14 +597,13 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
 async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
-    yesterday = now.subtract(days=1)
     article = Article(
         id="article-id",
         source_id="unknown-feed",
         source_name="Unknown",
         title="Some content",
         url="https://example.invalid/a",
-        published_at=yesterday,
+        published_at=now.subtract(days=1),
         content="content",
     )
     settings = SimpleNamespace(
@@ -620,6 +619,7 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
     )
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    llm = RecordingLLM()
 
     with SQLiteStateStore(tmp_path / "unknown.sqlite3") as state:
         service = BriefingService(
@@ -628,11 +628,12 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
             state,
             cast(Any, StaticRSSSource(article)),
             cast(Any, EmptyContextSource()),
-            RecordingLLM(),
+            llm,
             delivery,
             delivery,
         )
         body = await service.run("daily", now)
 
     assert body is None
+    assert llm.payload is None
     assert publisher.messages == []

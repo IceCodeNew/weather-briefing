@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -333,7 +334,7 @@ async def test_open_meteo_passes_api_key_when_provided() -> None:
             LocationSpec("test", "Test City")
         )
 
-    assert "test-api-key" in handler_requests[0].url.params["apikey"]
+    assert handler_requests[0].url.params["apikey"] == "test-api-key"
     assert result.is_mainland_china is False
 
 
@@ -454,7 +455,19 @@ async def test_nominatim_handles_no_matching_results() -> None:
             await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
 
 
-async def test_nominatim_rate_limits_consecutive_requests() -> None:
+async def test_nominatim_rate_limits_consecutive_requests(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+    monotonic_values = iter((100.0, 100.0, 100.25, 100.25))
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr("weather_briefing.geocoding.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(
+        "weather_briefing.geocoding.time",
+        SimpleNamespace(monotonic=lambda: next(monotonic_values)),
+    )
+
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -478,6 +491,8 @@ async def test_nominatim_rate_limits_consecutive_requests() -> None:
         await provider.geocode(LocationSpec("test", "Test City"))
 
     assert calls == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] == pytest.approx(0.75)
 
 
 async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
@@ -493,7 +508,7 @@ async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
             LocationSpec("test", "中国北京市西城区中南海1号")
         )
 
-    assert len(calls) >= 2
+    assert calls == ["中国北京市西城区中南海1号", "中国北京市西城区中南海"]
 
 
 async def test_precision_reducing_provider_continues_after_geocoding_error() -> None:
