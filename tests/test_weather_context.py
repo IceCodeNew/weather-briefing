@@ -5,7 +5,8 @@ import jwt
 import pendulum
 import pytest
 
-from weather_briefing.models import AirQualitySnapshot, WeatherContextSnapshot
+from weather_briefing.models import AirQualitySnapshot, AllergenSnapshot, WeatherContextSnapshot
+from weather_briefing.reference_data import ReferenceDataError
 from weather_briefing.time_utils import parse_aware_datetime
 from weather_briefing.weather_context import (
     AirQualitySupplementingWeatherProvider,
@@ -1292,6 +1293,244 @@ async def test_qweather_air_quality_handles_non_dict_metadata() -> None:
 
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.pm25_aqi == 68
+
+
+def _open_meteo_weather_response() -> dict[str, object]:
+    return {
+        "timezone": "UTC",
+        "current": {"time": "2026-07-13T08:00"},
+        "daily": {
+            "time": ["2026-07-13"],
+            "weather_code": [1],
+            "temperature_2m_max": [30],
+            "temperature_2m_min": [20],
+            "apparent_temperature_max": [31],
+            "apparent_temperature_min": [21],
+            "precipitation_sum": [0],
+            "precipitation_probability_max": [10],
+            "wind_speed_10m_max": [10],
+            "wind_gusts_10m_max": [15],
+            "wind_direction_10m_dominant": [90],
+            "uv_index_max": [5],
+        },
+    }
+
+
+async def test_open_meteo_provider_returns_allergen_when_pollen_available() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        assert request.url.path == "/v1/air-quality"
+        current_params = request.url.params["current"]
+        assert "birch_pollen" in current_params
+        assert "grass_pollen" in current_params
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Europe/Berlin",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                    "alder_pollen": 0,
+                    "birch_pollen": 15,
+                    "grass_pollen": 3,
+                    "mugwort_pollen": None,
+                    "olive_pollen": None,
+                    "ragweed_pollen": None,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(
+            client,
+            weather_base_url="https://weather.example.invalid",
+            air_quality_base_url="https://air.example.invalid",
+        ).fetch(52.52, 13.41)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.allergen is not None
+    assert snapshot.allergen.source_id == "allergen:open-meteo"
+    level_names = {level.name for level in snapshot.allergen.levels}
+    assert {"桤木", "桦木", "禾本"} == level_names
+    birch = next(level for level in snapshot.allergen.levels if level.name == "桦木")
+    assert birch.category == "中"
+    assert birch.concentration == 15
+    assert snapshot.allergen.overall_category == "中"
+    documents = snapshot_to_documents(snapshot)
+    assert "allergen:open-meteo" in [doc.id for doc in documents]
+
+
+async def test_open_meteo_provider_returns_no_allergen_when_pollen_absent() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Asia/Shanghai",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(39.91, 116.38)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.allergen is None
+
+
+async def test_open_meteo_allergen_skips_invalid_pollen_values() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Europe/Berlin",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                    "birch_pollen": "nan",
+                    "mugwort_pollen": -1,
+                    "olive_pollen": "inf",
+                    "ragweed_pollen": "not-a-number",
+                    "grass_pollen": 5,
+                    "alder_pollen": None,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(52.52, 13.41)
+
+    assert snapshot.allergen is not None
+    level_names = {level.name for level in snapshot.allergen.levels}
+    assert level_names == {"禾本"}
+
+
+async def test_open_meteo_allergen_handles_missing_time_gracefully() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        return httpx.Response(
+            200,
+            json={
+                "current": {
+                    "birch_pollen": 5,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(52.52, 13.41)
+
+    assert snapshot.allergen is not None
+    assert snapshot.allergen.observed_at is None
+
+
+def test_open_meteo_allergen_handles_invalid_time_gracefully() -> None:
+    snapshot = OpenMeteoProvider._parse_allergen(
+        {"time": "not-a-time", "birch_pollen": 5},
+        {"timezone": "Europe/Berlin"},
+        (("birch", "桦木"),),
+    )
+
+    assert snapshot is not None
+    assert snapshot.observed_at is None
+
+
+async def test_open_meteo_allergen_reference_failure_keeps_air_quality(monkeypatch) -> None:
+    def fail_to_load_pollen_types() -> tuple[tuple[str, str], ...]:
+        raise ReferenceDataError("invalid allergen data")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        assert request.url.params["current"] == "us_aqi,us_aqi_pm2_5,pm2_5"
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Europe/Berlin",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        "weather_briefing.weather_context.pollen_type_names",
+        fail_to_load_pollen_types,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(52.52, 13.41)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.allergen is None
+
+
+async def test_open_meteo_allergen_guidance_failure_keeps_air_quality(monkeypatch) -> None:
+    def fail_to_parse_allergen(*args) -> None:
+        raise ReferenceDataError("invalid allergen guidance")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Europe/Berlin",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                    "birch_pollen": 5,
+                },
+            },
+        )
+
+    monkeypatch.setattr(OpenMeteoProvider, "_parse_allergen", fail_to_parse_allergen)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(52.52, 13.41)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.allergen is None
+
+
+async def test_snapshot_to_documents_includes_allergen_document() -> None:
+    snapshot = WeatherContextSnapshot(
+        source_id="weather:test",
+        source_name="Test",
+        source_url="https://example.invalid/",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        weather_forecast=("forecast",),
+        allergen=AllergenSnapshot(
+            source_id="allergen:test",
+            source_name="Test allergen",
+            source_url="https://example.invalid/allergen",
+            observed_at=None,
+            levels=(),
+            overall_category="无",
+            health_guidance="无花粉。",
+        ),
+    )
+
+    documents = snapshot_to_documents(snapshot)
+
+    assert [doc.id for doc in documents] == ["weather:test", "allergen:test"]
 
 
 async def test_qweather_air_quality_handles_empty_attributions() -> None:

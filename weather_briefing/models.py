@@ -96,6 +96,24 @@ class AirQualitySnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class AllergenLevel:
+    name: str
+    category: str
+    concentration: float
+
+
+@dataclass(frozen=True, slots=True)
+class AllergenSnapshot:
+    source_id: str
+    source_name: str
+    source_url: str
+    observed_at: pendulum.DateTime | None
+    levels: tuple[AllergenLevel, ...]
+    overall_category: str
+    health_guidance: str
+
+
+@dataclass(frozen=True, slots=True)
 class WeatherContextSnapshot:
     source_id: str
     source_name: str
@@ -104,6 +122,7 @@ class WeatherContextSnapshot:
     weather_forecast: tuple[str, ...]
     lifestyle_advice: tuple[str, ...] = ()
     air_quality: AirQualitySnapshot | None = None
+    allergen: AllergenSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
