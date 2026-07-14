@@ -16,6 +16,10 @@ class Publisher(Protocol):
     async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None: ...
 
 
+class RenderedTextDiagnostics(Protocol):
+    def rendered_text_logging_enabled(self) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class DeliveryProvider:
     """Bind a platform renderer to its message transport."""
@@ -23,6 +27,7 @@ class DeliveryProvider:
     renderer: MessageRenderer
     publisher: Publisher
     single_message_limit: int | None = None
+    diagnostics: RenderedTextDiagnostics | None = None
 
     def briefing_limit(self, configured_limit: int) -> int:
         if self.single_message_limit is None:
@@ -43,6 +48,7 @@ class DeliveryProvider:
         *,
         single_message: bool = False,
     ) -> None:
+        _log_rendered_text(self.diagnostics, "briefing", message.body)
         await self.publisher.publish(message, single_message=single_message)
 
     async def publish_verbatim(self, article: Article) -> None:
@@ -52,10 +58,13 @@ class DeliveryProvider:
             message.visible_length,
             len(message.body),
         )
+        _log_rendered_text(self.diagnostics, "verbatim", message.body)
         await self.publisher.publish(message)
 
     async def publish_alert(self, title: str, body: str) -> None:
-        await self.publisher.publish(self.renderer.render_alert(title, body))
+        message = self.renderer.render_alert(title, body)
+        _log_rendered_text(self.diagnostics, "alert", message.body)
+        await self.publisher.publish(message)
 
 
 class StdoutPublisher:
@@ -70,10 +79,17 @@ class DeliveryError(RuntimeError):
 class TelegramPublisher:
     MAX_MESSAGE_LENGTH = 4096
 
-    def __init__(self, client: httpx.AsyncClient, token: str, chat_id: str) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        token: str,
+        chat_id: str,
+        diagnostics: RenderedTextDiagnostics | None = None,
+    ) -> None:
         self._client = client
         self._url = f"https://api.telegram.org/bot{token}/sendMessage"
         self._chat_id = chat_id
+        self._diagnostics = diagnostics
 
     async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
@@ -86,7 +102,15 @@ class TelegramPublisher:
             len(chunks),
             single_message,
         )
+        log_rendered_text = _rendered_text_logging_enabled(self._diagnostics)
         for index, chunk in enumerate(chunks, start=1):
+            if log_rendered_text:
+                _LOGGER.debug(
+                    "Sensitive rendered text diagnostic: stage=telegram-chunk-%d-of-%d body=%r",
+                    index,
+                    len(chunks),
+                    chunk,
+                )
             try:
                 response = await self._client.post(
                     self._url,
@@ -106,6 +130,26 @@ class TelegramPublisher:
                 len(chunks),
                 len(chunk),
             )
+
+
+def _log_rendered_text(
+    diagnostics: RenderedTextDiagnostics | None,
+    stage: str,
+    body: str,
+) -> None:
+    if _rendered_text_logging_enabled(diagnostics):
+        _LOGGER.debug("Sensitive rendered text diagnostic: stage=%s body=%r", stage, body)
+
+
+def _rendered_text_logging_enabled(diagnostics: RenderedTextDiagnostics | None) -> bool:
+    if diagnostics is None:
+        return False
+    try:
+        enabled = diagnostics.rendered_text_logging_enabled()
+    except Exception:
+        _LOGGER.warning("Rendered text diagnostic state check failed", exc_info=True)
+        return False
+    return enabled and _LOGGER.isEnabledFor(logging.DEBUG)
 
 
 def _split_message(body: str, limit: int) -> tuple[str, ...]:

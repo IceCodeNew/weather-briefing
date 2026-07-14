@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
+import sqlite3
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AsyncExitStack, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,7 +22,7 @@ from .air_quality import (
     AirQualityProvider,
     AQICNProvider,
 )
-from .config import Settings, weather_providers_for
+from .config import Settings, state_path_from_env, weather_providers_for
 from .geocoding import (
     CachedLocationResolver,
     FallbackGeocodingProvider,
@@ -33,11 +36,11 @@ from .llm import (
     OpenAICompatibleChatCompletionsProvider,
 )
 from .models import ResolvedLocation
-from .publishers import DeliveryProvider, StdoutPublisher, TelegramPublisher
+from .publishers import DeliveryProvider, RenderedTextDiagnostics, StdoutPublisher, TelegramPublisher
 from .render import PlainTextRenderer, TelegramHTMLRenderer
 from .service import BriefingService
 from .sources import HTTPContextSource, RSSSource
-from .state import SQLiteStateStore
+from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from .time_utils import parse_aware_datetime
 from .weather_context import (
     AirQualitySupplementingWeatherProvider,
@@ -59,7 +62,36 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--at", help="Override run time with an ISO-8601 timestamp including UTC offset")
     daemon_parser = subparsers.add_parser("daemon")
     daemon_parser.add_argument("--run-now", action="store_true", help="Run a briefing immediately before scheduling")
+    diagnostics_parser = subparsers.add_parser("diagnostics")
+    diagnostics_topics = diagnostics_parser.add_subparsers(dest="diagnostics_topic", required=True)
+    rendered_text_parser = diagnostics_topics.add_parser("rendered-text")
+    rendered_text_actions = rendered_text_parser.add_subparsers(dest="diagnostics_action", required=True)
+    enable_parser = rendered_text_actions.add_parser("enable")
+    enable_parser.add_argument(
+        "--for",
+        dest="duration_seconds",
+        required=True,
+        type=_diagnostic_duration_seconds,
+        metavar="DURATION",
+        help="Enable sensitive rendered-text logging temporarily, for example 15m or 1h (maximum 24h)",
+    )
+    rendered_text_actions.add_parser("status")
+    rendered_text_actions.add_parser("disable")
     return parser
+
+
+_DIAGNOSTIC_DURATION_PATTERN = re.compile(r"^(?P<value>[1-9][0-9]*)(?P<unit>[smh])$")
+
+
+def _diagnostic_duration_seconds(value: str) -> int:
+    match = _DIAGNOSTIC_DURATION_PATTERN.fullmatch(value)
+    if match is None:
+        raise argparse.ArgumentTypeError("duration must use a positive value followed by s, m, or h")
+    multipliers = {"s": 1, "m": 60, "h": 3600}
+    seconds = int(match.group("value")) * multipliers[match.group("unit")]
+    if seconds > 24 * 60 * 60:
+        raise argparse.ArgumentTypeError("duration cannot exceed 24h")
+    return seconds
 
 
 def _in_schedule(kind: str, now: pendulum.DateTime, settings: Settings) -> bool:
@@ -77,6 +109,21 @@ def _hour_in_cron(hour: int, cron_hour: str) -> bool:
 
 
 _LOGGER = logging.getLogger("weather_briefing")
+
+
+@contextmanager
+def _runtime_diagnostics(path: Path) -> Iterator[RenderedTextDiagnostics | None]:
+    try:
+        diagnostics = SQLiteRuntimeDiagnostics(path)
+    except (OSError, sqlite3.Error):
+        _LOGGER.warning(
+            "Runtime diagnostics unavailable; continuing without sensitive rendered text logging",
+            exc_info=True,
+        )
+        yield None
+        return
+    with diagnostics:
+        yield diagnostics
 
 
 def _configure_logging(*, debug: bool) -> None:
@@ -108,8 +155,12 @@ async def run(kind: str, enforce_window: bool, at: str | None = None) -> None:
         _LOGGER.info("Skipping delayed %s run outside configured local-time window", kind)
         return
     _LOGGER.info("Starting %s briefing run at %s", kind, now.to_iso8601_string())
-    async with httpx.AsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True) as client:
-        delivery = _delivery_provider(settings, client)
+    async with AsyncExitStack() as stack:
+        diagnostics = stack.enter_context(_runtime_diagnostics(settings.state_path))
+        client = await stack.enter_async_context(
+            httpx.AsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
+        )
+        delivery = _delivery_provider(settings, client, diagnostics)
         llm_provider = _llm_provider(settings, client)
         resolver = CachedLocationResolver(
             PrecisionReducingGeocodingProvider(
@@ -193,16 +244,26 @@ def _llm_provider(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
     raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
 
 
-def _delivery_provider(settings: Settings, client: httpx.AsyncClient) -> DeliveryProvider:
+def _delivery_provider(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    diagnostics: RenderedTextDiagnostics | None = None,
+) -> DeliveryProvider:
     if settings.publisher == "stdout":
-        return DeliveryProvider(PlainTextRenderer(), StdoutPublisher())
+        return DeliveryProvider(PlainTextRenderer(), StdoutPublisher(), diagnostics=diagnostics)
     if settings.publisher == "telegram":
         if not settings.telegram_bot_token or not settings.telegram_chat_id:
             raise ValueError("Telegram publisher requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
         return DeliveryProvider(
             TelegramHTMLRenderer(),
-            TelegramPublisher(client, settings.telegram_bot_token, settings.telegram_chat_id),
-            TelegramPublisher.MAX_MESSAGE_LENGTH,
+            TelegramPublisher(
+                client,
+                settings.telegram_bot_token,
+                settings.telegram_chat_id,
+                diagnostics,
+            ),
+            single_message_limit=TelegramPublisher.MAX_MESSAGE_LENGTH,
+            diagnostics=diagnostics,
         )
     raise ValueError(f"Unsupported publisher: {settings.publisher}")
 
@@ -348,6 +409,35 @@ async def daemon(run_now: bool = False) -> None:
     await asyncio.Event().wait()
 
 
+def _manage_rendered_text_diagnostics(action: str, duration_seconds: int | None = None) -> None:
+    with SQLiteRuntimeDiagnostics(state_path_from_env()) as diagnostics:
+        if action == "enable":
+            if duration_seconds is None:
+                raise ValueError("Rendered text diagnostics require a duration")
+            expires_at = pendulum.now("UTC").add(seconds=duration_seconds)
+            diagnostics.enable_rendered_text_logging(expires_at)
+            print(
+                "Rendered text diagnostic logging enabled until "
+                f"{expires_at.to_iso8601_string()}; rendered bodies require DEBUG logging"
+            )
+            return
+        if action == "disable":
+            diagnostics.disable_rendered_text_logging()
+            print("Rendered text diagnostic logging disabled")
+            return
+        if action == "status":
+            expires_at = diagnostics.rendered_text_logging_until()
+            if expires_at is None:
+                print("Rendered text diagnostic logging is disabled")
+            else:
+                print(
+                    "Rendered text diagnostic logging is enabled until "
+                    f"{expires_at.to_iso8601_string()}; rendered bodies require DEBUG logging"
+                )
+            return
+        raise ValueError(f"Unsupported rendered text diagnostics action: {action}")
+
+
 def main() -> None:
     load_dotenv(override=False)
     args = build_parser().parse_args()
@@ -355,6 +445,11 @@ def main() -> None:
     try:
         if args.command == "daemon":
             asyncio.run(daemon(args.run_now))
+        elif args.command == "diagnostics":
+            _manage_rendered_text_diagnostics(
+                args.diagnostics_action,
+                getattr(args, "duration_seconds", None),
+            )
         else:
             asyncio.run(run(args.kind, args.enforce_window, args.at))
     except Exception:
