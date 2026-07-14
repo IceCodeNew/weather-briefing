@@ -14,7 +14,7 @@ class ReferenceDataError(RuntimeError):
 
 
 @cache
-def load_reference_data(filename: str) -> dict[str, Any]:
+def load_reference_data(filename: str) -> dict[str, object]:
     if PurePath(filename).name != filename or not filename.endswith(".json"):
         raise ReferenceDataError("Reference data filename must identify one JSON file")
     try:
