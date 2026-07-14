@@ -1,8 +1,11 @@
+import asyncio
 import base64
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pendulum
 import pytest
 
@@ -343,15 +346,13 @@ def _make_fake_settings(**overrides: object) -> object:
     return SimpleNamespace(**defaults)
 
 
-class _FakeAsyncClient:
-    def __init__(self) -> None:
-        self.timeout = None
-
-    async def __aenter__(self) -> "_FakeAsyncClient":
-        return self
-
-    async def __aexit__(self, *args: object) -> None:
-        pass
+@pytest.fixture
+def async_client() -> Iterator[httpx.AsyncClient]:
+    client = httpx.AsyncClient()
+    try:
+        yield client
+    finally:
+        asyncio.run(client.aclose())
 
 
 async def test_run_skips_and_logs_when_enforce_window_outside_schedule(monkeypatch, capsys) -> None:
@@ -388,7 +389,7 @@ async def test_run_skips_and_logs_when_enforce_window_outside_schedule(monkeypat
         logging.root.setLevel(original_root_level)
 
 
-async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
+async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys, async_client: httpx.AsyncClient) -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -404,7 +405,7 @@ async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
-    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
+    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: async_client)
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
@@ -453,7 +454,9 @@ async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
         logging.root.setLevel(original_root_level)
 
 
-async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsys) -> None:
+async def test_run_sends_alert_for_precision_reduced_location(
+    monkeypatch, capsys, async_client: httpx.AsyncClient
+) -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -484,7 +487,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: AlertDelivery())
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
-    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
+    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: async_client)
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
@@ -531,7 +534,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     assert "位置匹配需要确认" in alerts[0][0]
 
 
-async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
+async def test_run_logs_skipped_when_no_content(monkeypatch, capsys, async_client: httpx.AsyncClient) -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -545,7 +548,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
-    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: _FakeAsyncClient())
+    monkeypatch.setattr("weather_briefing.cli.httpx.AsyncClient", lambda **kw: async_client)
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
@@ -592,73 +595,73 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
 
 
 class TestLLMProvider:
-    def test_deepseek_with_custom_base_url(self) -> None:
+    def test_deepseek_with_custom_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             llm_provider="deepseek",
             llm_base_url="https://custom.example.invalid",
         )
-        provider = _llm_provider(settings, _FakeAsyncClient())
+        provider = _llm_provider(settings, async_client)
         assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
         assert provider.base_url == "https://custom.example.invalid"
 
-    def test_deepseek_without_base_url(self) -> None:
+    def test_deepseek_without_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
-        provider = _llm_provider(settings, _FakeAsyncClient())
+        provider = _llm_provider(settings, async_client)
         assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
         assert provider.base_url == "https://api.deepseek.com"
 
-    def test_openai_compatible_missing_base_url(self) -> None:
+    def test_openai_compatible_missing_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             llm_provider="openai-compatible",
             llm_base_url=None,
         )
         with pytest.raises(ValueError, match="LLM_BASE_URL"):
-            _llm_provider(settings, _FakeAsyncClient())
+            _llm_provider(settings, async_client)
 
-    def test_openai_compatible_with_base_url(self) -> None:
+    def test_openai_compatible_with_base_url(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             llm_provider="openai-compatible",
             llm_base_url="https://compatible.example.invalid/v1",
         )
-        provider = _llm_provider(settings, _FakeAsyncClient())
+        provider = _llm_provider(settings, async_client)
         assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
         assert provider.base_url == "https://compatible.example.invalid/v1"
 
-    def test_unsupported_provider(self) -> None:
+    def test_unsupported_provider(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(llm_provider="unsupported")
         with pytest.raises(ValueError, match="Unsupported LLM provider"):
-            _llm_provider(settings, _FakeAsyncClient())
+            _llm_provider(settings, async_client)
 
 
 class TestDeliveryProvider:
-    def test_stdout(self) -> None:
+    def test_stdout(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="stdout")
-        provider = _delivery_provider(settings, _FakeAsyncClient())
+        provider = _delivery_provider(settings, async_client)
         assert provider.renderer is not None
         assert provider.publisher is not None
 
-    def test_telegram_missing_config(self) -> None:
+    def test_telegram_missing_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="telegram", telegram_bot_token=None)
         with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
-            _delivery_provider(settings, _FakeAsyncClient())
+            _delivery_provider(settings, async_client)
 
-    def test_telegram_with_config(self) -> None:
+    def test_telegram_with_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             publisher="telegram",
             telegram_bot_token="test-token",
             telegram_chat_id="test-chat",
         )
-        provider = _delivery_provider(settings, _FakeAsyncClient())
+        provider = _delivery_provider(settings, async_client)
         assert provider.single_message_limit == 4096
 
-    def test_unsupported_publisher(self) -> None:
+    def test_unsupported_publisher(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="unsupported")
         with pytest.raises(ValueError, match="Unsupported publisher"):
-            _delivery_provider(settings, _FakeAsyncClient())
+            _delivery_provider(settings, async_client)
 
 
 class TestWeatherContextProvider:
-    def test_qweather_not_configured_skips_when_auto(self) -> None:
+    def test_qweather_not_configured_skips_when_auto(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             weather_providers=None,
             qweather_project_id=None,
@@ -667,10 +670,10 @@ class TestWeatherContextProvider:
             qweather_base_url=None,
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
-        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
-    def test_qweather_explicit_not_configured_raises(self) -> None:
+    def test_qweather_explicit_not_configured_raises(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             weather_providers=("qweather",),
             qweather_project_id=None,
@@ -680,17 +683,17 @@ class TestWeatherContextProvider:
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
         with pytest.raises(ValueError, match="JWT configuration"):
-            _weather_context_provider(settings, _FakeAsyncClient(), location)
+            _weather_context_provider(settings, async_client, location)
 
-    def test_single_provider_bypasses_fallback(self) -> None:
+    def test_single_provider_bypasses_fallback(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             weather_providers=None,
         )
         location = ResolvedLocation("test", "Test", 40.7, -74.0, "US", "NY", "America/New_York", False)
-        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
-    def test_qweather_configured(self) -> None:
+    def test_qweather_configured(self, async_client: httpx.AsyncClient) -> None:
         key = b"fake-private-key-content"
         settings = _make_fake_settings(
             weather_providers=("qweather",),
@@ -700,11 +703,11 @@ class TestWeatherContextProvider:
             qweather_base_url="https://qweather.example.invalid",
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
-        provider = _weather_context_provider(settings, _FakeAsyncClient(), location)
+        provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
 
-def test_no_weather_provider_available(monkeypatch) -> None:
+def test_no_weather_provider_available(monkeypatch, async_client: httpx.AsyncClient) -> None:
     monkeypatch.setattr(
         "weather_briefing.cli.weather_providers_for",
         lambda *_: ("qweather",),
@@ -718,7 +721,7 @@ def test_no_weather_provider_available(monkeypatch) -> None:
     )
     location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
     with pytest.raises(ValueError, match="No configured weather provider"):
-        _weather_context_provider(settings, _FakeAsyncClient(), location)
+        _weather_context_provider(settings, async_client, location)
 
 
 def test_qweather_is_configured_all_fields() -> None:
@@ -741,19 +744,19 @@ def test_qweather_is_configured_missing_field() -> None:
     assert not _qweather_is_configured(settings)
 
 
-def test_build_weather_provider_unsupported() -> None:
+def test_build_weather_provider_unsupported(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings()
     with pytest.raises(ValueError, match="Unsupported weather provider"):
-        _build_weather_provider("unknown", settings, _FakeAsyncClient())
+        _build_weather_provider("unknown", settings, async_client)
 
 
-def test_build_open_meteo_returns_provider() -> None:
+def test_build_open_meteo_returns_provider(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings()
-    provider = _build_open_meteo(settings, _FakeAsyncClient())
+    provider = _build_open_meteo(settings, async_client)
     assert provider is not None
 
 
-def test_build_qweather_returns_provider() -> None:
+def test_build_qweather_returns_provider(async_client: httpx.AsyncClient) -> None:
     import base64 as b64
 
     settings = _make_fake_settings(
@@ -762,24 +765,24 @@ def test_build_qweather_returns_provider() -> None:
         qweather_private_key=b64.b64encode(b"fake-private-key-content").decode(),
         qweather_base_url="https://qweather.example.invalid",
     )
-    provider = _build_qweather(settings, _FakeAsyncClient())
+    provider = _build_qweather(settings, async_client)
     assert provider is not None
 
 
-def test_build_qweather_missing_config_raises() -> None:
+def test_build_qweather_missing_config_raises(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings(qweather_project_id=None)
     with pytest.raises(ValueError, match="QWeather provider requires"):
-        _build_qweather(settings, _FakeAsyncClient())
+        _build_qweather(settings, async_client)
 
 
-def test_aqicn_provider_returns_none_when_no_token() -> None:
+def test_aqicn_provider_returns_none_when_no_token(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings(aqicn_api_token=None)
-    assert _aqicn_provider(settings, _FakeAsyncClient()) is None
+    assert _aqicn_provider(settings, async_client) is None
 
 
-def test_aqicn_provider_returns_instance_when_token_set() -> None:
+def test_aqicn_provider_returns_instance_when_token_set(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings(aqicn_api_token="test-token")
-    provider = _aqicn_provider(settings, _FakeAsyncClient())
+    provider = _aqicn_provider(settings, async_client)
     assert provider is not None
 
 
