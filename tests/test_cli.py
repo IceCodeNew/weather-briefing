@@ -700,6 +700,23 @@ class TestWeatherContextProvider:
         assert provider is not None
 
 
+def test_no_weather_provider_available(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "weather_briefing.cli.weather_providers_for",
+        lambda *_: ("qweather",),
+    )
+    settings = _make_fake_settings(
+        weather_providers=None,
+        qweather_project_id=None,
+        qweather_credential_id=None,
+        qweather_private_key=None,
+        qweather_base_url=None,
+    )
+    location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
+    with pytest.raises(ValueError, match="No configured weather provider"):
+        _weather_context_provider(settings, _FakeAsyncClient(), location)
+
+
 def test_qweather_is_configured_all_fields() -> None:
     settings = _make_fake_settings(
         qweather_project_id="p",

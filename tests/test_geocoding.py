@@ -11,10 +11,12 @@ from weather_briefing.geocoding import (
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
+    _mainland_china_rules,
+    _specific_location_name,
     possibly_mainland_china,
 )
 from weather_briefing.models import LocationSpec, ResolvedLocation
-from weather_briefing.reference_data import reference_value
+from weather_briefing.reference_data import ReferenceDataError, reference_value
 
 
 async def test_open_meteo_geocoder_resolves_coordinates_and_country() -> None:
@@ -575,3 +577,60 @@ async def test_cached_resolver_handles_writes_to_new_directory(tmp_path: Path) -
 
     assert result.latitude == 1.0
     assert (cache_dir / "geocoding.json").exists()
+
+
+def test_mainland_china_rules_rejects_invalid_latitude_bounds(monkeypatch) -> None:
+    _mainland_china_rules.cache_clear()
+
+    def fake_value(filename: str, *path: str) -> object:
+        if "latitude" in path:
+            return {"minimum": "100", "maximum": "50"}
+        if "longitude" in path:
+            return {"minimum": "73", "maximum": "136"}
+        raise AssertionError(f"Unexpected call: {filename} {path}")
+
+    monkeypatch.setattr("weather_briefing.geocoding.reference_value", fake_value)
+    monkeypatch.setattr(
+        "weather_briefing.geocoding.reference_string_tuple",
+        lambda *_: (),
+    )
+    with pytest.raises(ReferenceDataError, match="latitude"):
+        _mainland_china_rules()
+
+
+def test_mainland_china_rules_rejects_invalid_longitude_bounds(monkeypatch) -> None:
+    _mainland_china_rules.cache_clear()
+
+    def fake_value(filename: str, *path: str) -> object:
+        if "latitude" in path:
+            return {"minimum": "18", "maximum": "54"}
+        if "longitude" in path:
+            return {"minimum": "200", "maximum": "250"}
+        raise AssertionError(f"Unexpected call: {filename} {path}")
+
+    monkeypatch.setattr("weather_briefing.geocoding.reference_value", fake_value)
+    monkeypatch.setattr(
+        "weather_briefing.geocoding.reference_string_tuple",
+        lambda *_: (),
+    )
+    with pytest.raises(ReferenceDataError, match="longitude"):
+        _mainland_china_rules()
+
+
+def test_mainland_china_rules_handles_corrupt_reference_data(monkeypatch) -> None:
+    _mainland_china_rules.cache_clear()
+    monkeypatch.setattr(
+        "weather_briefing.geocoding.reference_value",
+        lambda *_: (_ for _ in ()).throw(KeyError("missing")),
+    )
+    with pytest.raises(ReferenceDataError, match="mainland China geography"):
+        _mainland_china_rules()
+
+
+def test_specific_location_name_rejects_non_string_suffix(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "weather_briefing.geocoding.reference_value",
+        lambda *_: 123,
+    )
+    with pytest.raises(ReferenceDataError, match="suffix characters must be a string"):
+        _specific_location_name("北京")

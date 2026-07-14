@@ -128,3 +128,21 @@ def test_datetime_timezone_specifier_rejects_naive_value() -> None:
     naive = pendulum.naive(2026, 7, 13, 8)
     with pytest.raises(ValueError, match="explicit timezone"):
         datetime_timezone_specifier(naive, context="test")
+
+
+def test_parse_aware_datetime_rejects_non_datetime_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "weather_briefing.time_utils.pendulum.parse",
+        lambda value, **_: pendulum.date(2026, 7, 13),
+    )
+    with pytest.raises(ValueError, match="must include a date and time"):
+        parse_aware_datetime("2026-07-13T08:00:00Z", context="test")
+
+
+def test_parse_datetime_with_default_timezone_rejects_non_datetime_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "weather_briefing.time_utils.pendulum.parse",
+        lambda value, **_: pendulum.date(2026, 7, 13),
+    )
+    with pytest.raises(ValueError, match="must include a date and time"):
+        parse_datetime_with_default_timezone("2026-07-13T08:00:00", "Asia/Shanghai", context="test")
