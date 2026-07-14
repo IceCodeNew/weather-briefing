@@ -95,7 +95,8 @@ Usage notes:
 
 - Run proportional local verification, then manually review the complete diff before creating or updating a pull request. Fix every known issue and repeat both steps until they are clean.
 - Open the pull request as a draft and request a GitHub Copilot review. Address valid feedback, then repeat local verification, manual review, and Copilot review until no known issue remains.
-- Only after that loop is clean, mark the pull request ready for review and run the `code-review` skill followed by the `autofix` skill. Revalidate any resulting changes before considering the pull request complete.
+- Only after that loop is clean, mark the pull request ready for review. Treat the automatic CodeRabbit run triggered by the ready pull request as the code-review stage; do not start a duplicate CodeRabbit CLI review or manually request another CodeRabbit run.
+- After each ready-state update, wait for both CodeRabbit and GitHub Copilot to finish and make all feedback available before fixing or pushing anything. Evaluate their findings together, fix every valid issue in one batch, revalidate, push once, and repeat the two-reviewer wait. Run the `autofix` skill only after both reviews have completed.
 
 ## Verification strategy
 
