@@ -35,6 +35,10 @@ class OpenAICompatibleChatCompletionsProvider:
         self._model = model
         self._max_output_tokens = max_output_tokens
 
+    @property
+    def base_url(self) -> str:
+        return self._base_url
+
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         try:
             response = await self._client.post(

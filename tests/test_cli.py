@@ -29,6 +29,7 @@ from weather_briefing.cli import (
     run,
 )
 from weather_briefing.config import Settings
+from weather_briefing.llm import OpenAICompatibleChatCompletionsProvider
 from weather_briefing.models import ResolvedLocation
 
 
@@ -597,12 +598,14 @@ class TestLLMProvider:
             llm_base_url="https://custom.example.invalid",
         )
         provider = _llm_provider(settings, _FakeAsyncClient())
-        assert provider._base_url == "https://custom.example.invalid"
+        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
+        assert provider.base_url == "https://custom.example.invalid"
 
     def test_deepseek_without_base_url(self) -> None:
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
         provider = _llm_provider(settings, _FakeAsyncClient())
-        assert provider._base_url == "https://api.deepseek.com"
+        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
+        assert provider.base_url == "https://api.deepseek.com"
 
     def test_openai_compatible_missing_base_url(self) -> None:
         settings = _make_fake_settings(
@@ -618,7 +621,8 @@ class TestLLMProvider:
             llm_base_url="https://compatible.example.invalid/v1",
         )
         provider = _llm_provider(settings, _FakeAsyncClient())
-        assert provider._base_url == "https://compatible.example.invalid/v1"
+        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
+        assert provider.base_url == "https://compatible.example.invalid/v1"
 
     def test_unsupported_provider(self) -> None:
         settings = _make_fake_settings(llm_provider="unsupported")
