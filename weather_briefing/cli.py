@@ -45,6 +45,7 @@ from .time_utils import parse_aware_datetime
 from .weather_context import (
     AirQualitySupplementingWeatherProvider,
     FallbackWeatherContextProvider,
+    LoggedWeatherContextProvider,
     OpenMeteoProvider,
     QWeatherJWTAuthenticator,
     QWeatherProvider,
@@ -280,9 +281,13 @@ def _weather_context_provider(
             if settings.weather_providers is not None:
                 raise ValueError("Explicit QWeather provider is missing JWT configuration")
             continue
-        providers.append(_build_weather_provider(name, settings, client))
+        providers.append(LoggedWeatherContextProvider(name, _build_weather_provider(name, settings, client)))
     if not providers:
         raise ValueError("No configured weather provider is available")
+    _LOGGER.info(
+        "Weather provider order providers=%s",
+        ",".join(name for name in names if name != "qweather" or _qweather_is_configured(settings)),
+    )
     weather_provider: WeatherContextProvider = (
         providers[0] if len(providers) == 1 else FallbackWeatherContextProvider(*providers)
     )

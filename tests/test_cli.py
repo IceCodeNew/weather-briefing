@@ -805,7 +805,7 @@ class TestWeatherContextProvider:
         provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
-    async def test_qweather_configured(self, async_client: httpx.AsyncClient) -> None:
+    async def test_qweather_configured(self, async_client: httpx.AsyncClient, caplog) -> None:
         key = b"fake-private-key-content"
         settings = _make_fake_settings(
             weather_providers=("qweather",),
@@ -815,8 +815,11 @@ class TestWeatherContextProvider:
             qweather_base_url="https://qweather.example.invalid",
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
-        provider = _weather_context_provider(settings, async_client, location)
+        with caplog.at_level("INFO", logger="weather_briefing"):
+            provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
+        assert "Weather provider order providers=qweather" in caplog.text
+        assert "location=test" not in caplog.text
 
 
 async def test_no_weather_provider_available(monkeypatch, async_client: httpx.AsyncClient) -> None:

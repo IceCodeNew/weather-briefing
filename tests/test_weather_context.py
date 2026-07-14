@@ -10,6 +10,7 @@ from weather_briefing.time_utils import parse_aware_datetime
 from weather_briefing.weather_context import (
     AirQualitySupplementingWeatherProvider,
     FallbackWeatherContextProvider,
+    LoggedWeatherContextProvider,
     OpenMeteoProvider,
     QWeatherJWTAuthenticator,
     QWeatherProvider,
@@ -267,6 +268,56 @@ async def test_weather_provider_falls_back_after_primary_weather_failure() -> No
     assert await provider.fetch(1, 2) == expected
 
 
+async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog) -> None:
+    expected = WeatherContextSnapshot(
+        source_id="weather:fallback",
+        source_name="Fallback weather",
+        source_url="https://example.invalid/weather",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        weather_forecast=("forecast",),
+    )
+
+    class FailingProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            raise WeatherContextError("QWeather weather forecast failed: HTTP 401")
+
+    class SuccessfulProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return expected
+
+    provider = FallbackWeatherContextProvider(
+        LoggedWeatherContextProvider("qweather", FailingProvider()),
+        LoggedWeatherContextProvider("open-meteo", SuccessfulProvider()),
+    )
+
+    with caplog.at_level("INFO", logger="weather_briefing.weather_context"):
+        assert await provider.fetch(1, 2) == expected
+
+    assert "Weather API call started provider=qweather" in caplog.text
+    assert "Weather API call failed provider=qweather" in caplog.text
+    assert "reason=QWeather weather forecast failed: HTTP 401" in caplog.text
+    assert "Weather API call succeeded provider=open-meteo" in caplog.text
+    assert "source_id=weather:fallback" in caplog.text
+
+
+async def test_weather_provider_logs_unexpected_error_type_without_message(caplog) -> None:
+    class UnexpectedFailureProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            raise RuntimeError("sensitive upstream detail")
+
+    provider = LoggedWeatherContextProvider("test-provider", UnexpectedFailureProvider())
+
+    with (
+        caplog.at_level("WARNING", logger="weather_briefing.weather_context"),
+        pytest.raises(RuntimeError, match="sensitive upstream detail"),
+    ):
+        await provider.fetch(1, 2)
+
+    assert "Weather API call failed provider=test-provider" in caplog.text
+    assert "reason=RuntimeError" in caplog.text
+    assert "sensitive upstream detail" not in caplog.text
+
+
 async def test_missing_weather_air_quality_requires_optional_aqicn_configuration() -> None:
     snapshot = WeatherContextSnapshot(
         source_id="weather:test",
@@ -399,12 +450,37 @@ async def test_qweather_rejects_non_success_weather_status() -> None:
         raise AssertionError(f"Unexpected request: {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="non-success weather status"):
+        with pytest.raises(WeatherContextError, match="non-success weather status code=400"):
             await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),
                 base_url="https://api.example.invalid",
             ).fetch(1, 2)
+
+
+async def test_qweather_does_not_log_untrusted_api_status(caplog) -> None:
+    untrusted_status = "400\nforged-log-entry"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"code": untrusted_status})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = LoggedWeatherContextProvider(
+            "qweather",
+            QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ),
+        )
+        with (
+            caplog.at_level("WARNING", logger="weather_briefing.weather_context"),
+            pytest.raises(WeatherContextError, match="non-success weather status code=invalid"),
+        ):
+            await provider.fetch(1, 2)
+
+    assert untrusted_status not in caplog.text
+    assert "reason=QWeather returned a non-success weather status code=invalid" in caplog.text
 
 
 async def test_qweather_rejects_empty_daily_forecast() -> None:
@@ -425,7 +501,7 @@ async def test_qweather_rejects_empty_daily_forecast() -> None:
             ).fetch(1, 2)
 
 
-async def test_qweather_air_quality_failure_is_silent() -> None:
+async def test_qweather_air_quality_failure_is_logged_without_failing_weather(caplog) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
             return _qweather_weather_response(fx_link="https://www.qweather.com/")
@@ -434,13 +510,15 @@ async def test_qweather_air_quality_failure_is_silent() -> None:
         return httpx.Response(500)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        snapshot = await QWeatherProvider(
-            client,
-            authenticator=StaticAuthenticator(),
-            base_url="https://api.example.invalid",
-        ).fetch(1, 2)
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            snapshot = await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
 
     assert snapshot.air_quality is None
+    assert "provider=qweather operation=air-quality reason=HTTP 500" in caplog.text
 
 
 async def test_open_meteo_rejects_empty_forecast() -> None:
@@ -460,7 +538,7 @@ async def test_open_meteo_rejects_empty_forecast() -> None:
             await OpenMeteoProvider(client).fetch(1, 2)
 
 
-async def test_open_meteo_air_quality_failure_is_silent() -> None:
+async def test_open_meteo_air_quality_failure_is_logged_without_failing_weather(caplog) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/forecast":
             return httpx.Response(
@@ -487,9 +565,11 @@ async def test_open_meteo_air_quality_failure_is_silent() -> None:
         return httpx.Response(500)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        snapshot = await OpenMeteoProvider(client).fetch(1, 2)
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            snapshot = await OpenMeteoProvider(client).fetch(1, 2)
 
     assert snapshot.air_quality is None
+    assert "provider=open-meteo operation=air-quality reason=HTTP 500" in caplog.text
 
 
 async def test_fallback_weather_provider_requires_at_least_one_provider() -> None:
@@ -580,7 +660,7 @@ async def test_qweather_rejects_non_success_indices_status() -> None:
 
 async def test_qweather_rejects_http_error() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
-        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+        with pytest.raises(WeatherContextError, match="weather forecast failed: HTTP 500"):
             await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),
@@ -594,7 +674,7 @@ async def test_qweather_rejects_jwt_error(monkeypatch) -> None:
             raise jwt.PyJWTError("test jwt failure")
 
     async with httpx.AsyncClient() as client:
-        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+        with pytest.raises(WeatherContextError, match="authentication failed: PyJWTError"):
             await QWeatherProvider(
                 client,
                 authenticator=FailingAuthenticator(),
@@ -638,7 +718,7 @@ async def test_open_meteo_passes_api_key() -> None:
 
 async def test_open_meteo_rejects_http_error() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
-        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+        with pytest.raises(WeatherContextError, match="weather forecast failed: HTTP 500"):
             await OpenMeteoProvider(client).fetch(1, 2)
 
 
@@ -797,7 +877,7 @@ async def test_qweather_lifestyle_handles_non_dict_items() -> None:
         raise AssertionError(f"Unexpected request: {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+        with pytest.raises(WeatherContextError, match="lifestyle indices failed: ValueError"):
             await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),
@@ -822,7 +902,7 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
         raise AssertionError(f"Unexpected request: {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="request or response validation failed"):
+        with pytest.raises(WeatherContextError, match="weather forecast failed: ValueError"):
             await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),

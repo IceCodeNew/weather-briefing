@@ -39,7 +39,7 @@ uv run --frozen weather-briefing run hourly
 
 `LLM_PROVIDER=deepseek` 使用 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和可选的 `DEEPSEEK_BASE_URL`；DeepSeek provider 已预置官方 Base URL。`LLM_PROVIDER=openai-compatible` 使用 `LLM_API_KEY`、`LLM_MODEL` 和 `LLM_BASE_URL`。两套配置互不回退。
 
-应用将带时间、级别和 logger 名称的运行日志写入标准错误；设置 `DEBUG=true` 可输出 RSS 获取、LLM 重试，以及从 RSS 清洗、权威预报转发和平台渲染到 Telegram 分片接受状态的非敏感诊断信息。该链路只记录来源、发布时间、字符数和分片状态，不记录标题、正文、URL、token、chat ID 或请求 endpoint。若仍需排查平台渲染或分片内容，可在不重启 daemon 的情况下临时记录完整渲染正文：
+应用将带时间、级别和 logger 名称的运行日志写入标准错误；INFO 日志记录每个地点的天气 provider 顺序，以及每次天气 API 尝试、成功、失败、耗时、实际来源和安全的失败原因，因此发生自动降级时可从容器日志还原调用历史。设置 `DEBUG=true` 可输出 RSS 获取、LLM 重试，以及从 RSS 清洗、权威预报转发和平台渲染到 Telegram 分片接受状态的非敏感诊断信息。该链路不记录坐标、标题、正文、URL、token、chat ID 或请求 endpoint。若仍需排查平台渲染或分片内容，可在不重启 daemon 的情况下临时记录完整渲染正文：
 
 ```bash
 weather-briefing diagnostics rendered-text enable --for 15m

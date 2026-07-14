@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -18,6 +19,8 @@ from .time_utils import (
     parse_datetime_with_default_timezone,
 )
 
+_LOGGER = logging.getLogger("weather_briefing.weather_context")
+
 
 class WeatherContextError(RuntimeError):
     """Raised when a weather source is unavailable or violates its contract."""
@@ -25,6 +28,44 @@ class WeatherContextError(RuntimeError):
 
 class WeatherContextProvider(Protocol):
     async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot: ...
+
+
+class LoggedWeatherContextProvider:
+    """Record a non-sensitive history of logical weather provider calls."""
+
+    def __init__(self, name: str, provider: WeatherContextProvider) -> None:
+        self._name = name
+        self._provider = provider
+
+    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+        started_at = time.monotonic()
+        _LOGGER.info("Weather API call started provider=%s", self._name)
+        try:
+            snapshot = await self._provider.fetch(latitude, longitude)
+        except WeatherContextError as exc:
+            _LOGGER.warning(
+                "Weather API call failed provider=%s duration_ms=%d reason=%s",
+                self._name,
+                _elapsed_milliseconds(started_at),
+                exc,
+            )
+            raise
+        except Exception as exc:
+            _LOGGER.warning(
+                "Weather API call failed provider=%s duration_ms=%d reason=%s",
+                self._name,
+                _elapsed_milliseconds(started_at),
+                type(exc).__name__,
+            )
+            raise
+        _LOGGER.info(
+            "Weather API call succeeded provider=%s duration_ms=%d source_id=%s observed_at=%s",
+            self._name,
+            _elapsed_milliseconds(started_at),
+            snapshot.source_id,
+            snapshot.observed_at.to_iso8601_string(),
+        )
+        return snapshot
 
 
 class QWeatherAuthenticator(Protocol):
@@ -84,8 +125,10 @@ class QWeatherProvider:
         )
 
     async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+        operation = "authentication"
         try:
             headers = {"Authorization": self._authenticator.authorization_header()}
+            operation = "weather forecast"
             weather_response = await self._client.get(
                 f"{self._base_url}/v7/weather/3d",
                 params={
@@ -98,11 +141,15 @@ class QWeatherProvider:
             weather_response.raise_for_status()
             weather_payload = weather_response.json()
             if weather_payload.get("code") != "200":
-                raise WeatherContextError("QWeather returned a non-success weather status")
+                raise WeatherContextError(
+                    "QWeather returned a non-success weather status "
+                    f"code={_safe_api_status(weather_payload.get('code'))}"
+                )
             weather_forecast = tuple(_format_qweather_day(item) for item in weather_payload.get("daily", ())[:2])
             if not weather_forecast:
                 raise WeatherContextError("QWeather returned no daily forecast")
 
+            operation = "lifestyle indices"
             indices_response = await self._client.get(
                 f"{self._base_url}/v7/indices/1d",
                 params={
@@ -115,7 +162,10 @@ class QWeatherProvider:
             indices_response.raise_for_status()
             indices_payload = indices_response.json()
             if indices_payload.get("code") != "200":
-                raise WeatherContextError("QWeather returned a non-success indices status")
+                raise WeatherContextError(
+                    "QWeather returned a non-success indices status "
+                    f"code={_safe_api_status(indices_payload.get('code'))}"
+                )
             lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in indices_payload.get("daily", ()))
             source_url = str(
                 weather_payload.get("fxLink") or indices_payload.get("fxLink") or "https://www.qweather.com/"
@@ -127,8 +177,9 @@ class QWeatherProvider:
             )
         except WeatherContextError:
             raise
-        except (httpx.HTTPError, jwt.PyJWTError, KeyError, TypeError, ValueError):
-            raise WeatherContextError("QWeather request or response validation failed") from None
+        except (httpx.HTTPError, jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
+            detail = _safe_provider_error(exc)
+            raise WeatherContextError(f"QWeather {operation} failed: {detail}") from None
 
         air_quality = await self._fetch_air_quality(latitude, longitude, headers)
         return WeatherContextSnapshot(
@@ -172,7 +223,11 @@ class QWeatherProvider:
                 category=str(index.get("category", "未知")),
                 health_guidance=str(advice.get("generalPopulation") or health.get("effect", "")),
             )
-        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Weather API optional call failed provider=qweather operation=air-quality reason=%s",
+                _safe_provider_error(exc),
+            )
             return None
 
 
@@ -231,8 +286,8 @@ class OpenMeteoProvider:
             )
         except WeatherContextError:
             raise
-        except (httpx.HTTPError, KeyError, TypeError, ValueError):
-            raise WeatherContextError("Open-Meteo request or response validation failed") from None
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            raise WeatherContextError(f"Open-Meteo weather forecast failed: {_safe_provider_error(exc)}") from None
 
         air_quality = await self._fetch_air_quality(latitude, longitude)
         return WeatherContextSnapshot(
@@ -278,7 +333,11 @@ class OpenMeteoProvider:
                 category=category,
                 health_guidance=guidance,
             )
-        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Weather API optional call failed provider=open-meteo operation=air-quality reason=%s",
+                _safe_provider_error(exc),
+            )
             return None
 
 
@@ -295,6 +354,22 @@ class FallbackWeatherContextProvider:
             except WeatherContextError:
                 continue
         return await self._providers[-1].fetch(latitude, longitude)
+
+
+def _elapsed_milliseconds(started_at: float) -> int:
+    return round((time.monotonic() - started_at) * 1000)
+
+
+def _safe_provider_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"HTTP {exc.response.status_code}"
+    return type(exc).__name__
+
+
+def _safe_api_status(value: object) -> str:
+    if isinstance(value, str) and len(value) == 3 and value.isascii() and value.isdigit():
+        return value
+    return "invalid"
 
 
 class AirQualitySupplementingWeatherProvider:
