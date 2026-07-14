@@ -443,7 +443,7 @@ async def test_task_failure_alert_delivery_failure_is_retried(
     assert "Failed to publish or record briefing failure alert" in caplog.text
 
 
-async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path) -> None:
+async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path, caplog) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
     verbatim = Article(
@@ -470,7 +470,7 @@ async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path) -> Non
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
-    with SQLiteStateStore(tmp_path / "v.sqlite3") as state:
+    with caplog.at_level("DEBUG"), SQLiteStateStore(tmp_path / "v.sqlite3") as state:
         service = BriefingService(
             cast(Any, settings),
             _location(),
@@ -483,9 +483,14 @@ async def test_daily_briefing_publishes_verbatim_articles(tmp_path: Path) -> Non
         )
         await service.run("daily", now)
 
-        assert len(publisher.messages) == 2
-        assert publisher.messages[1][0].body == "Forecast bulletin\n\nRaw forecast"
-        assert publisher.messages[1][1] is False
+    assert len(publisher.messages) == 2
+    assert publisher.messages[1][0].body == "Forecast bulletin\n\nRaw forecast"
+    assert publisher.messages[1][1] is False
+    assert (
+        "Publishing verbatim article: source=feed published_at=2026-07-13T08:00:00+08:00 content_characters=12"
+    ) in caplog.text
+    assert "Rendered verbatim message: visible_characters=31 payload_characters=31" in caplog.text
+    assert "Verbatim article published: source=feed published_at=2026-07-13T08:00:00+08:00" in caplog.text
 
 
 async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) -> None:

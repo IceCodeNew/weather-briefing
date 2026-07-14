@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -7,6 +8,8 @@ import httpx
 
 from .models import Article, BriefingResult, RenderedMessage, SourceDocument
 from .render import MessageRenderer
+
+_LOGGER = logging.getLogger("weather_briefing.publishers")
 
 
 class Publisher(Protocol):
@@ -43,7 +46,13 @@ class DeliveryProvider:
         await self.publisher.publish(message, single_message=single_message)
 
     async def publish_verbatim(self, article: Article) -> None:
-        await self.publisher.publish(self.renderer.render_verbatim(article))
+        message = self.renderer.render_verbatim(article)
+        _LOGGER.debug(
+            "Rendered verbatim message: visible_characters=%d payload_characters=%d",
+            message.visible_length,
+            len(message.body),
+        )
+        await self.publisher.publish(message)
 
     async def publish_alert(self, title: str, body: str) -> None:
         await self.publisher.publish(self.renderer.render_alert(title, body))
@@ -70,7 +79,14 @@ class TelegramPublisher:
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
             raise DeliveryError("Telegram single message exceeds the platform limit")
         chunks = (message.body,) if single_message else _split_message(message.body, self.MAX_MESSAGE_LENGTH)
-        for chunk in chunks:
+        _LOGGER.debug(
+            "Telegram delivery prepared: visible_characters=%d payload_characters=%d chunks=%d single_message=%s",
+            message.visible_length,
+            len(message.body),
+            len(chunks),
+            single_message,
+        )
+        for index, chunk in enumerate(chunks, start=1):
             try:
                 response = await self._client.post(
                     self._url,
@@ -84,6 +100,12 @@ class TelegramPublisher:
                 response.raise_for_status()
             except httpx.HTTPError:
                 raise DeliveryError("Telegram delivery failed") from None
+            _LOGGER.debug(
+                "Telegram chunk accepted: index=%d/%d payload_characters=%d",
+                index,
+                len(chunks),
+                len(chunk),
+            )
 
 
 def _split_message(body: str, limit: int) -> tuple[str, ...]:

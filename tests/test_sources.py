@@ -7,7 +7,7 @@ from weather_briefing.models import ContextSourceConfig, FeedConfig, SourceDocum
 from weather_briefing.sources import HTTPContextSource, RSSSource, SourceFetchError
 
 
-async def test_rss_source_marks_configured_verbatim_article() -> None:
+async def test_rss_source_marks_configured_verbatim_article(caplog) -> None:
     xml = """<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>
     <item><guid>one</guid><title>Official forecast bulletin</title>
     <link>https://example.invalid/one</link><pubDate>Sun, 12 Jul 2026 23:30:00 GMT</pubDate>
@@ -16,22 +16,27 @@ async def test_rss_source_marks_configured_verbatim_article() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text=xml)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        source = RSSSource(client, max_attempts=1)
-        articles = await source.fetch(
-            FeedConfig(
-                id="authority",
-                name="Authority",
-                url="https://example.invalid/feed",
-                verbatim_title_patterns=("forecast bulletin",),
+    with caplog.at_level("DEBUG", logger="weather_briefing.sources"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            source = RSSSource(client, max_attempts=1)
+            articles = await source.fetch(
+                FeedConfig(
+                    id="authority",
+                    name="Authority",
+                    url="https://example.invalid/feed",
+                    verbatim_title_patterns=("forecast bulletin",),
+                )
             )
-        )
 
     assert len(articles) == 1
     assert articles[0].published_at.to_iso8601_string() == "2026-07-12T23:30:00Z"
     assert articles[0].published_at.in_timezone("Asia/Shanghai").to_iso8601_string() == "2026-07-13T07:30:00+08:00"
     assert articles[0].is_verbatim is True
     assert articles[0].content == "full body"
+    assert (
+        "Parsed RSS article: source=authority published_at=2026-07-12T23:30:00+00:00 content_characters=9 verbatim=True"
+    ) in caplog.text
+    assert "example.invalid" not in caplog.text
 
 
 async def test_rss_source_skips_verbatim_article_without_cleaned_content() -> None:

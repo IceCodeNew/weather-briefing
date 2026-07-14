@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import random
 from time import struct_time
 
@@ -11,6 +12,8 @@ import pendulum
 
 from .content_cleaners import ContentCleaner, ContentCleaningRules, HTMLContentCleaner
 from .models import Article, ContextSourceConfig, FeedConfig, SourceDocument
+
+_LOGGER = logging.getLogger("weather_briefing.sources")
 
 
 class SourceFetchError(RuntimeError):
@@ -69,6 +72,13 @@ class RSSSource:
                 ),
             )
             is_verbatim = any(pattern in title for pattern in config.verbatim_title_patterns)
+            _LOGGER.debug(
+                "Parsed RSS article: source=%s published_at=%s content_characters=%d verbatim=%s",
+                config.id,
+                published_at.isoformat(),
+                len(content),
+                is_verbatim,
+            )
             if is_verbatim and not content:
                 continue
             articles.append(
