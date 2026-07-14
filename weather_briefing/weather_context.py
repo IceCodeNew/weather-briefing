@@ -5,6 +5,7 @@ import binascii
 import logging
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import replace
 from typing import Any, Protocol, cast, runtime_checkable
 
@@ -13,9 +14,10 @@ import jwt
 import pendulum
 
 from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_document, health_guidance
+from .allergen import allergen_guidance, allergen_to_document, pollen_type_names
 from .api_client import api_call_extensions
-from .models import AirQualitySnapshot, SourceDocument, WeatherContextSnapshot
-from .reference_data import reference_string_tuple
+from .models import AirQualitySnapshot, AllergenLevel, AllergenSnapshot, SourceDocument, WeatherContextSnapshot
+from .reference_data import ReferenceDataError, reference_string_tuple
 from .time_utils import (
     datetime_timezone_specifier,
     parse_datetime_with_default_timezone,
@@ -369,7 +371,7 @@ class OpenMeteoProvider:
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise WeatherContextError(f"Open-Meteo weather forecast failed: {_safe_provider_error(exc)}") from None
 
-        air_quality = await self._fetch_air_quality(latitude, longitude)
+        air_quality, allergen = await self._fetch_air_quality_and_allergen(latitude, longitude)
         return WeatherContextSnapshot(
             source_id="weather:open-meteo",
             source_name="Open-Meteo",
@@ -377,6 +379,7 @@ class OpenMeteoProvider:
             observed_at=observed_at,
             weather_forecast=weather_forecast,
             air_quality=air_quality,
+            allergen=allergen,
         )
 
     async def fetch_for_date(
@@ -387,11 +390,28 @@ class OpenMeteoProvider:
     ) -> WeatherContextSnapshot:
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
-    async def _fetch_air_quality(self, latitude: float, longitude: float) -> AirQualitySnapshot | None:
+    async def _fetch_air_quality_and_allergen(
+        self, latitude: float, longitude: float
+    ) -> tuple[AirQualitySnapshot | None, AllergenSnapshot | None]:
+        try:
+            pollen_types = pollen_type_names()
+        except ReferenceDataError as exc:
+            _LOGGER.warning(
+                "Weather API optional enrichment failed provider=open-meteo operation=allergen reason=%s",
+                type(exc).__name__,
+            )
+            pollen_types = ()
         params: dict[str, str | int | float] = {
             "latitude": latitude,
             "longitude": longitude,
-            "current": "us_aqi,us_aqi_pm2_5,pm2_5",
+            "current": ",".join(
+                (
+                    "us_aqi",
+                    "us_aqi_pm2_5",
+                    "pm2_5",
+                    *(f"{key}_pollen" for key, _ in pollen_types),
+                )
+            ),
             "timezone": "auto",
         }
         if self._api_key:
@@ -405,6 +425,26 @@ class OpenMeteoProvider:
             response.raise_for_status()
             payload = response.json()
             current = cast(dict[str, Any], payload["current"])
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            _LOGGER.warning(
+                "Weather API optional call failed provider=open-meteo operation=air-quality reason=%s",
+                _safe_provider_error(exc),
+            )
+            return None, None
+        allergen = None
+        if pollen_types:
+            try:
+                allergen = self._parse_allergen(current, payload, pollen_types)
+            except ReferenceDataError as exc:
+                _LOGGER.warning(
+                    "Weather API optional enrichment failed provider=open-meteo operation=allergen reason=%s",
+                    type(exc).__name__,
+                )
+        return self._parse_air_quality(current, payload), allergen
+
+    @staticmethod
+    def _parse_air_quality(current: dict[str, Any], payload: dict[str, Any]) -> AirQualitySnapshot | None:
+        try:
             aqi = round(float(current["us_aqi"]))
             category, guidance = health_guidance(aqi)
             return AirQualitySnapshot(
@@ -425,12 +465,56 @@ class OpenMeteoProvider:
                 category=category,
                 health_guidance=guidance,
             )
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             _LOGGER.warning(
                 "Weather API optional call failed provider=open-meteo operation=air-quality reason=%s",
-                _safe_provider_error(exc),
+                type(exc).__name__,
             )
             return None
+
+    @staticmethod
+    def _parse_allergen(
+        current: dict[str, Any],
+        payload: dict[str, Any],
+        pollen_types: tuple[tuple[str, str], ...],
+    ) -> AllergenSnapshot | None:
+        levels: list[AllergenLevel] = []
+        for key, display_name in pollen_types:
+            raw = current.get(f"{key}_pollen")
+            if raw is None:
+                continue
+            try:
+                concentration = float(raw)
+            except (TypeError, ValueError):
+                continue
+            try:
+                category, _ = allergen_guidance(concentration)
+            except ValueError:
+                continue
+            levels.append(AllergenLevel(name=display_name, category=category, concentration=concentration))
+        if not levels:
+            return None
+        max_concentration = max(level.concentration for level in levels)
+        overall_category, overall_guidance = allergen_guidance(max_concentration)
+        timezone_value = payload.get("timezone")
+        observed_at = None
+        time_value = current.get("time")
+        if time_value is not None and isinstance(timezone_value, str):
+            with suppress(TypeError, ValueError):
+                observed_at = parse_datetime_with_default_timezone(
+                    str(time_value),
+                    timezone_value,
+                    context="Open-Meteo allergen update time",
+                )
+        return AllergenSnapshot(
+            source_id="allergen:open-meteo",
+            source_name="Open-Meteo 花粉过敏原",
+            source_url="https://open-meteo.com/en/docs/air-quality-api",
+            observed_at=observed_at,
+            levels=tuple(levels),
+            overall_category=overall_category,
+            health_guidance=overall_guidance,
+        )
 
 
 class FallbackWeatherContextProvider:
@@ -551,6 +635,8 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
     ]
     if snapshot.air_quality is not None:
         documents.append(air_quality_to_document(snapshot.air_quality))
+    if snapshot.allergen is not None:
+        documents.append(allergen_to_document(snapshot.allergen))
     return tuple(documents)
 
 
