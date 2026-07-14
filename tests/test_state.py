@@ -6,7 +6,7 @@ from time import monotonic
 import pendulum
 import pytest
 
-from weather_briefing.models import Article, SourceDocument, Warning
+from weather_briefing.models import Article, BriefingRecord, SourceDocument, Warning
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 
 
@@ -171,7 +171,7 @@ def test_new_warning_evidence_refreshes_retention(tmp_path: Path) -> None:
         assert len(state.active_warnings(later.add(hours=11), 12)) == 1
 
 
-def test_context_snapshots_are_available_for_hourly_change_detection(tmp_path: Path) -> None:
+def test_context_snapshots_are_available_for_briefing_change_detection(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     document = SourceDocument(
         "weather:test",
@@ -190,10 +190,28 @@ def test_utc_timestamps_have_stable_lexical_order_with_microseconds(tmp_path: Pa
     with SQLiteStateStore(tmp_path / "state.db") as state:
         first = pendulum.datetime(2026, 7, 13, 1, tz="UTC")
         second = first.add(microseconds=1)
-        state.save_briefing("hourly", "second", second)
-        state.save_briefing("hourly", "first", first)
+        state.save_briefing("briefing", "second", second)
+        state.save_briefing("briefing", "first", first)
 
-        assert state.recent_briefings(first.add(hours=1), 2) == ("first", "second")
+        assert state.recent_briefings(first.add(hours=1), 2) == (
+            BriefingRecord("briefing", "first", first),
+            BriefingRecord("briefing", "second", second),
+        )
+
+
+def test_briefing_delivery_can_be_checked_within_local_day_bounds(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 14, 16, tz=timezone)
+    day_start = now.start_of("day")
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.save_briefing("briefing", "yesterday", day_start.subtract(minutes=1))
+        state.save_briefing("forecast", "today forecast", day_start.add(hours=8))
+
+        assert not state.has_briefing_between("briefing", day_start, now)
+
+        state.save_briefing("briefing", "today briefing", day_start.add(hours=12))
+
+        assert state.has_briefing_between("briefing", day_start, now)
 
 
 def test_stale_source_skips_unknown_source_id(tmp_path: Path) -> None:

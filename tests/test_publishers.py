@@ -16,7 +16,13 @@ from weather_briefing.render import PlainTextRenderer
 
 
 class NoopPublisher:
-    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
         pass
 
 
@@ -43,7 +49,13 @@ class RecordingPublisher:
     def __init__(self) -> None:
         self.messages: list[RenderedMessage] = []
 
-    async def publish(self, message: RenderedMessage, *, single_message: bool = False) -> None:
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
         self.messages.append(message)
 
 
@@ -76,6 +88,7 @@ async def test_telegram_publisher_uses_runtime_values(caplog) -> None:
     payload = json.loads(requests[0].content)
     assert payload["chat_id"] == "runtime-chat"
     assert payload["parse_mode"] == "HTML"
+    assert payload["disable_notification"] is False
     assert "Telegram delivery prepared: visible_characters=11 payload_characters=18 chunks=1" in caplog.text
     assert "Telegram chunk accepted: index=1/1 payload_characters=18" in caplog.text
     assert (
@@ -83,6 +96,21 @@ async def test_telegram_publisher_uses_runtime_values(caplog) -> None:
     ) in caplog.text
     assert "runtime-token" not in caplog.text
     assert "runtime-chat" not in caplog.text
+
+
+async def test_telegram_publisher_uses_bot_api_silent_delivery() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
+        await publisher.publish(RenderedMessage("Final briefing", 14), silent=True)
+
+    payload = json.loads(requests[0].content)
+    assert payload["disable_notification"] is True
 
 
 async def test_telegram_checks_runtime_diagnostics_once_for_multiple_chunks(caplog) -> None:

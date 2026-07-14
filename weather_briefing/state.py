@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pendulum
 
-from .models import Article, SourceDocument, Warning
+from .models import Article, BriefingRecord, SourceDocument, Warning
 from .time_utils import require_aware_datetime
 
 _STORAGE_TIME_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$")
@@ -312,13 +312,32 @@ class SQLiteStateStore:
         )
         self._connection.commit()
 
-    def recent_briefings(self, now: pendulum.DateTime, history_hours: int) -> tuple[str, ...]:
+    def recent_briefings(self, now: pendulum.DateTime, history_hours: int) -> tuple[BriefingRecord, ...]:
         threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
-            "SELECT body FROM briefings WHERE published_at >= ? ORDER BY published_at",
+            "SELECT kind, body, published_at FROM briefings WHERE published_at >= ? ORDER BY published_at",
             (threshold,),
         )
-        return tuple(str(row["body"]) for row in rows)
+        return tuple(
+            BriefingRecord(
+                kind=str(row["kind"]),
+                body=str(row["body"]),
+                published_at=_parse_time(str(row["published_at"])),
+            )
+            for row in rows
+        )
+
+    def has_briefing_between(
+        self,
+        kind: str,
+        start: pendulum.DateTime,
+        end: pendulum.DateTime,
+    ) -> bool:
+        row = self._connection.execute(
+            "SELECT 1 FROM briefings WHERE kind = ? AND published_at >= ? AND published_at <= ? LIMIT 1",
+            (kind, _storage_time(start), _storage_time(end)),
+        ).fetchone()
+        return row is not None
 
     def recent_articles(self, now: pendulum.DateTime, history_hours: int) -> tuple[Article, ...]:
         threshold = _storage_time(now.subtract(hours=history_hours))
