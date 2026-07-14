@@ -61,6 +61,16 @@ class RSSSource:
             title = str(entry.get("title", "")).strip()
             stable_value = str(entry.get("id") or url or f"{title}:{published_at.isoformat()}")
             article_id = hashlib.sha256(f"{config.id}:{stable_value}".encode()).hexdigest()
+            content = self._cleaner.clean(
+                _entry_content(entry),
+                ContentCleaningRules(
+                    config.content_remove_selectors,
+                    config.content_remove_patterns,
+                ),
+            )
+            is_verbatim = any(pattern in title for pattern in config.verbatim_title_patterns)
+            if is_verbatim and not content:
+                continue
             articles.append(
                 Article(
                     id=article_id,
@@ -69,14 +79,8 @@ class RSSSource:
                     title=title,
                     url=url,
                     published_at=published_at,
-                    content=self._cleaner.clean(
-                        _entry_content(entry),
-                        ContentCleaningRules(
-                            config.content_remove_selectors,
-                            config.content_remove_patterns,
-                        ),
-                    ),
-                    is_verbatim=any(pattern in title for pattern in config.verbatim_title_patterns),
+                    content=content,
+                    is_verbatim=is_verbatim,
                 )
             )
         return tuple(articles)

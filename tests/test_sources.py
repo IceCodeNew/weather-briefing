@@ -34,6 +34,28 @@ async def test_rss_source_marks_configured_verbatim_article() -> None:
     assert articles[0].content == "full body"
 
 
+async def test_rss_source_skips_verbatim_article_without_cleaned_content() -> None:
+    xml = """<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>
+    <item><guid>one</guid><title>Official forecast bulletin</title>
+    <link>https://example.invalid/one</link><pubDate>Sun, 12 Jul 2026 23:30:00 GMT</pubDate>
+    <description><![CDATA[<div class="remove-me">page chrome</div>]]></description>
+    </item></channel></rss>"""
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, text=xml))) as client:
+        source = RSSSource(client, max_attempts=1)
+        articles = await source.fetch(
+            FeedConfig(
+                id="authority",
+                name="Authority",
+                url="https://example.invalid/feed",
+                verbatim_title_patterns=("forecast bulletin",),
+                content_remove_selectors=(".remove-me",),
+            )
+        )
+
+    assert articles == ()
+
+
 async def test_rss_source_uses_content_fields_when_available() -> None:
     xml = """<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>
     <item><guid>one</guid><title>Rich article</title>
