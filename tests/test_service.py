@@ -1,7 +1,7 @@
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import TypeGuard
 
 import pendulum
 import pytest
@@ -10,9 +10,11 @@ from weather_briefing.llm import LLMError
 from weather_briefing.models import (
     AirQualitySnapshot,
     Article,
+    ContextSourceConfig,
     FeedConfig,
     RenderedMessage,
     ResolvedLocation,
+    SourceDocument,
     Warning,
     WeatherContextSnapshot,
 )
@@ -23,8 +25,25 @@ from weather_briefing.state import SQLiteStateStore
 from weather_briefing.weather_context import WeatherContextError
 
 
+@dataclass(frozen=True, slots=True)
+class _TestSettings:
+    timezone: pendulum.Timezone
+    feeds: tuple[FeedConfig, ...] = ()
+    context_sources: tuple[ContextSourceConfig, ...] = ()
+    rss_stale_hours: int = 24
+    rss_failure_threshold: int = 3
+    warning_retention_hours: int = 12
+    history_hours: int = 48
+    briefing_max_characters: int = 3500
+    llm_max_attempts: int = 3
+
+
+def _is_dict_list(value: object) -> TypeGuard[list[dict[str, object]]]:
+    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
+
+
 class EmptyRSSSource:
-    async def fetch(self, config: object) -> tuple[object, ...]:
+    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         raise AssertionError("No RSS feed should be requested in this test")
 
 
@@ -32,17 +51,17 @@ class StaticRSSSource:
     def __init__(self, article: Article) -> None:
         self._article = article
 
-    async def fetch(self, config: object) -> tuple[Article, ...]:
+    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         return (self._article,)
 
 
 class FailingRSSSource:
-    async def fetch(self, config: object) -> tuple[Article, ...]:
+    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         raise RuntimeError("feed unavailable")
 
 
 class CanceledRSSSource:
-    async def fetch(self, config: object) -> tuple[Article, ...]:
+    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         raise asyncio.CancelledError
 
 
@@ -61,7 +80,7 @@ class FailingWeatherContextProvider:
 
 
 class EmptyContextSource:
-    async def fetch(self, config: object) -> object:
+    async def fetch(self, config: ContextSourceConfig) -> SourceDocument:
         raise AssertionError("No context source should be requested in this test")
 
 
@@ -107,12 +126,15 @@ class RecordingLLM:
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         self.payload = payload
-        context = cast(list[dict[str, object]], payload["context_documents"])
-        articles = (
-            *cast(list[dict[str, object]], payload["new_articles"]),
-            *cast(list[dict[str, object]], payload["deferred_articles"]),
-        )
-        source_id = str((context or articles)[0]["source_id"])
+        source_documents: list[dict[str, object]] = []
+        context_documents = payload["context_documents"]
+        assert _is_dict_list(context_documents)
+        source_documents.extend(context_documents)
+        for key in ("new_articles", "deferred_articles"):
+            group = payload[key]
+            assert _is_dict_list(group)
+            source_documents.extend(group)
+        source_id = str(source_documents[0]["source_id"])
         conclusion = {
             "text": "AQI is 42 under test-standard.",
             "source_ids": [source_id],
@@ -178,7 +200,7 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -198,11 +220,11 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         state.save_briefing("briefing", "Earlier update", now.subtract(hours=1))
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -212,13 +234,15 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
 
     assert weather_context.coordinates == (39.911389, 116.380556)
     assert llm.payload is not None
-    context_documents = cast(list[dict[str, str]], llm.payload["context_documents"])
+    context_documents = llm.payload["context_documents"]
+    assert _is_dict_list(context_documents)
     assert len(context_documents) == 2
     air_document = next(item for item in context_documents if item["source_id"] == "air-quality:test")
     assert air_document["url"] == "https://example.invalid/air-quality"
-    assert "AQI：42（标准：test-standard" in air_document["content"]
-    assert "PM2.5 原始浓度：12 µg/m³" in air_document["content"]
-    recent_briefings = cast(list[dict[str, str]], llm.payload["recent_briefings"])
+    assert "AQI：42（标准：test-standard" in str(air_document["content"])
+    assert "PM2.5 原始浓度：12 µg/m³" in str(air_document["content"])
+    recent_briefings = llm.payload["recent_briefings"]
+    assert _is_dict_list(recent_briefings)
     assert recent_briefings == [
         {
             "mode": "briefing",
@@ -234,7 +258,7 @@ async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provi
     timezone = pendulum.timezone("Asia/Shanghai")
     run_time = pendulum.datetime(2026, 7, 13, 22, 30, tz=timezone)
     target_date = pendulum.date(2026, 7, 15)
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -272,11 +296,11 @@ async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provi
 
     with SQLiteStateStore(tmp_path / "future-forecast.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -292,7 +316,7 @@ async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provi
 
 async def test_forecast_date_is_rejected_for_briefing_mode() -> None:
     service = object.__new__(BriefingService)
-    service._settings = cast(Any, SimpleNamespace(timezone=pendulum.timezone("Asia/Shanghai")))
+    service._settings = _TestSettings(timezone=pendulum.timezone("Asia/Shanghai"))
 
     with pytest.raises(ValueError, match="only supported in forecast mode"):
         await service.run("briefing", forecast_date=pendulum.date(2026, 7, 15))
@@ -310,7 +334,7 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
         published_at=pendulum.datetime(2026, 7, 12, 23, 30, tz="UTC"),
         content="New weather information",
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
         context_sources=(),
@@ -327,11 +351,11 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, StaticRSSSource(article)),
-            cast(Any, EmptyContextSource()),
+            StaticRSSSource(article),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -340,7 +364,9 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
 
     assert llm.payload is not None
     assert llm.payload["mode"] == "briefing"
-    assert cast(list[dict[str, object]], llm.payload["new_articles"])[0]["source_id"] == "article-id"
+    new_articles = llm.payload["new_articles"]
+    assert _is_dict_list(new_articles)
+    assert new_articles[0]["source_id"] == "article-id"
     assert len(publisher.messages) == 1
 
 
@@ -348,7 +374,7 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -367,11 +393,11 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -410,7 +436,7 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
         (article.id,),
         now,
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -449,11 +475,11 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
         state.save_articles((article,), now)
         state.update_warnings((warning,), (), now, {article.id})
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             UnchangedWarningLLM(),
             delivery,
             delivery,
@@ -479,7 +505,7 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
         published_at=now,
         content="A small change that may become relevant later",
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
         context_sources=(),
@@ -497,10 +523,11 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
 
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             self.payloads.append(payload)
-            sources = (
-                *cast(list[dict[str, object]], payload["new_articles"]),
-                *cast(list[dict[str, object]], payload["deferred_articles"]),
-            )
+            sources: list[dict[str, object]] = []
+            for key in ("new_articles", "deferred_articles"):
+                group = payload[key]
+                assert _is_dict_list(group)
+                sources.extend(group)
             source_id = str(sources[0]["source_id"])
             return {
                 "headline": "Accumulated update",
@@ -519,11 +546,11 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
 
     with SQLiteStateStore(tmp_path / "deferred.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, StaticRSSSource(article)),
-            cast(Any, EmptyContextSource()),
+            StaticRSSSource(article),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -535,10 +562,14 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
         assert state.pending_articles() == ()
         assert state.known_article_ids((article.id,)) == {article.id}
 
-    assert cast(list[dict[str, object]], llm.payloads[0]["new_articles"])[0]["source_id"] == article.id
+    first_new = llm.payloads[0]["new_articles"]
+    assert _is_dict_list(first_new)
+    assert first_new[0]["source_id"] == article.id
     assert llm.payloads[0]["deferred_articles"] == []
     assert llm.payloads[1]["new_articles"] == []
-    assert cast(list[dict[str, object]], llm.payloads[1]["deferred_articles"])[0]["source_id"] == article.id
+    second_deferred = llm.payloads[1]["deferred_articles"]
+    assert _is_dict_list(second_deferred)
+    assert second_deferred[0]["source_id"] == article.id
     assert len(publisher.messages) == 1
 
 
@@ -557,7 +588,7 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
         content="The temperature was 31 C at 15:00",
         is_verbatim=True,
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
         context_sources=(),
@@ -574,11 +605,11 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
 
     with SQLiteStateStore(tmp_path / "forced.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, StaticRSSSource(article)),
-            cast(Any, EmptyContextSource()),
+            StaticRSSSource(article),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -597,7 +628,8 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
         assert state.pending_articles() == ()
 
     assert llm.payload is not None
-    deferred = cast(list[dict[str, object]], llm.payload["deferred_articles"])
+    deferred = llm.payload["deferred_articles"]
+    assert _is_dict_list(deferred)
     assert deferred[0]["source_id"] == article.id
     assert publisher.messages[0] == (RenderedMessage(body, len(body)), True, True)
     assert len(publisher.messages) == 2
@@ -607,7 +639,7 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
 async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 23, tz=timezone)
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -623,11 +655,11 @@ async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path
 
     with SQLiteStateStore(tmp_path / "worthy-final.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             RecordingLLM(should_publish=True),
             delivery,
             delivery,
@@ -658,7 +690,7 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
     message: str,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -676,11 +708,11 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
 
     with SQLiteStateStore(tmp_path / f"{kind}.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             llm,
             delivery,
             ops_delivery,
@@ -697,7 +729,7 @@ async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -714,11 +746,11 @@ async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
 
     with SQLiteStateStore(tmp_path / "failure.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -743,7 +775,7 @@ async def test_task_failure_alert_delivery_failure_is_retried(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -760,11 +792,11 @@ async def test_task_failure_alert_delivery_failure_is_retried(
 
     with SQLiteStateStore(tmp_path / "failure-alert.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             DeliveryProvider(PlainTextRenderer(), ops_publisher),
@@ -803,7 +835,7 @@ async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> N
         content="Raw forecast",
         is_verbatim=True,
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
         context_sources=(),
@@ -819,11 +851,11 @@ async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> N
 
     with caplog.at_level("DEBUG"), SQLiteStateStore(tmp_path / "v.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, StaticRSSSource(verbatim)),
-            cast(Any, EmptyContextSource()),
+            StaticRSSSource(verbatim),
+            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -843,7 +875,7 @@ async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> N
 async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -860,11 +892,11 @@ async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) 
 
     with SQLiteStateStore(tmp_path / "empty.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -887,7 +919,7 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
         published_at=yesterday,
         content="content",
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
         context_sources=(),
@@ -907,11 +939,11 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "stale.sqlite3") as state:
         state.record_source_check("feed", yesterday, yesterday)
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, StaticRSSSource(article)),
-            cast(Any, EmptyContextSource()),
+            StaticRSSSource(article),
+            EmptyContextSource(),
             llm,
             delivery,
             ops_delivery,
@@ -961,7 +993,7 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
         published_at=now,
         content="content",
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
         context_sources=(),
@@ -978,11 +1010,11 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
 
     with SQLiteStateStore(tmp_path / "retry.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, StaticRSSSource(article)),
-            cast(Any, EmptyContextSource()),
+            StaticRSSSource(article),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -996,7 +1028,7 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
 async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(),
         context_sources=(),
@@ -1025,11 +1057,11 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
 
     with SQLiteStateStore(tmp_path / "long.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, EmptyRSSSource()),
-            cast(Any, EmptyContextSource()),
+            EmptyRSSSource(),
+            EmptyContextSource(),
             LongLLM(),
             delivery,
             delivery,
@@ -1051,7 +1083,7 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
         published_at=now.subtract(days=1),
         content="content",
     )
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("known-feed", "Known", "https://example.invalid/rss"),),
         context_sources=(),
@@ -1068,11 +1100,11 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
 
     with SQLiteStateStore(tmp_path / "unknown.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, StaticRSSSource(article)),
-            cast(Any, EmptyContextSource()),
+            StaticRSSSource(article),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1088,7 +1120,7 @@ async def test_rss_failure_does_not_crash_forecast_with_weather_context(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("failing-feed", "Failing", "https://example.invalid/feed"),),
         context_sources=(),
@@ -1106,11 +1138,11 @@ async def test_rss_failure_does_not_crash_forecast_with_weather_context(
 
     with SQLiteStateStore(tmp_path / "rss-fail.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, FailingRSSSource()),
-            cast(Any, EmptyContextSource()),
+            FailingRSSSource(),
+            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1126,7 +1158,7 @@ async def test_rss_cancellation_aborts_task_without_recording_failure(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("canceled-feed", "Canceled", "https://example.invalid/feed"),),
         context_sources=(),
@@ -1143,11 +1175,11 @@ async def test_rss_cancellation_aborts_task_without_recording_failure(
 
     with SQLiteStateStore(tmp_path / "rss-canceled.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, CanceledRSSSource()),
-            cast(Any, EmptyContextSource()),
+            CanceledRSSSource(),
+            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -1166,7 +1198,7 @@ async def test_rss_cancellation_records_other_completed_feed_results(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(
             FeedConfig("canceled-feed", "Canceled", "https://example.invalid/canceled"),
@@ -1188,11 +1220,11 @@ async def test_rss_cancellation_records_other_completed_feed_results(
     with SQLiteStateStore(tmp_path / "rss-canceled-results.sqlite3") as state:
         state.record_rss_fetch_failure("recovered-feed")
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, MixedOutcomeRSSSource()),
-            cast(Any, EmptyContextSource()),
+            MixedOutcomeRSSSource(),
+            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -1210,7 +1242,7 @@ async def test_rss_failure_alert_is_sent_after_threshold(
     tmp_path: Path,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("fail-feed", "Failing", "https://example.invalid/feed"),),
         context_sources=(),
@@ -1230,11 +1262,11 @@ async def test_rss_failure_alert_is_sent_after_threshold(
 
     with SQLiteStateStore(tmp_path / "rss-alert.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, FailingRSSSource()),
-            cast(Any, EmptyContextSource()),
+            FailingRSSSource(),
+            EmptyContextSource(),
             llm,
             delivery,
             ops_delivery,
@@ -1259,7 +1291,7 @@ async def test_failed_rss_alert_delivery_is_retried(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
-    settings = SimpleNamespace(
+    settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("fail-feed", "Failing", "https://example.invalid/feed"),),
         context_sources=(),
@@ -1278,11 +1310,11 @@ async def test_failed_rss_alert_delivery_is_retried(
 
     with SQLiteStateStore(tmp_path / "rss-alert-retry.sqlite3") as state:
         service = BriefingService(
-            cast(Any, settings),
+            settings,
             _location(),
             state,
-            cast(Any, FailingRSSSource()),
-            cast(Any, EmptyContextSource()),
+            FailingRSSSource(),
+            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             ops_delivery,
