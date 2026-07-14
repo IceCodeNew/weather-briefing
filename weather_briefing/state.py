@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from pathlib import Path
@@ -11,6 +12,81 @@ from .models import Article, SourceDocument, Warning
 from .time_utils import require_aware_datetime
 
 _STORAGE_TIME_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$")
+_RENDERED_TEXT_DIAGNOSTIC = "rendered_text"
+_RUNTIME_DIAGNOSTIC_BUSY_TIMEOUT_SECONDS = 0.1
+_LOGGER = logging.getLogger("weather_briefing.state")
+
+
+class SQLiteRuntimeDiagnostics:
+    def __init__(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(path, timeout=_RUNTIME_DIAGNOSTIC_BUSY_TIMEOUT_SECONDS)
+        self._connection.row_factory = sqlite3.Row
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_diagnostics (name TEXT PRIMARY KEY, expires_at TEXT NOT NULL)"
+        )
+        self._connection.commit()
+
+    def close(self) -> None:
+        self._connection.close()
+
+    def __enter__(self) -> SQLiteRuntimeDiagnostics:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def enable_rendered_text_logging(self, expires_at: pendulum.DateTime) -> None:
+        expires_at = require_aware_datetime(expires_at, context="Rendered text diagnostic expiration")
+        self._connection.execute(
+            """INSERT INTO runtime_diagnostics(name, expires_at) VALUES (?, ?)
+            ON CONFLICT(name) DO UPDATE SET expires_at = excluded.expires_at""",
+            (_RENDERED_TEXT_DIAGNOSTIC, _storage_time(expires_at)),
+        )
+        self._connection.commit()
+        _LOGGER.warning(
+            "Sensitive rendered text diagnostic logging enabled until %s",
+            expires_at.to_iso8601_string(),
+        )
+
+    def disable_rendered_text_logging(self) -> None:
+        self._connection.execute(
+            "DELETE FROM runtime_diagnostics WHERE name = ?",
+            (_RENDERED_TEXT_DIAGNOSTIC,),
+        )
+        self._connection.commit()
+        _LOGGER.warning("Sensitive rendered text diagnostic logging disabled")
+
+    def rendered_text_logging_until(
+        self,
+        now: pendulum.DateTime | None = None,
+    ) -> pendulum.DateTime | None:
+        current_time = require_aware_datetime(
+            now or pendulum.now("UTC"),
+            context="Rendered text diagnostic check time",
+        )
+        row = self._connection.execute(
+            "SELECT expires_at FROM runtime_diagnostics WHERE name = ?",
+            (_RENDERED_TEXT_DIAGNOSTIC,),
+        ).fetchone()
+        if row is None:
+            return None
+        expires_at = _parse_time(str(row["expires_at"]))
+        if expires_at > current_time:
+            return expires_at
+        self._connection.execute(
+            "DELETE FROM runtime_diagnostics WHERE name = ?",
+            (_RENDERED_TEXT_DIAGNOSTIC,),
+        )
+        self._connection.commit()
+        _LOGGER.warning(
+            "Sensitive rendered text diagnostic logging expired at %s",
+            expires_at.to_iso8601_string(),
+        )
+        return None
+
+    def rendered_text_logging_enabled(self) -> bool:
+        return self.rendered_text_logging_until() is not None
 
 
 class SQLiteStateStore:

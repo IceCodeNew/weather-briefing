@@ -1,5 +1,6 @@
 import base64
 import logging
+import sqlite3
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
@@ -22,6 +23,7 @@ from weather_briefing.cli import (
     _in_schedule,
     _llm_provider,
     _location_state_path,
+    _manage_rendered_text_diagnostics,
     _parse_run_time,
     _precision_reduction_notice,
     _qweather_is_configured,
@@ -195,6 +197,69 @@ def test_version_flag() -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--version"])
+
+
+def test_rendered_text_diagnostics_parser_accepts_bounded_duration() -> None:
+    args = build_parser().parse_args(["diagnostics", "rendered-text", "enable", "--for", "15m"])
+
+    assert args.diagnostics_action == "enable"
+    assert args.duration_seconds == 900
+
+
+@pytest.mark.parametrize("duration", ("0m", "15", "25h"))
+def test_rendered_text_diagnostics_parser_rejects_invalid_duration(duration: str) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["diagnostics", "rendered-text", "enable", "--for", duration])
+
+
+def test_main_manages_rendered_text_diagnostics_without_loading_service_settings(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    state_path = tmp_path / "state.sqlite3"
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["weather-briefing", "diagnostics", "rendered-text", "enable", "--for", "15m"],
+    )
+    main()
+    assert "enabled until" in capsys.readouterr().out
+
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "diagnostics", "rendered-text", "status"])
+    main()
+    assert "is enabled until" in capsys.readouterr().out
+
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "diagnostics", "rendered-text", "disable"])
+    main()
+    assert capsys.readouterr().out.strip() == "Rendered text diagnostic logging disabled"
+
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "diagnostics", "rendered-text", "status"])
+    main()
+    assert capsys.readouterr().out.strip() == "Rendered text diagnostic logging is disabled"
+
+
+@pytest.mark.parametrize(
+    ("action", "duration", "message"),
+    (
+        ("enable", None, "require a duration"),
+        ("unsupported", None, "Unsupported rendered text diagnostics action"),
+    ),
+)
+def test_rendered_text_diagnostics_reject_invalid_internal_requests(
+    action: str,
+    duration: int | None,
+    message: str,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(tmp_path / "state.sqlite3"))
+
+    with pytest.raises(ValueError, match=message):
+        _manage_rendered_text_diagnostics(action, duration)
 
 
 def test_main_loads_dotenv_with_supported_arguments(monkeypatch) -> None:
@@ -417,7 +482,7 @@ async def test_run_skips_and_logs_when_enforce_window_outside_schedule(monkeypat
         logging.root.setLevel(original_root_level)
 
 
-async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
+async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatch, capsys) -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -434,7 +499,11 @@ async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
-    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: None)
+
+    def delivery_without_diagnostics(s: object, c: object, diagnostics: object) -> None:
+        assert diagnostics is None
+
+    monkeypatch.setattr("weather_briefing.cli._delivery_provider", delivery_without_diagnostics)
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
@@ -452,6 +521,11 @@ async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
             pass
 
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
+
+    def unavailable_diagnostics(path: Path) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", unavailable_diagnostics)
 
     async def fake_service_run(kind: str, n: object) -> str:
         return "published body"
@@ -472,6 +546,7 @@ async def test_run_logs_start_resolve_and_publish(monkeypatch, capsys) -> None:
 
         stderr = capsys.readouterr().err
         assert "Starting hourly briefing run" in stderr
+        assert "Runtime diagnostics unavailable; continuing without sensitive rendered text logging" in stderr
         assert "Resolving 1 location(s)" in stderr
         assert "Processing location test (Test City)" in stderr
         assert "briefing published (14 characters)" in stderr
@@ -517,7 +592,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
 
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
-    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: AlertDelivery())
+    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: AlertDelivery())
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
@@ -535,6 +610,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
             pass
 
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
+    monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", lambda p: FakeState())
 
     async def fake_service_run(kind: str, n: object) -> str:
         return "published body"
@@ -581,7 +657,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
 
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
-    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c: None)
+    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: None)
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
@@ -599,6 +675,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
             pass
 
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
+    monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", lambda p: FakeState())
 
     async def fake_service_run(kind: str, n: object) -> str | None:
         return None

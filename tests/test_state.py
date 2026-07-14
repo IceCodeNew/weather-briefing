@@ -1,9 +1,80 @@
+import sqlite3
+from contextlib import closing
 from pathlib import Path
+from time import monotonic
 
 import pendulum
+import pytest
 
 from weather_briefing.models import Article, SourceDocument, Warning
-from weather_briefing.state import SQLiteStateStore
+from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
+
+
+def test_rendered_text_diagnostics_can_be_enabled_and_disabled(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 14, 7, tz="UTC")
+    expires_at = now.add(minutes=15)
+    with SQLiteRuntimeDiagnostics(tmp_path / "state.db") as diagnostics:
+        assert diagnostics.rendered_text_logging_until(now) is None
+
+        diagnostics.enable_rendered_text_logging(expires_at)
+        assert diagnostics.rendered_text_logging_until(now) == expires_at
+
+        diagnostics.disable_rendered_text_logging()
+        assert diagnostics.rendered_text_logging_until(now) is None
+
+
+def test_rendered_text_diagnostics_reports_current_enabled_state(tmp_path: Path) -> None:
+    with SQLiteRuntimeDiagnostics(tmp_path / "state.db") as diagnostics:
+        diagnostics.enable_rendered_text_logging(pendulum.now("UTC").add(minutes=15))
+        assert diagnostics.rendered_text_logging_enabled()
+
+        diagnostics.disable_rendered_text_logging()
+        assert not diagnostics.rendered_text_logging_enabled()
+
+
+def test_rendered_text_diagnostics_changes_are_visible_across_connections(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 14, 7, tz="UTC")
+    state_path = tmp_path / "state.db"
+    with (
+        SQLiteRuntimeDiagnostics(state_path) as daemon_diagnostics,
+        SQLiteRuntimeDiagnostics(state_path) as cli_diagnostics,
+    ):
+        assert daemon_diagnostics.rendered_text_logging_until(now) is None
+
+        expires_at = now.add(minutes=15)
+        cli_diagnostics.enable_rendered_text_logging(expires_at)
+        assert daemon_diagnostics.rendered_text_logging_until(now) == expires_at
+
+        cli_diagnostics.disable_rendered_text_logging()
+        assert daemon_diagnostics.rendered_text_logging_until(now) is None
+
+
+def test_rendered_text_diagnostics_fail_fast_when_database_is_locked(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.db"
+    with (
+        SQLiteRuntimeDiagnostics(state_path) as diagnostics,
+        closing(sqlite3.connect(state_path)) as lock_connection,
+    ):
+        lock_connection.execute("BEGIN EXCLUSIVE")
+        started_at = monotonic()
+
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            diagnostics.rendered_text_logging_until()
+
+        assert monotonic() - started_at < 1
+
+
+def test_rendered_text_diagnostics_expire_automatically(tmp_path: Path, caplog) -> None:
+    now = pendulum.datetime(2026, 7, 14, 7, tz="UTC")
+    with SQLiteRuntimeDiagnostics(tmp_path / "state.db") as diagnostics:
+        diagnostics.enable_rendered_text_logging(now.add(minutes=15))
+        caplog.clear()
+
+        with caplog.at_level("WARNING", logger="weather_briefing.state"):
+            assert diagnostics.rendered_text_logging_until(now.add(minutes=16)) is None
+            assert diagnostics.rendered_text_logging_until(now.add(minutes=17)) is None
+
+    assert caplog.text.count("Sensitive rendered text diagnostic logging expired") == 1
 
 
 def test_articles_are_deduplicated(tmp_path: Path) -> None:

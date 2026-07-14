@@ -116,6 +116,10 @@ def _configured_weather_providers() -> tuple[str, ...] | None:
     return providers
 
 
+def state_path_from_env() -> Path:
+    return Path(_clean_env(os.getenv("BRIEFING_STATE_PATH", "state/weather.sqlite3")))
+
+
 def weather_providers_for(location: ResolvedLocation, configured: tuple[str, ...] | None) -> tuple[str, ...]:
     if configured is not None:
         return configured
@@ -319,7 +323,7 @@ class Settings:
             open_meteo_api_key=_clean_env(os.getenv("OPEN_METEO_API_KEY")) or None,
             aqicn_api_token=_clean_env(os.getenv("AQICN_API_TOKEN")) or None,
             aqicn_base_url=_clean_env(os.getenv("AQICN_BASE_URL", "https://api.waqi.info")).rstrip("/"),
-            state_path=Path(_clean_env(os.getenv("BRIEFING_STATE_PATH", "state/weather.sqlite3"))),
+            state_path=state_path_from_env(),
             publisher=_clean_env(os.getenv("PUBLISHER", "telegram")),
             telegram_bot_token=_clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,
             telegram_chat_id=_clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None,
