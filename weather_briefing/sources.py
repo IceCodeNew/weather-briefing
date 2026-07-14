@@ -10,6 +10,7 @@ import feedparser
 import httpx
 import pendulum
 
+from .api_client import api_call_extensions
 from .content_cleaners import ContentCleaner, ContentCleaningRules, HTMLContentCleaner
 from .models import Article, ContextSourceConfig, FeedConfig, SourceDocument
 
@@ -98,7 +99,10 @@ class RSSSource:
     async def _fetch_with_retry(self, config: FeedConfig) -> str:
         for attempt in range(1, self._max_attempts + 1):
             try:
-                response = await self._client.get(config.url)
+                response = await self._client.get(
+                    config.url,
+                    extensions=api_call_extensions("rss", "fetch"),
+                )
                 response.raise_for_status()
                 return response.text
             except httpx.HTTPError:
@@ -113,7 +117,10 @@ class HTTPContextSource:
 
     async def fetch(self, config: ContextSourceConfig) -> SourceDocument:
         try:
-            response = await self._client.get(config.url)
+            response = await self._client.get(
+                config.url,
+                extensions=api_call_extensions("http-context", "fetch"),
+            )
             response.raise_for_status()
         except httpx.HTTPError:
             raise SourceFetchError(f"Context source {config.id} failed") from None

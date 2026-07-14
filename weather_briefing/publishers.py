@@ -6,6 +6,7 @@ from typing import Protocol
 
 import httpx
 
+from .api_client import api_call_extensions
 from .models import Article, BriefingResult, RenderedMessage, SourceDocument
 from .render import MessageRenderer
 
@@ -120,6 +121,7 @@ class TelegramPublisher:
                         "parse_mode": "HTML",
                         "link_preview_options": {"is_disabled": True},
                     },
+                    extensions=api_call_extensions("telegram", "send-message"),
                 )
                 response.raise_for_status()
             except httpx.HTTPError:

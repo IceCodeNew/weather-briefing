@@ -12,6 +12,7 @@ import httpx
 import jwt
 
 from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_document, health_guidance
+from .api_client import api_call_extensions
 from .models import AirQualitySnapshot, SourceDocument, WeatherContextSnapshot
 from .reference_data import reference_string_tuple
 from .time_utils import (
@@ -137,6 +138,7 @@ class QWeatherProvider:
                     "unit": "m",
                 },
                 headers=headers,
+                extensions=api_call_extensions("qweather", "weather-forecast"),
             )
             weather_response.raise_for_status()
             weather_payload = weather_response.json()
@@ -158,6 +160,7 @@ class QWeatherProvider:
                     "lang": "zh",
                 },
                 headers=headers,
+                extensions=api_call_extensions("qweather", "lifestyle-indices"),
             )
             indices_response.raise_for_status()
             indices_payload = indices_response.json()
@@ -200,6 +203,7 @@ class QWeatherProvider:
                 f"{self._base_url}/airquality/v1/current/{latitude:.2f}/{longitude:.2f}",
                 params={"lang": "zh"},
                 headers=headers,
+                extensions=api_call_extensions("qweather", "air-quality"),
             )
             response.raise_for_status()
             payload = response.json()
@@ -271,7 +275,11 @@ class OpenMeteoProvider:
         if self._api_key:
             params["apikey"] = self._api_key
         try:
-            response = await self._client.get(f"{self._weather_base_url}/v1/forecast", params=params)
+            response = await self._client.get(
+                f"{self._weather_base_url}/v1/forecast",
+                params=params,
+                extensions=api_call_extensions("open-meteo", "weather-forecast"),
+            )
             response.raise_for_status()
             payload = response.json()
             daily = cast(dict[str, list[object]], payload["daily"])
@@ -309,7 +317,11 @@ class OpenMeteoProvider:
         if self._api_key:
             params["apikey"] = self._api_key
         try:
-            response = await self._client.get(f"{self._air_quality_base_url}/v1/air-quality", params=params)
+            response = await self._client.get(
+                f"{self._air_quality_base_url}/v1/air-quality",
+                params=params,
+                extensions=api_call_extensions("open-meteo", "air-quality"),
+            )
             response.raise_for_status()
             payload = response.json()
             current = cast(dict[str, Any], payload["current"])

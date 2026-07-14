@@ -7,6 +7,7 @@ from typing import Any, Protocol
 import httpx
 import pendulum
 
+from .api_client import api_call_extensions
 from .models import BriefingResult, Conclusion, Warning
 from .time_utils import require_aware_datetime
 
@@ -20,6 +21,8 @@ class LLMProvider(Protocol):
 
 
 class OpenAICompatibleChatCompletionsProvider:
+    API_PROVIDER = "openai-compatible"
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -54,6 +57,7 @@ class OpenAICompatibleChatCompletionsProvider:
                     "temperature": 0.2,
                     "max_tokens": self._max_output_tokens,
                 },
+                extensions=api_call_extensions(self.API_PROVIDER, "chat-completions"),
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
@@ -69,6 +73,7 @@ class OpenAICompatibleChatCompletionsProvider:
 
 class DeepSeekProvider(OpenAICompatibleChatCompletionsProvider):
     DEFAULT_BASE_URL = "https://api.deepseek.com"
+    API_PROVIDER = "deepseek"
 
     def __init__(
         self,

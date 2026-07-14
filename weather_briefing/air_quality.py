@@ -6,6 +6,7 @@ from typing import Protocol
 import httpx
 import pendulum
 
+from .api_client import api_call_extensions
 from .models import AirQualitySnapshot, SourceDocument
 from .reference_data import ReferenceDataError, reference_value
 from .time_utils import parse_datetime_with_default_timezone
@@ -46,6 +47,7 @@ class AQICNProvider:
             response = await self._client.get(
                 f"{self._base_url}/feed/geo:{latitude};{longitude}/",
                 params={"token": self._token},
+                extensions=api_call_extensions("aqicn", "air-quality"),
             )
             response.raise_for_status()
             payload = response.json()
