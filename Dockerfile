@@ -18,7 +18,7 @@ RUN uv --no-progress sync --frozen --no-dev --no-editable
 
 
 FROM mirror.gcr.io/icecodexi/bash-toybox:0.8.14@sha256:c56a6ec48a565c1ba91964d69069c77aec46bfcb0fea07778620e1c63c2b8561 AS assets
-FROM gcr.io/distroless/python3-debian13:latest@sha256:393cdf69ec7a5e217f837f2ff9b2123e06545d89c6e718c14ad020451fcb1900
+FROM gcr.io/distroless/python3-debian13:latest@sha256:02b579c054e3b6647ef07a01b319b50d87984cfc99637fdffb34dd92aa26bee3
 # toybox + bash(ash) + catatonit
 COPY --link --from=assets /usr/bin/ /usr/bin/
 COPY --link --from=build --chown=65532:65532 \
