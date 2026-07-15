@@ -16,6 +16,7 @@ on:
 
 env:
   WEATHER_BRIEFING_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/weather-briefing
+  WEATHER_BRIEFING_VERSION: "0.2.0"
 
 jobs:
   weather-briefing:
@@ -94,10 +95,11 @@ jobs:
       - name: Create manifest list and push
         working-directory: /tmp/weather-briefing-digests/
         env:
-          REGISTRY_IMAGE: ${{ env.WEATHER_BRIEFING_IMAGE }}:latest
+          REGISTRY_IMAGE: ${{ env.WEATHER_BRIEFING_IMAGE }}
+          WEATHER_BRIEFING_VERSION: ${{ env.WEATHER_BRIEFING_VERSION }}
         run: |
           # shellcheck disable=SC2046
-          docker buildx imagetools create --tag "${REGISTRY_IMAGE}" \
+          docker buildx imagetools create --tag "${REGISTRY_IMAGE}:latest" --tag "${REGISTRY_IMAGE}:${WEATHER_BRIEFING_VERSION}" \
               $(printf "${REGISTRY_IMAGE}@sha256:%s " *)
       - name: Inspect image
         env:

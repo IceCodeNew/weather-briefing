@@ -1,0 +1,78 @@
+name: Release
+permissions: {}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (X.Y.Z)"
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          enable-cache: true
+      - name: Validate version
+        env:
+          WEATHER_BRIEFING_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if ! echo "${WEATHER_BRIEFING_VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: version must be in X.Y.Z format"
+            exit 1
+          fi
+      - name: Update files
+        env:
+          WEATHER_BRIEFING_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_GH_PAT: ${{ secrets.RELEASE_GH_PAT }}
+        run: |
+          python3 -c "
+          import tomllib, pathlib
+
+          version = '${WEATHER_BRIEFING_VERSION}'
+
+          toml_path = pathlib.Path('pyproject.toml')
+          with open(toml_path, 'rb') as f:
+              data = tomllib.load(f)
+          prev = data['project']['version']
+          content = toml_path.read_text().replace(f'version = \"{prev}\"', f'version = \"{version}\"')
+          toml_path.write_text(content)
+
+          init_path = pathlib.Path('weather_briefing/__init__.py')
+          init_path.write_text(init_path.read_text().replace(f'__version__ = \"{prev}\"', f'__version__ = \"{version}\"'))
+
+          image_path = pathlib.Path('.github/workflows/image.yml')
+          image_path.write_text(image_path.read_text().replace(f'WEATHER_BRIEFING_VERSION: \"{prev}\"', f'WEATHER_BRIEFING_VERSION: \"{version}\"'))
+          "
+
+          uv lock
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${RELEASE_GH_PAT}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git add pyproject.toml weather_briefing/__init__.py .github/workflows/image.yml uv.lock
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: bump version to ${WEATHER_BRIEFING_VERSION}"
+          fi
+
+          if git rev-parse "refs/tags/${WEATHER_BRIEFING_VERSION}" >/dev/null 2>&1; then
+            echo "Tag ${WEATHER_BRIEFING_VERSION} already exists, skipping"
+          else
+            git tag -a "${WEATHER_BRIEFING_VERSION}" -m "Release ${WEATHER_BRIEFING_VERSION}"
+            git push origin "${WEATHER_BRIEFING_VERSION}"
+          fi
+
+          git push origin HEAD:master
