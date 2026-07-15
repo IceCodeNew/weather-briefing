@@ -180,6 +180,7 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
     assert len(snapshot.weather_forecast) == 2
     assert snapshot.lifestyle_advice == ("运动指数（适宜）：适宜进行户外运动。",)
     assert snapshot.air_quality is not None
+    assert snapshot.air_quality.source_name == "QWeather"
     assert snapshot.air_quality.aqi_standard == "中国环境空气质量指数（cn-mee）"
     assert snapshot.air_quality.observed_at is None
     documents = snapshot_to_documents(snapshot)
@@ -331,6 +332,7 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
     assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+02:00"
     assert snapshot.observed_at.timezone_name == "Europe/Berlin"
     assert snapshot.air_quality is not None
+    assert snapshot.air_quality.source_name == "Open-Meteo"
     assert snapshot.air_quality.aqi_standard == "U.S. AQI"
     assert snapshot.air_quality.pm25_concentration == 9.5
 

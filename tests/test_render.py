@@ -25,8 +25,8 @@ def test_render_briefing_uses_safe_telegram_html() -> None:
 
     assert rendered.body.startswith("<b>Daily &lt;Forecast&gt;</b>")
     assert "Warm &amp; humid" in rendered.body
-    assert '<a href="https://example.invalid/?a=1&amp;b=2">来源</a>' in rendered.body
-    assert rendered.visible_length == len("Daily <Forecast>\n\nWarm & humid\n\n天气信息\n\n• Carry an umbrella 来源")
+    assert '<a href="https://example.invalid/?a=1&amp;b=2">Feed</a>' in rendered.body
+    assert rendered.visible_length == len("Daily <Forecast>\n\nWarm & humid\n\n天气信息\n\n• Carry an umbrella Feed")
 
 
 def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
@@ -36,6 +36,18 @@ def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
 
     assert rendered.body == "Daily\n\nOverview"
     assert "<b>" not in rendered.body
+
+
+def test_renderers_fall_back_to_source_id_for_legacy_blank_name() -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article("source", "feed", "  ", "Title", "https://example.invalid/a", now, "Body")
+    result = BriefingResult("Daily", "Overview", (Conclusion("Update", ("source",)),))
+
+    html = TelegramHTMLRenderer().render_briefing(result, (article,), ())
+    plain = PlainTextRenderer().render_briefing(result, (article,), ())
+
+    assert '<a href="https://example.invalid/a">feed</a>' in html.body
+    assert "feed: https://example.invalid/a" in plain.body
 
 
 def test_telegram_html_renderer_uses_context_source_name_as_attribution() -> None:
@@ -93,7 +105,7 @@ def test_telegram_html_renders_active_warnings_section() -> None:
 
     assert "<b>当前生效的气象预警</b>" in rendered.body
     assert "暴雨" in rendered.body
-    assert '<a href="https://example.invalid/a">来源</a>' in rendered.body
+    assert '<a href="https://example.invalid/a">Feed</a>' in rendered.body
 
 
 def test_plain_text_renders_active_warnings_section() -> None:
@@ -112,6 +124,7 @@ def test_plain_text_renders_active_warnings_section() -> None:
     assert "当前生效的气象预警" in rendered.body
     assert "暴雨" in rendered.body
     assert "https://example.invalid/a" in rendered.body
+    assert "Feed: https://example.invalid/a" in rendered.body
 
 
 def test_telegram_html_render_verbatim() -> None:

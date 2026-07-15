@@ -185,21 +185,44 @@ class FailOncePublisher(RecordingPublisher):
         await super().publish(message, single_message=single_message, silent=silent)
 
 
-def _location() -> ResolvedLocation:
+def _location(
+    *,
+    country_code: str | None = "CN",
+    administrative_area: str | None = "Beijing",
+) -> ResolvedLocation:
     return ResolvedLocation(
         id="test",
         name="runtime-region",
         latitude=39.911389,
         longitude=116.380556,
-        country_code="CN",
-        administrative_area="Beijing",
+        country_code=country_code,
+        administrative_area=administrative_area,
         timezone="Asia/Shanghai",
         is_mainland_china=True,
     )
 
 
+@pytest.mark.parametrize(
+    ("location", "expected_scope"),
+    (
+        (
+            _location(),
+            {
+                "full_name": "runtime-region",
+                "administrative_area": "Beijing",
+                "country_code": "CN",
+            },
+        ),
+        (
+            _location(country_code=None, administrative_area=None),
+            {"full_name": "runtime-region"},
+        ),
+    ),
+)
 async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     tmp_path: Path,
+    location: ResolvedLocation,
+    expected_scope: dict[str, str],
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     settings = _TestSettings(
@@ -223,7 +246,7 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
         state.save_briefing("briefing", "Earlier update", now.subtract(hours=1))
         service = BriefingService(
             settings,
-            _location(),
+            location,
             state,
             EmptyRSSSource(),
             EmptyContextSource(),
@@ -244,7 +267,9 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     content = air_document["content"]
     assert isinstance(content, str)
     assert "AQI：42（标准：test-standard" in content
-    assert "PM2.5 原始浓度：12 µg/m³" in content
+    assert "PM2.5 12 µg/m³" in content
+    assert "原始浓度" not in content
+    assert llm.payload["location_scope"] == expected_scope
     recent_briefings = llm.payload["recent_briefings"]
     assert _is_dict_list(recent_briefings)
     assert recent_briefings == [

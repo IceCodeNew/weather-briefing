@@ -34,7 +34,9 @@ class TelegramHTMLRenderer:
         reference_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
-        source_links = {article.id: _html_link(article.url) for article in reference_articles}
+        source_links = {
+            article.id: _html_link(article.url, _article_source_name(article)) for article in reference_articles
+        }
         source_links.update({document.id: _html_link(document.url, document.name) for document in context})
         lines = [f"<b>{_html_text(result.headline)}</b>", "", _html_text(result.overview), ""]
         if result.active_warnings:
@@ -73,7 +75,9 @@ class PlainTextRenderer:
         reference_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
-        source_references = {article.id: article.url for article in reference_articles}
+        source_references = {
+            article.id: f"{_article_source_name(article)}: {article.url}" for article in reference_articles
+        }
         source_references.update({document.id: f"{document.name}: {document.url}" for document in context})
         lines = [result.headline, "", result.overview, ""]
         if result.active_warnings:
@@ -98,7 +102,11 @@ def _html_text(value: str) -> str:
     return escape(unescape(value), quote=False)
 
 
-def _html_link(url: str, label: str = "来源") -> str:
+def _article_source_name(article: Article) -> str:
+    return article.source_name.strip() or article.source_id
+
+
+def _html_link(url: str, label: str) -> str:
     return f'<a href="{escape(url, quote=True)}">{_html_text(label)}</a>'
 
 
