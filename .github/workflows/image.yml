@@ -16,7 +16,7 @@ on:
 
 env:
   WEATHER_BRIEFING_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/weather-briefing
-  WEATHER_BRIEFING_VERSION: "0.2.0"
+  WEATHER_BRIEFING_VERSION: "0.3.0"
 
 jobs:
   weather-briefing:
