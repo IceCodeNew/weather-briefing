@@ -46,7 +46,7 @@ jobs:
           file: Dockerfile
           platforms: ${{ matrix.platform }}
           cache-from: type=gha,scope=${{ matrix.platform }}
-          cache-to: type=gha,mode=min,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
           outputs: |
             type=image,compression=estargz,force-compression=true,oci-mediatypes=true,name=${{ env.WEATHER_BRIEFING_IMAGE }},push-by-digest=true,name-canonical=true,push=true
       - name: Smoke test
