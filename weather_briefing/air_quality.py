@@ -95,7 +95,7 @@ def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
             f"AQI：{snapshot.aqi_display}（标准：{snapshot.aqi_standard}；"
             f"类别：{snapshot.category}）\n"
             f"PM2.5 单项 AQI：{pm25_aqi}（标准：{snapshot.aqi_standard}）\n"
-            f"PM2.5 原始浓度：{concentration}\n"
+            f"PM2.5 {concentration}\n"
             f"健康提示：{snapshot.health_guidance}"
         ),
     )

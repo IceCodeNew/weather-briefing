@@ -7,7 +7,7 @@
 - 默认 08:00 生成当日预报及穿衣、除湿、运动、口罩建议。
 - 默认 09:00–23:00 每小时生成增量简报，不重复生活建议。
 - 标题匹配配置规则的权威预报文章经 HTML 与页面噪声清洗后完整独立转发，并进入后续预报上下文。
-- 日报通过可组合 provider 加入 API 天气预报、AQI、指数标准、PM2.5 原始浓度、生活指数及花粉过敏原信息，并用于穿衣、运动和口罩建议。
+- 日报通过可组合 provider 加入 API 天气预报、AQI、指数标准、PM2.5 浓度、生活指数及花粉过敏原信息，并用于穿衣、运动和口罩建议。
 - 中国大陆天气默认使用 QWeather、Open-Meteo 的降级顺序，其他地区默认只使用 Open-Meteo；也可通过 `WEATHER_PROVIDERS` 显式指定主要来源和其他备用来源。
 - 支持多个关注地点；只给地名时通过 Open-Meteo Geocoding 解析并缓存坐标与国家信息，已有坐标时不发起地理编码请求。
 - 完整地名无法解析时按可配置规则逐级降低查询精度；首次匹配会投递实际匹配地名和坐标，请用户确认并写回私密地点文件。
@@ -49,9 +49,9 @@ weather-briefing diagnostics rendered-text disable
 
 容器部署通过同一运行实例执行，例如 `docker exec weather-briefing weather-briefing diagnostics rendered-text enable --for 15m`。该开关最长启用 24 小时并自动过期，状态保存在 `BRIEFING_STATE_PATH`。只有同时启用 `DEBUG` 和临时开关时才记录正文；日志包含简报、告警、权威预报以及 Telegram 分片的完整文本，可能暴露来源内容、来源 URL、坐标和其他位置上下文，排障后应立即关闭并妥善保护日志。token、chat ID 和请求 endpoint 不会写入这些诊断日志。
 
-定位层从地名解析国家或行政区代码。Open-Meteo 负责城市/邮编查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；结果会持久缓存。只有坐标时使用中国大陆服务范围四至宽松包围盒作快速可能性判断。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
+定位层从地名解析国家或行政区代码。Open-Meteo 负责城市/邮编查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；结果会持久缓存。已有坐标时使用中国大陆服务范围四至宽松包围盒作快速可能性判断。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
 
-RSS 为可选补充数据。需要使用时复制 `rss-sources.example.json` 为被 Git 忽略的 `rss-sources.json` 并填写真实来源；不创建该文件即可只使用天气 API。
+RSS 为可选补充数据。需要使用时复制 `rss-sources.example.json` 为被 Git 忽略的 `rss-sources.json` 并填写真实来源；其中 `name` 使用公众号、微博账号或发布机构等会显示给用户的公开名称。不创建该文件即可只使用天气 API。
 
 QWeather 使用 Ed25519 JWT 认证。将控制台中的项目 ID、JWT 凭据 ID、Base64 编码的私钥 PEM 和专属 API Host 分别写入 `QWEATHER_PROJECT_ID`、`QWEATHER_CREDENTIAL_ID`、`QWEATHER_PRIVATE_KEY` 与 `QWEATHER_API_HOST`。应用每次请求前解码私钥并签发短期 Token，不使用长期 API KEY。
 

@@ -1,7 +1,7 @@
 [
   {
     "id": "authority-weather",
-    "name": "Authority weather feed",
+    "name": "示例气象发布账号",
     "url": "https://private.example.invalid/feed",
     "location_ids": [
       "zhongnanhai"

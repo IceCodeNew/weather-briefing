@@ -160,6 +160,35 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
     return tuple(locations)
 
 
+def _feeds(path: Path) -> tuple[FeedConfig, ...]:
+    feeds: list[FeedConfig] = []
+    for item in _json_file(path):
+        source_id = str(item.get("id") or "").strip()
+        source_name = str(item.get("name") or "").strip()
+        source_url = str(item.get("url") or "").strip()
+        if not source_id:
+            raise ConfigurationError("RSS source must have an id")
+        if not source_name:
+            raise ConfigurationError(f"RSS source {source_id} must have a public display name")
+        if not source_url:
+            raise ConfigurationError(f"RSS source {source_id} must have a URL")
+        feeds.append(
+            FeedConfig(
+                id=source_id,
+                name=source_name,
+                url=source_url,
+                verbatim_title_patterns=tuple(str(pattern) for pattern in item.get("verbatim_title_patterns") or []),
+                forecast_title_patterns=tuple(str(pattern) for pattern in item.get("forecast_title_patterns") or []),
+                content_remove_selectors=tuple(
+                    str(selector) for selector in item.get("content_remove_selectors") or []
+                ),
+                content_remove_patterns=tuple(str(pattern) for pattern in item.get("content_remove_patterns") or []),
+                location_ids=tuple(str(location_id) for location_id in item.get("location_ids") or []),
+            )
+        )
+    return tuple(feeds)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     api_key: str
@@ -213,19 +242,7 @@ class Settings:
     def from_env(cls) -> Settings:
         locations_path = Path(_clean_env(os.getenv("BRIEFING_LOCATIONS_FILE", "locations.json")))
         rss_sources_path = Path(_clean_env(os.getenv("RSS_SOURCES_FILE", "rss-sources.json")))
-        feeds = tuple(
-            FeedConfig(
-                id=str(item["id"]),
-                name=str(item["name"]),
-                url=str(item["url"]),
-                verbatim_title_patterns=tuple(str(pattern) for pattern in item.get("verbatim_title_patterns", [])),
-                forecast_title_patterns=tuple(str(pattern) for pattern in item.get("forecast_title_patterns", [])),
-                content_remove_selectors=tuple(str(selector) for selector in item.get("content_remove_selectors", [])),
-                content_remove_patterns=tuple(str(pattern) for pattern in item.get("content_remove_patterns", [])),
-                location_ids=tuple(str(location_id) for location_id in item.get("location_ids", [])),
-            )
-            for item in _json_file(rss_sources_path)
-        )
+        feeds = _feeds(rss_sources_path)
         context_raw = _clean_env(os.getenv("CONTEXT_SOURCES_JSON", "[]"))
         try:
             context_items = json.loads(context_raw)

@@ -39,7 +39,8 @@ async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> N
     assert snapshot.pm25_concentration is None
     document = air_quality_to_document(snapshot)
     assert "AQI：120（标准：US EPA" in document.content
-    assert "PM2.5 原始浓度：不可用" in document.content
+    assert "PM2.5 不可用" in document.content
+    assert "原始浓度" not in document.content
     assert "折算" not in document.content
 
 

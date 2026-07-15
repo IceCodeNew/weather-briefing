@@ -395,12 +395,18 @@ class BriefingService:
         historical_context: tuple[SourceDocument, ...],
         active_warnings: tuple[Warning, ...],
     ) -> dict[str, object]:
+        location_scope = {"full_name": self._location.name}
+        if self._location.administrative_area:
+            location_scope["administrative_area"] = self._location.administrative_area
+        if self._location.country_code:
+            location_scope["country_code"] = self._location.country_code
         return {
             "mode": kind,
             "now": now.isoformat(),
             "forecast_date": str(forecast_date or now.in_timezone(self._settings.timezone).date()),
             "region": self._location.name,
             "location_id": self._location.id,
+            "location_scope": location_scope,
             "coordinates": {
                 "latitude": self._location.latitude,
                 "longitude": self._location.longitude,

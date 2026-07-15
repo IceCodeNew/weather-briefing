@@ -84,6 +84,64 @@ def test_optional_rss_sources_are_loaded_from_named_file(monkeypatch, tmp_path: 
     assert [feed.id for feed in settings.feeds] == ["test"]
 
 
+def test_rss_source_requires_public_display_name(monkeypatch, tmp_path: Path) -> None:
+    _required_environment(monkeypatch)
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text(
+        '[{"id":"test","url":"https://example.invalid/feed"}]',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+    with pytest.raises(ConfigurationError, match="public display name"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    (
+        ('{"name":"Test","url":"https://example.invalid/feed"}', "must have an id"),
+        ('{"id":null,"name":"Test","url":"https://example.invalid/feed"}', "must have an id"),
+        ('{"id":"test","name":null,"url":"https://example.invalid/feed"}', "public display name"),
+        ('{"id":"test","name":"Test"}', "must have a URL"),
+        ('{"id":"test","name":"Test","url":null}', "must have a URL"),
+    ),
+)
+def test_rss_source_rejects_missing_or_null_required_fields(
+    monkeypatch,
+    tmp_path: Path,
+    source: str,
+    message: str,
+) -> None:
+    _required_environment(monkeypatch)
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text(f"[{source}]", encoding="utf-8")
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+    with pytest.raises(ConfigurationError, match=message):
+        Settings.from_env()
+
+
+def test_rss_source_treats_null_optional_arrays_as_empty(monkeypatch, tmp_path: Path) -> None:
+    _required_environment(monkeypatch)
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text(
+        '[{"id":"test","name":"Test","url":"https://example.invalid/feed",'
+        '"verbatim_title_patterns":null,"forecast_title_patterns":null,'
+        '"content_remove_selectors":null,"content_remove_patterns":null,"location_ids":null}]',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+    feed = Settings.from_env().feeds[0]
+
+    assert feed.verbatim_title_patterns == ()
+    assert feed.forecast_title_patterns == ()
+    assert feed.content_remove_selectors == ()
+    assert feed.content_remove_patterns == ()
+    assert feed.location_ids == ()
+
+
 def test_location_file_supports_multiple_places_and_optional_coordinates(monkeypatch, tmp_path: Path) -> None:
     _required_environment(monkeypatch)
     location_file = tmp_path / "locations.json"

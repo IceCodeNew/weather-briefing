@@ -278,7 +278,7 @@ class QWeatherProvider:
             aqi = float(index["aqi"])
             return AirQualitySnapshot(
                 source_id="air-quality:qweather",
-                source_name="QWeather air quality",
+                source_name="QWeather",
                 source_url=str(_first_attribution(payload) or "https://www.qweather.com/"),
                 observed_at=None,
                 aqi=aqi,
@@ -450,7 +450,7 @@ class OpenMeteoProvider:
             category, guidance = health_guidance(aqi)
             return AirQualitySnapshot(
                 source_id="air-quality:open-meteo",
-                source_name="Open-Meteo air quality",
+                source_name="Open-Meteo",
                 source_url="https://open-meteo.com/en/docs/air-quality-api",
                 observed_at=parse_datetime_with_default_timezone(
                     str(current["time"]),
