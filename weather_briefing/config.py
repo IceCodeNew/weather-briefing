@@ -135,13 +135,13 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
     seen_ids: set[str] = set()
     for item in items:
         location_id = str(item.get("id", "")).strip()
-        name = str(item.get("name", "")).strip()
+        name_value = item.get("name")
+        name = str(name_value).strip() if name_value is not None else None
+        name = name or None
         if not location_id or not location_id.replace("-", "").replace("_", "").isalnum():
             raise ConfigurationError("Location id must use letters, numbers, '-' or '_'")
         if location_id in seen_ids:
             raise ConfigurationError(f"Duplicate location id: {location_id}")
-        if not name:
-            raise ConfigurationError(f"Location {location_id} must have a name")
         latitude_value = item.get("latitude")
         longitude_value = item.get("longitude")
         if (latitude_value is None) != (longitude_value is None):
@@ -155,6 +155,8 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
             raise ConfigurationError(f"Location {location_id} latitude is out of range")
         if longitude is not None and not -180 <= longitude <= 180:
             raise ConfigurationError(f"Location {location_id} longitude is out of range")
+        if name is None and latitude is None:
+            raise ConfigurationError(f"Location {location_id} must provide a name or coordinates")
         locations.append(LocationSpec(location_id, name, latitude, longitude))
         seen_ids.add(location_id)
     return tuple(locations)

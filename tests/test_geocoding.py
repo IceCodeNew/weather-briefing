@@ -1,5 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -8,15 +10,22 @@ from weather_briefing.geocoding import (
     CachedLocationResolver,
     FallbackGeocodingProvider,
     GeocodingError,
+    GeocodingProvider,
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
+    ReverseGeocodingProvider,
     _mainland_china_rules,
     _specific_location_name,
     possibly_mainland_china,
 )
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.reference_data import ReferenceDataError, reference_value
+
+
+def _required_test_location_name(location: LocationSpec) -> str:
+    assert location.name is not None
+    return location.name
 
 
 async def test_open_meteo_geocoder_resolves_coordinates_and_country() -> None:
@@ -142,17 +151,100 @@ async def test_nominatim_normalizes_region_suffix_and_rejects_unrelated_match() 
     assert result.longitude == 116.380556
 
 
+async def test_nominatim_reverse_geocoder_resolves_name_and_administrative_area() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/reverse"
+        assert request.url.params["lat"] == "39.911389"
+        assert request.url.params["lon"] == "116.380556"
+        assert request.url.params["format"] == "jsonv2"
+        assert request.url.params["addressdetails"] == "1"
+        assert request.extensions["weather_briefing.api_call"] == ("nominatim", "reverse-geocoding")
+        return httpx.Response(
+            200,
+            json={
+                "display_name": "中南海, 西城区, 北京市, 中国",
+                "address": {"country_code": "cn", "state": "北京市"},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1").reverse_geocode(
+            LocationSpec("beijing", latitude=39.911389, longitude=116.380556)
+        )
+
+    assert result.name == "中南海, 西城区, 北京市, 中国"
+    assert result.latitude == 39.911389
+    assert result.longitude == 116.380556
+    assert result.country_code == "CN"
+    assert result.administrative_area == "北京市"
+    assert result.is_mainland_china is True
+
+
+async def test_nominatim_reverse_geocoder_requires_coordinates() -> None:
+    async with httpx.AsyncClient() as client:
+        provider = NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1")
+        with pytest.raises(GeocodingError, match="requires coordinates"):
+            await provider.reverse_geocode(LocationSpec("beijing", latitude=39.911389))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        [],
+        {"display_name": "Example", "address": []},
+        {"display_name": "", "address": {}},
+    ),
+)
+async def test_nominatim_reverse_geocoder_rejects_invalid_response(payload: object) -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))) as client:
+        provider = NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1")
+        with pytest.raises(GeocodingError, match="reverse geocoding failed"):
+            await provider.reverse_geocode(LocationSpec("example", latitude=1.0, longitude=2.0))
+
+
+async def test_nominatim_reverse_geocoder_handles_http_error() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
+        provider = NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1")
+        with pytest.raises(GeocodingError, match="reverse geocoding failed"):
+            await provider.reverse_geocode(LocationSpec("example", latitude=1.0, longitude=2.0))
+
+
+async def test_nominatim_reverse_geocoder_rate_limits_consecutive_requests(monkeypatch) -> None:
+    sleep_calls: list[float] = []
+    monotonic_values = iter((100.0, 100.0, 100.25, 100.25))
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    monkeypatch.setattr("weather_briefing.geocoding.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr(
+        "weather_briefing.geocoding.time",
+        SimpleNamespace(monotonic=lambda: next(monotonic_values)),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"display_name": "Example", "address": {}}))
+    ) as client:
+        provider = NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1")
+        location = LocationSpec("example", latitude=1.0, longitude=2.0)
+        await provider.reverse_geocode(location)
+        await provider.reverse_geocode(location)
+
+    assert sleep_calls == [pytest.approx(0.75)]
+
+
 async def test_geocoder_reduces_precision_after_full_address_fails() -> None:
     queries: list[str] = []
 
     class RoadLevelGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            queries.append(location.name)
-            if location.name.endswith("1号"):
+            location_name = _required_test_location_name(location)
+            queries.append(location_name)
+            if location_name.endswith("1号"):
                 raise GeocodingError("no building match")
             return ResolvedLocation(
                 location.id,
-                location.name,
+                location_name,
                 39.911389,
                 116.380556,
                 "CN",
@@ -179,9 +271,10 @@ async def test_resolver_caches_name_lookup(tmp_path: Path) -> None:
 
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
             self.calls += 1
+            location_name = _required_test_location_name(location)
             return ResolvedLocation(
                 location.id,
-                location.name,
+                location_name,
                 39.911389,
                 116.380556,
                 "CN",
@@ -201,6 +294,118 @@ async def test_resolver_caches_name_lookup(tmp_path: Path) -> None:
     assert first.from_cache is False
     assert second.from_cache is True
     assert geocoder.calls == 1
+
+
+@pytest.mark.parametrize("name", (None, "  "))
+async def test_resolver_reverse_geocodes_coordinate_only_location_and_caches_result(
+    tmp_path: Path,
+    name: str | None,
+) -> None:
+    class RecordingReverseGeocoder:
+        calls = 0
+
+        async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation:
+            self.calls += 1
+            assert location.latitude is not None
+            assert location.longitude is not None
+            return ResolvedLocation(
+                location.id,
+                "中南海, 西城区, 北京市, 中国",
+                location.latitude,
+                location.longitude,
+                "CN",
+                "北京市",
+                None,
+                True,
+                matched_name="中南海, 西城区, 北京市, 中国",
+            )
+
+    reverse_geocoder = RecordingReverseGeocoder()
+    forward_geocode = AsyncMock(side_effect=AssertionError("unexpected forward geocoding"))
+    forward_geocoder = cast(GeocodingProvider, SimpleNamespace(geocode=forward_geocode))
+    resolver = CachedLocationResolver(
+        forward_geocoder,
+        tmp_path / "geocoding.json",
+        reverse_provider=reverse_geocoder,
+    )
+    location = LocationSpec("beijing", name, latitude=39.911389, longitude=116.380556)
+
+    first = await resolver.resolve_with_metadata(location)
+    second = await resolver.resolve_with_metadata(location)
+
+    assert first.location.name == "中南海, 西城区, 北京市, 中国"
+    assert first.from_cache is False
+    assert second.location == first.location
+    assert second.from_cache is True
+    assert reverse_geocoder.calls == 1
+    assert '"beijing:coords:39.9113890,116.3805560"' in (tmp_path / "geocoding.json").read_text(encoding="utf-8")
+    forward_geocode.assert_not_awaited()
+
+
+async def test_resolver_requires_reverse_provider_for_coordinate_only_location(tmp_path: Path) -> None:
+    forward_geocode = AsyncMock(side_effect=AssertionError("unexpected forward geocoding"))
+    forward_geocoder = cast(GeocodingProvider, SimpleNamespace(geocode=forward_geocode))
+    resolver = CachedLocationResolver(forward_geocoder, tmp_path / "geocoding.json")
+
+    with pytest.raises(GeocodingError, match="No reverse geocoder configured"):
+        await resolver.resolve(LocationSpec("example", latitude=1.0, longitude=2.0))
+    forward_geocode.assert_not_awaited()
+
+
+@pytest.mark.parametrize("name", (None, "  "))
+async def test_forward_geocoder_requires_location_name(name: str | None) -> None:
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(GeocodingError, match="Forward geocoding requires a name"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("missing", name))
+
+
+async def test_forward_geocoder_strips_programmatic_location_name() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["name"] == "Example"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "name": "Example",
+                        "latitude": 1.0,
+                        "longitude": 2.0,
+                        "country_code": "XX",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("example", "  Example  "))
+
+    assert result.name == "Example"
+
+
+@pytest.mark.parametrize(
+    "cached",
+    (
+        '"invalid"',
+        '{"id":"example","name":"Example"}',
+    ),
+)
+async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, cached: str) -> None:
+    cache_path = tmp_path / "geocoding.json"
+    cache_path.write_text(f'{{"example:coords:1.0000000,2.0000000":{cached}}}', encoding="utf-8")
+    forward_geocode = AsyncMock(side_effect=AssertionError("unexpected forward geocoding"))
+    reverse_geocode = AsyncMock(side_effect=AssertionError("unexpected reverse geocoding"))
+    forward_geocoder = cast(GeocodingProvider, SimpleNamespace(geocode=forward_geocode))
+    reverse_geocoder = cast(ReverseGeocodingProvider, SimpleNamespace(reverse_geocode=reverse_geocode))
+    resolver = CachedLocationResolver(
+        forward_geocoder,
+        cache_path,
+        reverse_provider=reverse_geocoder,
+    )
+
+    with pytest.raises(GeocodingError, match="Invalid cached reverse geocoding record"):
+        await resolver.resolve(LocationSpec("example", latitude=1.0, longitude=2.0))
+    forward_geocode.assert_not_awaited()
+    reverse_geocode.assert_not_awaited()
 
 
 async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path) -> None:
@@ -231,12 +436,13 @@ async def test_coordinates_skip_geocoding_and_use_extreme_bounds(
 
     resolver = CachedLocationResolver(FailingGeocoder(), tmp_path / "cache.json")
 
-    beijing = await resolver.resolve(LocationSpec("beijing", "Beijing", 39.9, 116.4))
+    beijing = await resolver.resolve(LocationSpec("beijing", "  Beijing  ", 39.9, 116.4))
     outside = await resolver.resolve(LocationSpec("outside", "Example", 0.0, 0.0))
     latitude = reference_value("geography.json", "mainland_china_service_bounds", "latitude")
     longitude = reference_value("geography.json", "mainland_china_service_bounds", "longitude")
 
     assert beijing.is_mainland_china is True
+    assert beijing.name == "Beijing"
     assert outside.is_mainland_china is False
     assert possibly_mainland_china(latitude["maximum"], longitude["maximum"]) is True
     assert possibly_mainland_china(latitude["maximum"] + 0.01, longitude["maximum"]) is False
@@ -502,7 +708,7 @@ async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
 
     class FailingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            calls.append(location.name)
+            calls.append(_required_test_location_name(location))
             raise GeocodingError("no match")
 
     with pytest.raises(GeocodingError, match="No geocoder could resolve location at a safe precision"):
@@ -518,12 +724,13 @@ async def test_precision_reducing_provider_continues_after_geocoding_error() -> 
 
     class PartialGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            calls.append(location.name)
-            if "1号" in location.name:
+            location_name = _required_test_location_name(location)
+            calls.append(location_name)
+            if "1号" in location_name:
                 raise GeocodingError("no building match")
             return ResolvedLocation(
                 location.id,
-                location.name,
+                location_name,
                 39.9,
                 116.3,
                 "CN",
@@ -560,9 +767,10 @@ async def test_cached_resolver_rejects_non_dict_cached_value(tmp_path: Path) -> 
 async def test_cached_resolver_handles_writes_to_new_directory(tmp_path: Path) -> None:
     class RecordingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            location_name = _required_test_location_name(location)
             return ResolvedLocation(
                 location.id,
-                location.name,
+                location_name,
                 1.0,
                 2.0,
                 None,

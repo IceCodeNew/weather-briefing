@@ -9,7 +9,7 @@
 - 标题匹配配置规则的权威预报文章经 HTML 与页面噪声清洗后完整独立转发，并进入后续预报上下文。
 - 日报通过可组合 provider 加入 API 天气预报、AQI、指数标准、PM2.5 浓度、生活指数及花粉过敏原信息，并用于穿衣、运动和口罩建议。
 - 中国大陆天气默认使用 QWeather、Open-Meteo 的降级顺序，其他地区默认只使用 Open-Meteo；也可通过 `WEATHER_PROVIDERS` 显式指定主要来源和其他备用来源。
-- 支持多个关注地点；只给地名时通过 Open-Meteo Geocoding 解析并缓存坐标与国家信息，已有坐标时不发起地理编码请求。
+- 支持多个关注地点；只给地名时正向解析并缓存坐标与国家信息，只给坐标时反查地点名和行政信息，名称与坐标齐全时不发起定位请求。
 - 完整地名无法解析时按可配置规则逐级降低查询精度；首次匹配会投递实际匹配地名和坐标，请用户确认并写回私密地点文件。
 - 天气来源缺少空气质量时才使用可选 AQICN；两者都无法提供空气质量时给出明确配置错误。
 - RSS 来源从可选 `rss-sources.json` 加载；没有该文件时小时任务仍由天气 API 正常运行。
@@ -35,7 +35,7 @@ cp locations.example.json locations.json
 uv run --frozen weather-briefing run briefing
 ```
 
-`env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id` 和 `name`，`latitude` 与 `longitude` 可同时删除，此时程序用 Open-Meteo Geocoding 解析并把结果缓存到 `state/`。
+`env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id`，并在 `name` 与成对的 `latitude`、`longitude` 之间至少提供一项：只有名称时程序正向解析并支持降精度回退，只有坐标时通过 Nominatim 反查规范地点名和行政信息，两者都有时不发起定位请求。解析结果缓存到 `state/`。
 
 `LLM_PROVIDER=deepseek` 使用 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和可选的 `DEEPSEEK_BASE_URL`；DeepSeek provider 已预置官方 Base URL。`LLM_PROVIDER=openai-compatible` 使用 `LLM_API_KEY`、`LLM_MODEL` 和 `LLM_BASE_URL`。两套配置互不回退。
 
@@ -49,7 +49,7 @@ weather-briefing diagnostics rendered-text disable
 
 容器部署通过同一运行实例执行，例如 `docker exec weather-briefing weather-briefing diagnostics rendered-text enable --for 15m`。该开关最长启用 24 小时并自动过期，状态保存在 `BRIEFING_STATE_PATH`。只有同时启用 `DEBUG` 和临时开关时才记录正文；日志包含简报、告警、权威预报以及 Telegram 分片的完整文本，可能暴露来源内容、来源 URL、坐标和其他位置上下文，排障后应立即关闭并妥善保护日志。token、chat ID 和请求 endpoint 不会写入这些诊断日志。
 
-定位层从地名解析国家或行政区代码。Open-Meteo 负责城市/邮编查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；结果会持久缓存。已有坐标时使用中国大陆服务范围四至宽松包围盒作快速可能性判断。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
+定位层把名称或坐标补全为统一地点信息。Open-Meteo 负责城市/邮编正向查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；只有坐标时由 Nominatim 反向查询规范地点名、国家和行政区。名称与坐标齐全时不请求定位服务，并使用中国大陆服务范围四至宽松包围盒作快速可能性判断；所有查询结果都会持久缓存。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
 
 RSS 为可选补充数据。需要使用时复制 `rss-sources.example.json` 为被 Git 忽略的 `rss-sources.json` 并填写真实来源；其中 `name` 使用公众号、微博账号或发布机构等会显示给用户的公开名称。不创建该文件即可只使用天气 API。
 

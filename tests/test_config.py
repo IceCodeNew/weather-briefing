@@ -142,13 +142,14 @@ def test_rss_source_treats_null_optional_arrays_as_empty(monkeypatch, tmp_path: 
     assert feed.location_ids == ()
 
 
-def test_location_file_supports_multiple_places_and_optional_coordinates(monkeypatch, tmp_path: Path) -> None:
+def test_location_file_supports_name_coordinates_or_both(monkeypatch, tmp_path: Path) -> None:
     _required_environment(monkeypatch)
     location_file = tmp_path / "locations.json"
     location_file.write_text(
         '[{"id":"beijing","name":"北京市西城区中南海"},'
         '{"id":"beijing-fixed","name":"北京市西城区中南海",'
-        '"latitude":39.911389,"longitude":116.380556}]',
+        '"latitude":39.911389,"longitude":116.380556},'
+        '{"id":"coordinates-only","latitude":39.911389,"longitude":116.380556}]',
         encoding="utf-8",
     )
     monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
@@ -156,9 +157,14 @@ def test_location_file_supports_multiple_places_and_optional_coordinates(monkeyp
 
     settings = Settings.from_env()
 
-    assert [location.id for location in settings.locations] == ["beijing", "beijing-fixed"]
+    assert [location.id for location in settings.locations] == [
+        "beijing",
+        "beijing-fixed",
+        "coordinates-only",
+    ]
     assert settings.locations[0].latitude is None
     assert settings.locations[1].longitude == 116.380556
+    assert settings.locations[2].name is None
 
 
 def test_rss_source_location_ids_must_reference_configured_locations(monkeypatch, tmp_path: Path) -> None:
@@ -419,14 +425,14 @@ class TestConfigErrorPaths:
         with pytest.raises(ConfigurationError, match="Duplicate location id"):
             Settings.from_env()
 
-    def test_location_without_name_raises_error(self, monkeypatch, tmp_path: Path) -> None:
+    def test_location_without_name_or_coordinates_raises_error(self, monkeypatch, tmp_path: Path) -> None:
         _required_environment(monkeypatch)
         location_file = tmp_path / "locations.json"
         location_file.write_text('[{"id":"beijing"}]', encoding="utf-8")
         monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
         monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
 
-        with pytest.raises(ConfigurationError, match="must have a name"):
+        with pytest.raises(ConfigurationError, match="must provide a name or coordinates"):
             Settings.from_env()
 
     def test_mismatched_lat_lon_raises_error(self, monkeypatch, tmp_path: Path) -> None:

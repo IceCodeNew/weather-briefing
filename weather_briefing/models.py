@@ -27,7 +27,7 @@ class ContextSourceConfig:
 @dataclass(frozen=True, slots=True)
 class LocationSpec:
     id: str
-    name: str
+    name: str | None = None
     latitude: float | None = None
     longitude: float | None = None
 

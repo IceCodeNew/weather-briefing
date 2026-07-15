@@ -24,6 +24,10 @@ class GeocodingProvider(Protocol):
     async def geocode(self, location: LocationSpec) -> ResolvedLocation: ...
 
 
+class ReverseGeocodingProvider(Protocol):
+    async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation: ...
+
+
 @cache
 def _mainland_china_rules() -> tuple[float, float, float, float, frozenset[str]]:
     try:
@@ -65,8 +69,9 @@ class OpenMeteoGeocodingProvider:
         self._api_key = api_key
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        location_name = _required_location_name(location)
         params: dict[str, str | int] = {
-            "name": location.name,
+            "name": location_name,
             "count": 5,
             "language": "zh",
             "format": "json",
@@ -83,17 +88,17 @@ class OpenMeteoGeocodingProvider:
             payload = response.json()
             results = payload.get("results", [])
             if not isinstance(results, list) or not results:
-                raise GeocodingError(f"No geocoding result for location: {location.name}")
+                raise GeocodingError(f"No geocoding result for location: {location_name}")
             result = next(
                 (
                     item
                     for item in results
-                    if isinstance(item, dict) and _open_meteo_result_matches(location.name, item)
+                    if isinstance(item, dict) and _open_meteo_result_matches(location_name, item)
                 ),
                 None,
             )
             if result is None:
-                raise GeocodingError(f"No matching geocoding result for location: {location.name}")
+                raise GeocodingError(f"No matching geocoding result for location: {location_name}")
             latitude = float(result["latitude"])
             longitude = float(result["longitude"])
             country_code = str(result.get("country_code", "")).upper() or None
@@ -102,17 +107,17 @@ class OpenMeteoGeocodingProvider:
         except GeocodingError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise GeocodingError(f"Geocoding request or response validation failed for: {location.name}") from exc
+            raise GeocodingError(f"Geocoding request or response validation failed for: {location_name}") from exc
         return ResolvedLocation(
             id=location.id,
-            name=location.name,
+            name=location_name,
             latitude=latitude,
             longitude=longitude,
             country_code=country_code,
             administrative_area=administrative_area,
             timezone=timezone,
             is_mainland_china=_is_geocoded_mainland(country_code, administrative_area),
-            matched_name=str(result.get("name", "")).strip() or location.name,
+            matched_name=str(result.get("name", "")).strip() or location_name,
         )
 
 
@@ -133,9 +138,10 @@ class NominatimGeocodingProvider:
         self._last_request_at = 0.0
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        location_name = _required_location_name(location)
         async with self._lock:
             result: dict[str, object] | None = None
-            for query in _nominatim_queries(location.name):
+            for query in _nominatim_queries(location_name):
                 delay = 1.0 - (time.monotonic() - self._last_request_at)
                 if delay > 0:
                     await asyncio.sleep(delay)
@@ -160,16 +166,16 @@ class NominatimGeocodingProvider:
                         (
                             item
                             for item in results
-                            if isinstance(item, dict) and _nominatim_result_matches(location.name, item)
+                            if isinstance(item, dict) and _nominatim_result_matches(location_name, item)
                         ),
                         None,
                     )
                     if result is not None:
                         break
                 except httpx.HTTPError as exc:
-                    raise GeocodingError(f"Nominatim request failed for: {location.name}") from exc
+                    raise GeocodingError(f"Nominatim request failed for: {location_name}") from exc
             if result is None:
-                raise GeocodingError(f"No Nominatim result for location: {location.name}")
+                raise GeocodingError(f"No Nominatim result for location: {location_name}")
             try:
                 address = result.get("address", {})
                 latitude = float(result["lat"])
@@ -177,17 +183,65 @@ class NominatimGeocodingProvider:
                 country_code = str(address.get("country_code", "")).upper() or None
                 administrative_area = str(address.get("state") or address.get("province") or "").strip() or None
             except (KeyError, TypeError, ValueError, AttributeError) as exc:
-                raise GeocodingError(f"Nominatim response validation failed for: {location.name}") from exc
+                raise GeocodingError(f"Nominatim response validation failed for: {location_name}") from exc
         return ResolvedLocation(
             id=location.id,
-            name=location.name,
+            name=location_name,
             latitude=latitude,
             longitude=longitude,
             country_code=country_code,
             administrative_area=administrative_area,
             timezone=None,
             is_mainland_china=_is_geocoded_mainland(country_code, administrative_area),
-            matched_name=str(result.get("display_name", "")).strip() or location.name,
+            matched_name=str(result.get("display_name", "")).strip() or location_name,
+        )
+
+    async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation:
+        if location.latitude is None or location.longitude is None:
+            raise GeocodingError(f"Reverse geocoding requires coordinates for location: {location.id}")
+        async with self._lock:
+            delay = 1.0 - (time.monotonic() - self._last_request_at)
+            if delay > 0:
+                await asyncio.sleep(delay)
+            try:
+                response = await self._client.get(
+                    f"{self._base_url}/reverse",
+                    params={
+                        "lat": location.latitude,
+                        "lon": location.longitude,
+                        "format": "jsonv2",
+                        "addressdetails": 1,
+                    },
+                    headers={"User-Agent": self._user_agent},
+                    extensions=api_call_extensions("nominatim", "reverse-geocoding"),
+                )
+                self._last_request_at = time.monotonic()
+                response.raise_for_status()
+                result = response.json()
+                if not isinstance(result, dict):
+                    raise TypeError("Nominatim reverse response must be an object")
+                address = result.get("address", {})
+                if not isinstance(address, dict):
+                    raise TypeError("Nominatim reverse address must be an object")
+                display_name = str(result.get("display_name", "")).strip()
+                if not display_name:
+                    raise ValueError("Nominatim reverse response has no display name")
+                country_code = str(address.get("country_code", "")).upper() or None
+                administrative_area = (
+                    str(address.get("state") or address.get("province") or address.get("region") or "").strip() or None
+                )
+            except (httpx.HTTPError, TypeError, ValueError, AttributeError) as exc:
+                raise GeocodingError(f"Nominatim reverse geocoding failed for location: {location.id}") from exc
+        return ResolvedLocation(
+            id=location.id,
+            name=display_name,
+            latitude=location.latitude,
+            longitude=location.longitude,
+            country_code=country_code,
+            administrative_area=administrative_area,
+            timezone=None,
+            is_mainland_china=_is_geocoded_mainland(country_code, administrative_area),
+            matched_name=display_name,
         )
 
 
@@ -198,13 +252,14 @@ class FallbackGeocodingProvider:
         self._providers = providers
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        location_name = _required_location_name(location)
         errors: list[GeocodingError] = []
         for provider in self._providers:
             try:
                 return await provider.geocode(location)
             except GeocodingError as exc:
                 errors.append(exc)
-        raise GeocodingError(f"No geocoder could resolve location: {location.name}") from errors[-1]
+        raise GeocodingError(f"No geocoder could resolve location: {location_name}") from errors[-1]
 
 
 class PrecisionReducingGeocodingProvider:
@@ -212,11 +267,12 @@ class PrecisionReducingGeocodingProvider:
         self._provider = provider
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        location_name = _required_location_name(location)
         try:
             return await self._provider.geocode(location)
         except GeocodingError as direct_error:
             last_error = direct_error
-        for candidate_name in _lower_precision_location_names(location.name):
+        for candidate_name in _lower_precision_location_names(location_name):
             candidate = replace(location, name=candidate_name)
             try:
                 resolved = await self._provider.geocode(candidate)
@@ -225,26 +281,36 @@ class PrecisionReducingGeocodingProvider:
                 continue
             return replace(
                 resolved,
-                name=location.name,
+                name=location_name,
                 precision_reduced=True,
             )
-        raise GeocodingError(f"No geocoder could resolve location at a safe precision: {location.name}") from last_error
+        raise GeocodingError(f"No geocoder could resolve location at a safe precision: {location_name}") from last_error
 
 
 class CachedLocationResolver:
-    def __init__(self, provider: GeocodingProvider, cache_path: Path) -> None:
+    def __init__(
+        self,
+        provider: GeocodingProvider,
+        cache_path: Path,
+        *,
+        reverse_provider: ReverseGeocodingProvider | None = None,
+    ) -> None:
         self._provider = provider
         self._cache_path = cache_path
+        self._reverse_provider = reverse_provider
 
     async def resolve(self, location: LocationSpec) -> ResolvedLocation:
         return (await self.resolve_with_metadata(location)).location
 
     async def resolve_with_metadata(self, location: LocationSpec) -> LocationResolution:
+        location_name = (location.name or "").strip() or None
         if location.latitude is not None and location.longitude is not None:
+            if location_name is None:
+                return await self._reverse_geocode(location, location.latitude, location.longitude)
             return LocationResolution(
                 ResolvedLocation(
                     id=location.id,
-                    name=location.name,
+                    name=location_name,
                     latitude=location.latitude,
                     longitude=location.longitude,
                     country_code=None,
@@ -255,16 +321,40 @@ class CachedLocationResolver:
                 from_cache=False,
             )
         cache = self._read_cache()
-        cache_key = f"{location.id}:{location.name}"
+        location_name = _required_location_name(location)
+        cache_key = f"{location.id}:{location_name}"
         cached = cache.get(cache_key)
         if isinstance(cached, dict):
             try:
                 return LocationResolution(ResolvedLocation(**cached), from_cache=True)
             except TypeError as exc:
-                raise GeocodingError(f"Invalid cached geocoding record for location: {location.name}") from exc
+                raise GeocodingError(f"Invalid cached geocoding record for location: {location_name}") from exc
         if cached is not None:
-            raise GeocodingError(f"Invalid cached geocoding record for location: {location.name}")
+            raise GeocodingError(f"Invalid cached geocoding record for location: {location_name}")
         resolved = await self._provider.geocode(location)
+        cache[cache_key] = asdict(resolved)
+        self._write_cache(cache)
+        return LocationResolution(resolved, from_cache=False)
+
+    async def _reverse_geocode(
+        self,
+        location: LocationSpec,
+        latitude: float,
+        longitude: float,
+    ) -> LocationResolution:
+        if self._reverse_provider is None:
+            raise GeocodingError(f"No reverse geocoder configured for location: {location.id}")
+        cache = self._read_cache()
+        cache_key = f"{location.id}:coords:{latitude:.7f},{longitude:.7f}"
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            try:
+                return LocationResolution(ResolvedLocation(**cached), from_cache=True)
+            except TypeError as exc:
+                raise GeocodingError(f"Invalid cached reverse geocoding record for location: {location.id}") from exc
+        if cached is not None:
+            raise GeocodingError(f"Invalid cached reverse geocoding record for location: {location.id}")
+        resolved = await self._reverse_provider.reverse_geocode(location)
         cache[cache_key] = asdict(resolved)
         self._write_cache(cache)
         return LocationResolution(resolved, from_cache=False)
@@ -292,6 +382,13 @@ def _is_geocoded_mainland(country_code: str | None, administrative_area: str | N
         return False
     normalized = (administrative_area or "").casefold()
     return normalized not in _mainland_china_rules()[4]
+
+
+def _required_location_name(location: LocationSpec) -> str:
+    name = (location.name or "").strip()
+    if not name:
+        raise GeocodingError(f"Forward geocoding requires a name for location: {location.id}")
+    return name
 
 
 def _nominatim_queries(name: str) -> tuple[str, ...]:
