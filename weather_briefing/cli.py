@@ -220,6 +220,11 @@ async def run(
         )
         delivery = _delivery_provider(settings, client, diagnostics)
         llm_provider = _llm_provider(settings, client)
+        nominatim_provider = NominatimGeocodingProvider(
+            client,
+            base_url=settings.nominatim_base_url,
+            user_agent=settings.geocoding_user_agent,
+        )
         resolver = CachedLocationResolver(
             PrecisionReducingGeocodingProvider(
                 FallbackGeocodingProvider(
@@ -228,14 +233,11 @@ async def run(
                         base_url=settings.geocoding_base_url,
                         api_key=settings.geocoding_api_key,
                     ),
-                    NominatimGeocodingProvider(
-                        client,
-                        base_url=settings.nominatim_base_url,
-                        user_agent=settings.geocoding_user_agent,
-                    ),
+                    nominatim_provider,
                 )
             ),
             settings.geocoding_cache_path,
+            reverse_provider=nominatim_provider,
         )
         _LOGGER.info("Resolving %d location(s)", len(settings.locations))
         resolutions = [await resolver.resolve_with_metadata(location) for location in settings.locations]
