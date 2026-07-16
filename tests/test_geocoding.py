@@ -1,7 +1,5 @@
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -10,17 +8,47 @@ from weather_briefing.geocoding import (
     CachedLocationResolver,
     FallbackGeocodingProvider,
     GeocodingError,
-    GeocodingProvider,
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
-    ReverseGeocodingProvider,
     _mainland_china_rules,
     _specific_location_name,
     possibly_mainland_china,
 )
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.reference_data import ReferenceDataError, reference_value
+
+
+class _NeverCalledGeocoder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        self.calls += 1
+        raise AssertionError("Unexpected forward geocoding")
+
+
+class _NeverCalledReverseGeocoder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation:
+        self.calls += 1
+        raise AssertionError("Unexpected reverse geocoding")
+
+
+async def test_never_called_geocoders_fail_when_invoked() -> None:
+    location = LocationSpec("example", "Example")
+    forward_geocoder = _NeverCalledGeocoder()
+    reverse_geocoder = _NeverCalledReverseGeocoder()
+
+    with pytest.raises(AssertionError, match="forward geocoding"):
+        await forward_geocoder.geocode(location)
+    with pytest.raises(AssertionError, match="reverse geocoding"):
+        await reverse_geocoder.reverse_geocode(location)
+
+    assert forward_geocoder.calls == 1
+    assert reverse_geocoder.calls == 1
 
 
 def _required_test_location_name(location: LocationSpec) -> str:
@@ -321,8 +349,7 @@ async def test_resolver_reverse_geocodes_coordinate_only_location_and_caches_res
             )
 
     reverse_geocoder = RecordingReverseGeocoder()
-    forward_geocode = AsyncMock(side_effect=AssertionError("unexpected forward geocoding"))
-    forward_geocoder = cast(GeocodingProvider, SimpleNamespace(geocode=forward_geocode))
+    forward_geocoder = _NeverCalledGeocoder()
     resolver = CachedLocationResolver(
         forward_geocoder,
         tmp_path / "geocoding.json",
@@ -339,17 +366,16 @@ async def test_resolver_reverse_geocodes_coordinate_only_location_and_caches_res
     assert second.from_cache is True
     assert reverse_geocoder.calls == 1
     assert '"beijing:coords:39.9113890,116.3805560"' in (tmp_path / "geocoding.json").read_text(encoding="utf-8")
-    forward_geocode.assert_not_awaited()
+    assert forward_geocoder.calls == 0
 
 
 async def test_resolver_requires_reverse_provider_for_coordinate_only_location(tmp_path: Path) -> None:
-    forward_geocode = AsyncMock(side_effect=AssertionError("unexpected forward geocoding"))
-    forward_geocoder = cast(GeocodingProvider, SimpleNamespace(geocode=forward_geocode))
+    forward_geocoder = _NeverCalledGeocoder()
     resolver = CachedLocationResolver(forward_geocoder, tmp_path / "geocoding.json")
 
     with pytest.raises(GeocodingError, match="No reverse geocoder configured"):
         await resolver.resolve(LocationSpec("example", latitude=1.0, longitude=2.0))
-    forward_geocode.assert_not_awaited()
+    assert forward_geocoder.calls == 0
 
 
 @pytest.mark.parametrize("name", (None, "  "))
@@ -392,10 +418,8 @@ async def test_forward_geocoder_strips_programmatic_location_name() -> None:
 async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, cached: str) -> None:
     cache_path = tmp_path / "geocoding.json"
     cache_path.write_text(f'{{"example:coords:1.0000000,2.0000000":{cached}}}', encoding="utf-8")
-    forward_geocode = AsyncMock(side_effect=AssertionError("unexpected forward geocoding"))
-    reverse_geocode = AsyncMock(side_effect=AssertionError("unexpected reverse geocoding"))
-    forward_geocoder = cast(GeocodingProvider, SimpleNamespace(geocode=forward_geocode))
-    reverse_geocoder = cast(ReverseGeocodingProvider, SimpleNamespace(reverse_geocode=reverse_geocode))
+    forward_geocoder = _NeverCalledGeocoder()
+    reverse_geocoder = _NeverCalledReverseGeocoder()
     resolver = CachedLocationResolver(
         forward_geocoder,
         cache_path,
@@ -404,8 +428,8 @@ async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, ca
 
     with pytest.raises(GeocodingError, match="Invalid cached reverse geocoding record"):
         await resolver.resolve(LocationSpec("example", latitude=1.0, longitude=2.0))
-    forward_geocode.assert_not_awaited()
-    reverse_geocode.assert_not_awaited()
+    assert forward_geocoder.calls == 0
+    assert reverse_geocoder.calls == 0
 
 
 async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path) -> None:

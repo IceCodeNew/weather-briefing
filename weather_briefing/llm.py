@@ -30,6 +30,22 @@ class LLMProvider(Protocol):
         ...
 
 
+class LLMCompletionClient(Protocol):
+    """Expose the any-llm completion operation used by the application adapter."""
+
+    async def acompletion(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: type[BaseModel],
+        temperature: float,
+        max_tokens: int,
+    ) -> object:
+        """Request one asynchronous structured completion."""
+        ...
+
+
 def _non_empty(value: str) -> str:
     if not value.strip():
         raise ValueError("must not be empty")
@@ -90,7 +106,7 @@ def _validate_structured_output(payload: Mapping[str, Any]) -> LLMStructuredOutp
         raise LLMError(f"LLM response schema validation failed at {location}") from exc
 
 
-def _decode_structured_response(response: Any) -> LLMStructuredOutput:
+def _decode_structured_response(response: object) -> LLMStructuredOutput:
     """Decode the normalized any-llm response without masking programming errors."""
     choices = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:
@@ -116,7 +132,7 @@ class AnyLLMStructuredProvider:
 
     def __init__(
         self,
-        client: AnyLLM,
+        client: AnyLLM | LLMCompletionClient,
         *,
         provider: str,
         model: str,
