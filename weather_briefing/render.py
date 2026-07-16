@@ -59,11 +59,13 @@ class TelegramHTMLRenderer:
         lines.extend(_html_items("天气信息", result.conclusions, source_links))
         if result.active_warnings:
             lines.extend(["<b>气象预警</b>", ""])
-            for warning in result.active_warnings:
-                lines.append(
+            lines.extend(
+                (
                     f"• <b>{_html_text(warning.title)}（{_html_text(warning.status)}）</b>："
                     f"{_html_text(warning.detail)} {_html_attribution(warning.source_ids, source_links)}"
                 )
+                for warning in result.active_warnings
+            )
             lines.append("")
         lines.extend(_html_items("自然灾害动态", result.disaster_tracking, source_links))
         lines.extend(_html_items("生活建议", result.advice, source_links))
@@ -144,8 +146,7 @@ def _html_items(
     if not items:
         return []
     lines = [f"<b>{_html_text(title)}</b>", ""]
-    for item in items:
-        lines.append(f"• {_html_text(item.text)} {_html_attribution(item.source_ids, source_links)}")
+    lines.extend(f"• {_html_text(item.text)} {_html_attribution(item.source_ids, source_links)}" for item in items)
     lines.append("")
     return lines
 
@@ -158,8 +159,7 @@ def _plain_items(
     if not items:
         return []
     lines = [title, ""]
-    for item in items:
-        lines.append(f"- {item.text} {_plain_attribution(item.source_ids, source_references)}")
+    lines.extend(f"- {item.text} {_plain_attribution(item.source_ids, source_references)}" for item in items)
     lines.append("")
     return lines
 
