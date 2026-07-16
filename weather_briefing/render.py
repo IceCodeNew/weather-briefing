@@ -42,19 +42,17 @@ class TelegramHTMLRenderer:
         lines = [
             f"<b>{_html_text(result.headline)}</b> {_html_attribution(result.headline_source_ids, source_links)}",
             "",
-            f"{_html_text(result.overview)} {_html_attribution(result.overview_source_ids, source_links)}",
-            "",
         ]
+        lines.extend(_html_items("天气信息", result.conclusions, source_links))
         if result.active_warnings:
-            lines.extend(["<b>当前生效的气象预警</b>", ""])
+            lines.extend(["<b>气象预警</b>", ""])
             for warning in result.active_warnings:
                 lines.append(
                     f"• <b>{_html_text(warning.title)}（{_html_text(warning.status)}）</b>："
                     f"{_html_text(warning.detail)} {_html_attribution(warning.source_ids, source_links)}"
                 )
             lines.append("")
-        lines.extend(_html_items("天气信息", result.conclusions, source_links))
-        lines.extend(_html_items("灾害动态", result.disaster_tracking, source_links))
+        lines.extend(_html_items("自然灾害动态", result.disaster_tracking, source_links))
         lines.extend(_html_items("生活建议", result.advice, source_links))
         return _html_message("\n".join(lines).strip())
 
@@ -87,17 +85,15 @@ class PlainTextRenderer:
         lines = [
             f"{result.headline} {_plain_attribution(result.headline_source_ids, source_references)}",
             "",
-            f"{result.overview} {_plain_attribution(result.overview_source_ids, source_references)}",
-            "",
         ]
+        lines.extend(_plain_items("天气信息", result.conclusions, source_references))
         if result.active_warnings:
-            lines.extend(["当前生效的气象预警", ""])
+            lines.extend(["气象预警", ""])
             for warning in result.active_warnings:
                 sources = _plain_attribution(warning.source_ids, source_references)
                 lines.append(f"- {warning.title}（{warning.status}）：{warning.detail} {sources}")
             lines.append("")
-        lines.extend(_plain_items("天气信息", result.conclusions, source_references))
-        lines.extend(_plain_items("灾害动态", result.disaster_tracking, source_references))
+        lines.extend(_plain_items("自然灾害动态", result.disaster_tracking, source_references))
         lines.extend(_plain_items("生活建议", result.advice, source_references))
         return _plain_message("\n".join(lines).strip())
 
@@ -149,12 +145,12 @@ def _plain_items(
 
 
 def _html_attribution(source_ids: tuple[str, ...], source_links: dict[str, str]) -> str:
-    sources = "、".join(source_links[source_id] for source_id in source_ids)
+    sources = "、".join(dict.fromkeys(source_links[source_id] for source_id in source_ids))
     return f"（来源：{sources}）"
 
 
 def _plain_attribution(source_ids: tuple[str, ...], source_references: dict[str, str]) -> str:
-    sources = "；".join(source_references[source_id] for source_id in source_ids)
+    sources = "；".join(dict.fromkeys(source_references[source_id] for source_id in source_ids))
     return f"（来源：{sources}）"
 
 

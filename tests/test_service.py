@@ -151,8 +151,6 @@ class RecordingLLM:
         return {
             "headline": "Daily briefing",
             "headline_source_ids": [source_id],
-            "overview": "Air quality is good.",
-            "overview_source_ids": [source_id],
             "conclusions": [conclusion],
             "active_warnings": [],
             "resolved_warning_ids": [],
@@ -570,8 +568,6 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
             return {
                 "headline": "Warning unchanged",
                 "headline_source_ids": list(warning.source_ids),
-                "overview": "No material change.",
-                "overview_source_ids": list(warning.source_ids),
                 "conclusions": [],
                 "active_warnings": [
                     {
@@ -651,8 +647,6 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
             return {
                 "headline": "Accumulated update",
                 "headline_source_ids": [source_id],
-                "overview": "Changes are now worth sending.",
-                "overview_source_ids": [source_id],
                 "conclusions": [{"text": "Accumulated change", "source_ids": [source_id]}],
                 "active_warnings": [],
                 "resolved_warning_ids": [],
@@ -1085,8 +1079,6 @@ class FailingOnceLLM:
             return {
                 "headline": "Briefing",
                 "headline_source_ids": ["invented"],
-                "overview": "Overview",
-                "overview_source_ids": ["invented"],
                 "conclusions": [{"text": "Claim", "source_ids": ["invented"]}],
                 "active_warnings": [],
                 "resolved_warning_ids": [],
@@ -1099,8 +1091,6 @@ class FailingOnceLLM:
         return {
             "headline": "Briefing",
             "headline_source_ids": [source_id],
-            "overview": "Overview",
-            "overview_source_ids": [source_id],
             "conclusions": [],
             "active_warnings": [],
             "resolved_warning_ids": [],
@@ -1176,8 +1166,6 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
             return {
                 "headline": "A" * 100,
                 "headline_source_ids": [source_id],
-                "overview": "B" * 100,
-                "overview_source_ids": [source_id],
                 "conclusions": [],
                 "active_warnings": [],
                 "resolved_warning_ids": [],
