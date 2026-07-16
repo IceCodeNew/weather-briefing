@@ -113,7 +113,11 @@ class BriefingService:
             except Exception:
                 _LOGGER.exception("Failed to publish or record briefing failure alert")
             raise
-        self._state.record_success()
+        self._state.record_success(
+            current_time,
+            history_hours=self._settings.history_hours,
+            warning_retention_hours=self._settings.warning_retention_hours,
+        )
         return body
 
     async def _run(

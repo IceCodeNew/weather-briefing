@@ -447,7 +447,19 @@ class SQLiteStateStore:
             )
         self._connection.commit()
 
-    def record_success(self) -> None:
+    def record_success(
+        self,
+        now: pendulum.DateTime,
+        *,
+        history_hours: int,
+        warning_retention_hours: int,
+    ) -> None:
+        history_threshold = _storage_time(now.subtract(hours=history_hours))
+        warning_threshold = _storage_time(now.subtract(hours=warning_retention_hours))
+        self._connection.execute("DELETE FROM articles WHERE processed_at < ?", (history_threshold,))
+        self._connection.execute("DELETE FROM briefings WHERE published_at < ?", (history_threshold,))
+        self._connection.execute("DELETE FROM context_snapshots WHERE observed_at < ?", (history_threshold,))
+        self._connection.execute("DELETE FROM warnings WHERE last_confirmed_at < ?", (warning_threshold,))
         self._connection.execute("UPDATE task_health SET consecutive_failures = 0 WHERE singleton = 1")
         self._connection.execute("DELETE FROM task_failure_alert WHERE singleton = 1")
         self._connection.commit()
