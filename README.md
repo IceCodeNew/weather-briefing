@@ -106,22 +106,6 @@ docker run -d \
 
 脚本需要有权执行 `chown` 和管理 Docker。RSS 未配置时使用空数组；配置文件以只读方式挂载，SQLite 状态保留在宿主机。升级时修改 `WEATHER_BRIEFING_VERSION` 并重新运行即可，重建容器期间会有短暂停机。
 
-### 本地构建镜像
-
-```bash
-cp env.example .env
-cp locations.example.json locations.json
-docker buildx build --load -t weather-briefing .
-docker volume create weather-briefing-state
-docker run -d --name weather-briefing --restart unless-stopped \
-  --env-file .env \
-  --mount type=bind,src="$PWD/locations.json",dst=/home/nonroot/app/locations.json,readonly \
-  --mount source=weather-briefing-state,target=/home/nonroot/app/state \
-  weather-briefing
-```
-
-若启用 RSS，再把私密 `rss-sources.json` 以只读方式挂载到 `/home/nonroot/app/rss-sources.json`。配置文件不会进入镜像构建上下文。
-
 也可在持久主机上使用 cron：
 
 ```cron
