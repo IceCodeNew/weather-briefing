@@ -17,6 +17,7 @@ from weather_briefing.weather_context import (
     QWeatherJWTAuthenticator,
     QWeatherProvider,
     WeatherContextError,
+    _open_meteo_daily_peak_values,
     snapshot_to_documents,
 )
 
@@ -56,6 +57,29 @@ def _qweather_weather_response(*, fx_link: str | None = None) -> httpx.Response:
 
 def _qweather_successful_indices_response() -> httpx.Response:
     return httpx.Response(200, json={"code": "200", "daily": []})
+
+
+def _qweather_air_quality_values(*, aqi: float, forecast_start: str) -> dict[str, object]:
+    return {
+        "forecastStartTime": forecast_start,
+        "indexes": [
+            {
+                "code": "cn-mee",
+                "name": "中国环境空气质量指数",
+                "aqi": aqi,
+                "aqiDisplay": str(aqi),
+                "category": "良",
+                "health": {"advice": {"generalPopulation": "可以正常进行户外活动。"}},
+            }
+        ],
+        "pollutants": [
+            {
+                "code": "pm2p5",
+                "concentration": {"value": 22.0, "unit": "μg/m3"},
+                "subIndexes": [{"code": "cn-mee", "aqi": aqi}],
+            }
+        ],
+    }
 
 
 def test_qweather_jwt_authenticator_delegates_eddsa_signing_to_pyjwt(monkeypatch) -> None:
@@ -225,8 +249,28 @@ async def test_qweather_provider_selects_requested_future_date() -> None:
                     ],
                 },
             )
-        assert request.url.path != "/v7/indices/1d", "Future forecasts must not request one-day lifestyle indices"
-        return httpx.Response(500)
+        if request.url.path == "/v7/indices/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "daily": [
+                        {"date": "2026-07-14", "name": "运动指数", "category": "适宜", "text": "明天适宜运动"},
+                        {"date": str(target_date), "name": "运动指数", "category": "较适宜", "text": "后天适宜运动"},
+                    ],
+                },
+            )
+        assert request.url.path == "/airquality/v1/daily/39.90/116.30"
+        return httpx.Response(
+            200,
+            json={
+                "days": [
+                    _qweather_air_quality_values(aqi=40, forecast_start="2026-07-12T16:00Z"),
+                    _qweather_air_quality_values(aqi=50, forecast_start="2026-07-13T16:00Z"),
+                    _qweather_air_quality_values(aqi=60, forecast_start="2026-07-14T16:00Z"),
+                ]
+            },
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         snapshot = await QWeatherProvider(
@@ -238,7 +282,11 @@ async def test_qweather_provider_selects_requested_future_date() -> None:
     assert len(snapshot.weather_forecast) == 1
     assert snapshot.weather_forecast[0].startswith("2026-07-15：")
     assert "20~32℃" in snapshot.weather_forecast[0]
-    assert snapshot.lifestyle_advice == ()
+    assert snapshot.lifestyle_advice == ("运动指数（较适宜）：后天适宜运动",)
+    assert snapshot.air_quality is not None
+    assert snapshot.air_quality.aqi == 60
+    assert snapshot.air_quality.observed_at is not None
+    assert snapshot.air_quality.observed_at.to_iso8601_string() == "2026-07-14T16:00:00Z"
 
 
 async def test_qweather_provider_keeps_lifestyle_indices_for_first_forecast_date() -> None:
@@ -259,7 +307,9 @@ async def test_qweather_provider_keeps_lifestyle_indices_for_first_forecast_date
                 200,
                 json={
                     "code": "200",
-                    "daily": [{"name": "运动指数", "category": "适宜", "text": "今天适宜运动"}],
+                    "daily": [
+                        {"date": str(target_date), "name": "运动指数", "category": "适宜", "text": "今天适宜运动"}
+                    ],
                 },
             )
         return httpx.Response(500)
@@ -272,6 +322,100 @@ async def test_qweather_provider_keeps_lifestyle_indices_for_first_forecast_date
         ).fetch_for_date(39.9, 116.3, target_date)
 
     assert snapshot.lifestyle_advice == ("运动指数（适宜）：今天适宜运动",)
+
+
+async def test_qweather_future_air_quality_outside_response_range_is_optional() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"days": []}))
+    ) as client:
+        provider = QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        )
+
+        air_quality = await provider._fetch_air_quality(
+            39.9,
+            116.3,
+            {"Authorization": "Bearer runtime-token"},
+            "https://example.invalid/weather",
+            forecast_index=2,
+        )
+
+    assert air_quality is None
+
+
+async def test_qweather_provider_uses_indices_update_time_as_current_weather_fallback() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(200, json={"code": "200", "daily": [_QWEATHER_DAILY_ITEM]})
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(
+                200,
+                json={"code": "200", "updateTime": "2026-07-13T09:15", "daily": []},
+            )
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(39.9, 116.3)
+
+    assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T09:15:00+08:00"
+
+
+async def test_qweather_provider_rejects_missing_current_update_time() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={"code": "200", "updateTime": "   ", "daily": [_QWEATHER_DAILY_ITEM]},
+            )
+        assert request.url.path == "/v7/indices/1d"
+        return httpx.Response(200, json={"code": "200", "updateTime": "\t", "daily": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(
+            WeatherContextError,
+            match="QWeather response is missing a non-empty updateTime",
+        ):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(39.9, 116.3)
+
+
+async def test_qweather_provider_rejects_missing_future_update_time_from_weather_and_indices() -> None:
+    target_date = pendulum.date(2026, 7, 15)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "daily": [
+                        _QWEATHER_DAILY_ITEM,
+                        {**_QWEATHER_DAILY_ITEM, "fxDate": str(target_date)},
+                    ],
+                },
+            )
+        assert request.url.path == "/v7/indices/3d"
+        return httpx.Response(200, json={"code": "200", "daily": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(
+            WeatherContextError,
+            match="QWeather response is missing a non-empty updateTime",
+        ):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(39.9, 116.3, forecast_date=target_date)
 
 
 async def test_qweather_provider_rejects_unavailable_forecast_date() -> None:
@@ -384,7 +528,20 @@ async def test_open_meteo_provider_requests_only_selected_future_date() -> None:
                     },
                 },
             )
-        return httpx.Response(500)
+        assert request.url.host == "air.example.invalid"
+        assert request.url.params["start_date"] == "2026-07-15"
+        assert request.url.params["end_date"] == "2026-07-15"
+        assert "current" not in request.url.params
+        hourly: dict[str, object] = {
+            "time": ["2026-07-15T09:00", "2026-07-15T18:00"],
+            "us_aqi": [35, 90],
+            "us_aqi_pm2_5": [30, 70],
+            "pm2_5": [8.0, 28.0],
+        }
+        for variable in request.url.params["hourly"].split(","):
+            if variable.endswith("_pollen"):
+                hourly[variable] = [1.0, 2.0]
+        return httpx.Response(200, json={"timezone": "Asia/Shanghai", "hourly": hourly})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         snapshot = await OpenMeteoProvider(
@@ -395,6 +552,74 @@ async def test_open_meteo_provider_requests_only_selected_future_date() -> None:
 
     assert len(snapshot.weather_forecast) == 1
     assert snapshot.weather_forecast[0].startswith("2026-07-15：")
+    assert snapshot.air_quality is not None
+    assert snapshot.air_quality.aqi == 90
+    assert snapshot.air_quality.observed_at is not None
+    assert snapshot.air_quality.observed_at.to_iso8601_string() == "2026-07-15T18:00:00+08:00"
+    assert snapshot.allergen is not None
+    assert all(level.concentration == 2.0 for level in snapshot.allergen.levels)
+    assert snapshot.allergen.observed_at is None
+
+
+async def test_open_meteo_future_enrichment_rejects_non_object_hourly_payload() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"hourly": []}))
+    ) as client:
+        provider = OpenMeteoProvider(
+            client,
+            air_quality_base_url="https://air.example.invalid",
+        )
+
+        air_quality, allergen = await provider._fetch_air_quality_and_allergen(
+            39.9,
+            116.3,
+            forecast_date=pendulum.date(2026, 7, 15),
+        )
+
+    assert air_quality is None
+    assert allergen is None
+
+
+def test_open_meteo_daily_peaks_skip_invalid_hourly_values() -> None:
+    hourly: dict[str, object] = {
+        "time": ["2026-07-15T09:00", "2026-07-15T18:00"],
+        "us_aqi": [None, "invalid"],
+        "us_aqi_pm2_5": [None, "invalid"],
+        "pm2_5": [None, "invalid"],
+        "grass_pollen": [None, 4.0],
+        "birch_pollen": [None, None],
+    }
+
+    air_quality, allergen = _open_meteo_daily_peak_values(
+        hourly,
+        (("grass", "禾本科"), ("birch", "桦树")),
+    )
+    _, no_allergen = _open_meteo_daily_peak_values(hourly, ())
+
+    assert air_quality == {}
+    assert allergen == {"grass_pollen": 4.0}
+    assert no_allergen == {}
+
+
+def test_open_meteo_daily_peaks_keep_air_quality_when_pollen_is_missing() -> None:
+    air_quality, allergen = _open_meteo_daily_peak_values(
+        {
+            "time": ["2026-07-15T09:00", "2026-07-15T18:00"],
+            "us_aqi": [35, 90],
+            "us_aqi_pm2_5": [30, 70],
+            "pm2_5": [8.0, 28.0],
+            "grass_pollen": [1.0, 2.0],
+        },
+        (("grass", "禾本科"), ("birch", "桦树")),
+    )
+
+    assert air_quality == {
+        "time": "2026-07-15T18:00",
+        "us_aqi": 90.0,
+        "us_aqi_pm2_5": 70.0,
+        "pm2_5": 28.0,
+    }
+    assert allergen == {"grass_pollen": 2.0}
 
 
 async def test_weather_provider_falls_back_after_primary_weather_failure() -> None:
@@ -543,27 +768,13 @@ async def test_missing_weather_air_quality_requires_optional_aqicn_configuration
         await provider.fetch(1, 2)
 
 
-async def test_aqicn_supplements_weather_without_air_quality() -> None:
+async def test_aqicn_does_not_substitute_current_air_quality_for_future_forecast() -> None:
     weather = WeatherContextSnapshot(
         source_id="weather:test",
         source_name="Weather",
         source_url="https://example.invalid/weather",
         observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
         weather_forecast=("forecast",),
-    )
-    air = AirQualitySnapshot(
-        source_id="air-quality:aqicn",
-        source_name="AQICN",
-        source_url="https://example.invalid/air",
-        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
-        aqi=42,
-        aqi_display="42",
-        aqi_standard="US EPA",
-        pm25_aqi=35,
-        pm25_concentration=None,
-        pm25_unit=None,
-        category="优",
-        health_guidance="Normal activity",
     )
 
     class WeatherProvider:
@@ -578,19 +789,9 @@ async def test_aqicn_supplements_weather_without_air_quality() -> None:
         ) -> WeatherContextSnapshot:
             return await self.fetch(latitude, longitude)
 
-    class AirProvider:
-        async def fetch(
-            self,
-            latitude: float,
-            longitude: float,
-            timezone: str,
-        ) -> AirQualitySnapshot:
-            assert timezone == "UTC"
-            return air
+    provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), None)
 
-    provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), AirProvider())
-
-    assert (await provider.fetch_for_date(1, 2, pendulum.date(2026, 7, 15))).air_quality == air
+    assert (await provider.fetch_for_date(1, 2, pendulum.date(2026, 7, 15))).air_quality is None
 
 
 async def test_aqicn_receives_explicit_offset_when_weather_time_has_no_timezone_name() -> None:
@@ -908,21 +1109,26 @@ async def test_aqicn_fallback_raises_weather_context_error_on_air_quality_error(
         await provider.fetch(1, 2)
 
 
-async def test_qweather_rejects_non_success_indices_status() -> None:
+async def test_qweather_non_success_indices_status_is_optional(caplog) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
             return _qweather_weather_response()
         if request.url.path == "/v7/indices/1d":
             return httpx.Response(200, json={"code": "400"})
-        raise AssertionError(f"Unexpected request: {request.url}")
+        assert request.url.path == "/airquality/v1/current/1.00/2.00"
+        return httpx.Response(500)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="non-success indices status"):
-            await QWeatherProvider(
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            snapshot = await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),
                 base_url="https://api.example.invalid",
             ).fetch(1, 2)
+
+    assert snapshot.weather_forecast
+    assert snapshot.lifestyle_advice == ()
+    assert "operation=lifestyle-indices reason=non-success indices status code=400" in caplog.text
 
 
 async def test_qweather_rejects_http_error() -> None:
@@ -1135,21 +1341,34 @@ async def test_qweather_air_quality_parse_failure_due_to_non_dict_indexes() -> N
     assert snapshot.air_quality is None
 
 
-async def test_qweather_lifestyle_handles_non_dict_items() -> None:
+async def test_qweather_invalid_lifestyle_items_are_optional(caplog) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
-            return _qweather_weather_response()
+            return httpx.Response(200, json={"code": "200", "daily": [_QWEATHER_DAILY_ITEM]})
         if request.url.path == "/v7/indices/1d":
-            return httpx.Response(200, json={"code": "200", "daily": ["not-a-dict"]})
-        raise AssertionError(f"Unexpected request: {request.url}")
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "updateTime": "2026-07-13T09:15",
+                    "daily": ["not-a-dict"],
+                },
+            )
+        assert request.url.path == "/airquality/v1/current/1.00/2.00"
+        return httpx.Response(500)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="lifestyle indices failed: TypeError"):
-            await QWeatherProvider(
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            snapshot = await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),
                 base_url="https://api.example.invalid",
             ).fetch(1, 2)
+
+    assert snapshot.weather_forecast
+    assert snapshot.lifestyle_advice == ()
+    assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T09:15:00+08:00"
+    assert "operation=lifestyle-indices reason=TypeError" in caplog.text
 
 
 async def test_qweather_forecast_handles_non_dict_items() -> None:
