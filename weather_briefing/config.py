@@ -18,10 +18,15 @@ from soupsieve import compile as compile_selector
 
 from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation
 from .reference_data import reference_string_tuple
+from .registries import PublisherName, WeatherProviderName
 
 
 class ConfigurationError(ValueError):
     """Raised when private runtime configuration is missing or malformed."""
+
+
+SUPPORTED_WEATHER_PROVIDERS = frozenset(WeatherProviderName)
+SUPPORTED_PUBLISHERS = frozenset(PublisherName)
 
 
 @overload
@@ -148,6 +153,20 @@ def _optional_string_array(
     return tuple(entries)
 
 
+def _required_string_field(item: dict[str, Any], field: str, path: str) -> str:
+    value = item.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigurationError(f"{path}.{field} must be a non-empty string")
+    return value.strip()
+
+
+def _optional_string_field(item: dict[str, Any], field: str, path: str) -> str | None:
+    value = item.get(field)
+    if value is None:
+        return None
+    return _required_string_field(item, field, path)
+
+
 def _context_source(item: object, index: int) -> ContextSourceConfig:
     if not isinstance(item, dict):
         raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}] must be a JSON object")
@@ -168,7 +187,17 @@ def _configured_weather_providers() -> tuple[str, ...] | None:
     providers = tuple(item.strip() for item in configured.split(",") if item.strip())
     if not providers:
         raise ConfigurationError("WEATHER_PROVIDERS cannot be empty")
+    unsupported = sorted(set(providers) - SUPPORTED_WEATHER_PROVIDERS)
+    if unsupported:
+        raise ConfigurationError(f"WEATHER_PROVIDERS contains unsupported providers: {', '.join(unsupported)}")
     return providers
+
+
+def _publisher() -> str:
+    publisher = _clean_env(os.getenv("PUBLISHER", "telegram"))
+    if publisher not in SUPPORTED_PUBLISHERS:
+        raise ConfigurationError(f"PUBLISHER must be one of: {', '.join(sorted(SUPPORTED_PUBLISHERS))}")
+    return publisher
 
 
 def state_path_from_env() -> Path:
@@ -190,12 +219,11 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
         raise ConfigurationError(f"Configure at least one location in {path}")
     locations: list[LocationSpec] = []
     seen_ids: set[str] = set()
-    for item in items:
-        location_id = str(item.get("id", "")).strip()
-        name_value = item.get("name")
-        name = str(name_value).strip() if name_value is not None else None
-        name = name or None
-        if not location_id or not location_id.replace("-", "").replace("_", "").isalnum():
+    for index, item in enumerate(items):
+        item_path = f"{path}[{index}]"
+        location_id = _required_string_field(item, "id", item_path)
+        name = _optional_string_field(item, "name", item_path)
+        if not location_id.replace("-", "").replace("_", "").isalnum():
             raise ConfigurationError("Location id must use letters, numbers, '-' or '_'")
         if location_id in seen_ids:
             raise ConfigurationError(f"Duplicate location id: {location_id}")
@@ -221,16 +249,11 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
 
 def _feeds(path: Path) -> tuple[FeedConfig, ...]:
     feeds: list[FeedConfig] = []
-    for item in _json_file(path):
-        source_id = str(item.get("id") or "").strip()
-        source_name = str(item.get("name") or "").strip()
-        source_url = str(item.get("url") or "").strip()
-        if not source_id:
-            raise ConfigurationError("RSS source must have an id")
-        if not source_name:
-            raise ConfigurationError(f"RSS source {source_id} must have a public display name")
-        if not source_url:
-            raise ConfigurationError(f"RSS source {source_id} must have a URL")
+    for index, item in enumerate(_json_file(path)):
+        item_path = f"{path}[{index}]"
+        source_id = _required_string_field(item, "id", item_path)
+        source_name = _required_string_field(item, "name", item_path)
+        source_url = _required_string_field(item, "url", item_path)
         feeds.append(
             FeedConfig(
                 id=source_id,
@@ -414,7 +437,7 @@ class Settings:
             aqicn_api_token=_clean_env(os.getenv("AQICN_API_TOKEN")) or None,
             aqicn_base_url=_clean_env(os.getenv("AQICN_BASE_URL", "https://api.waqi.info")).rstrip("/"),
             state_path=state_path_from_env(),
-            publisher=_clean_env(os.getenv("PUBLISHER", "telegram")),
+            publisher=_publisher(),
             telegram_bot_token=_clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,
             telegram_chat_id=_clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None,
             rss_max_attempts=_positive_integer("RSS_MAX_ATTEMPTS", 3),

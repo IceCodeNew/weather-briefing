@@ -76,6 +76,7 @@ Usage notes:
 - Prefer timezone-aware Pendulum values in Python. Reject ambiguous timestamps, keep timezone assumptions at provider boundaries, and centralize unavoidable provider-specific fallback rules instead of spreading guesses through business logic.
 - Do not retain compatibility paths for abandoned internal formats unless the current requirements explicitly require them.
 - Treat persistence, counters, telemetry, and alert bookkeeping performed while handling an error as secondary operations. Their failure must not replace the original business exception, and logic must not rely on state that was not recorded successfully.
+- Validate configuration at its input boundary without coercing invalid scalar types into strings or other superficially valid values. Reject unknown values for application-owned fixed choices early, while leaving third-party dynamic provider namespaces to their owning SDK instead of duplicating a whitelist.
 - Do not use `typing.cast()` in application or test code. Model type boundaries with protocols, typed test doubles, or runtime narrowing instead of suppressing type mismatches.
 - Keep code comments concise and in English.
 - Preserve compatibility between build and runtime environments rather than assuming copied artifacts are portable across distributions or interpreter builds.

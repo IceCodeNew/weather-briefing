@@ -39,6 +39,7 @@ from .llm import (
 )
 from .models import ResolvedLocation
 from .publishers import DeliveryProvider, RenderedTextDiagnostics, StdoutPublisher, TelegramPublisher
+from .registries import PublisherName, WeatherProviderName
 from .render import PlainTextRenderer, TelegramHTMLRenderer
 from .service import BriefingService
 from .sources import HTTPContextSource, RSSSource
@@ -309,23 +310,47 @@ def _delivery_provider(
     client: httpx.AsyncClient,
     diagnostics: RenderedTextDiagnostics | None = None,
 ) -> DeliveryProvider:
-    if settings.publisher == "stdout":
-        return DeliveryProvider(PlainTextRenderer(), StdoutPublisher(), diagnostics=diagnostics)
-    if settings.publisher == "telegram":
-        if not settings.telegram_bot_token or not settings.telegram_chat_id:
-            raise ValueError("Telegram publisher requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
-        return DeliveryProvider(
-            TelegramHTMLRenderer(),
-            TelegramPublisher(
-                client,
-                settings.telegram_bot_token,
-                settings.telegram_chat_id,
-                diagnostics,
-            ),
-            single_message_limit=TelegramPublisher.MAX_MESSAGE_LENGTH,
-            diagnostics=diagnostics,
-        )
-    raise ValueError(f"Unsupported publisher: {settings.publisher}")
+    builder = PUBLISHER_BUILDERS.get(settings.publisher)
+    if builder is None:
+        raise ValueError(f"Unsupported publisher: {settings.publisher}")
+    return builder(settings, client, diagnostics)
+
+
+def _build_stdout_publisher(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    diagnostics: RenderedTextDiagnostics | None,
+) -> DeliveryProvider:
+    return DeliveryProvider(PlainTextRenderer(), StdoutPublisher(), diagnostics=diagnostics)
+
+
+def _build_telegram_publisher(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    diagnostics: RenderedTextDiagnostics | None,
+) -> DeliveryProvider:
+    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+        raise ValueError("Telegram publisher requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+    return DeliveryProvider(
+        TelegramHTMLRenderer(),
+        TelegramPublisher(
+            client,
+            settings.telegram_bot_token,
+            settings.telegram_chat_id,
+            diagnostics,
+        ),
+        single_message_limit=TelegramPublisher.MAX_MESSAGE_LENGTH,
+        diagnostics=diagnostics,
+    )
+
+
+PUBLISHER_BUILDERS: dict[
+    str,
+    Callable[[Settings, httpx.AsyncClient, RenderedTextDiagnostics | None], DeliveryProvider],
+] = {
+    PublisherName.STDOUT: _build_stdout_publisher,
+    PublisherName.TELEGRAM: _build_telegram_publisher,
+}
 
 
 def _weather_context_provider(
@@ -336,7 +361,7 @@ def _weather_context_provider(
     names = weather_providers_for(location, settings.weather_providers)
     providers: list[WeatherContextProvider] = []
     for name in names:
-        if name == "qweather" and not _qweather_is_configured(settings):
+        if name == WeatherProviderName.QWEATHER and not _qweather_is_configured(settings):
             if settings.weather_providers is not None:
                 raise ValueError("Explicit QWeather provider is missing JWT configuration")
             continue
@@ -345,7 +370,7 @@ def _weather_context_provider(
         raise ValueError("No configured weather provider is available")
     _LOGGER.info(
         "Weather provider order providers=%s",
-        ",".join(name for name in names if name != "qweather" or _qweather_is_configured(settings)),
+        ",".join(name for name in names if name != WeatherProviderName.QWEATHER or _qweather_is_configured(settings)),
     )
     weather_provider: WeatherContextProvider = (
         providers[0] if len(providers) == 1 else FallbackWeatherContextProvider(*providers)
@@ -430,8 +455,8 @@ def _aqicn_provider(settings: Settings, client: httpx.AsyncClient) -> AirQuality
 
 
 WEATHER_PROVIDER_BUILDERS: dict[str, Callable[[Settings, httpx.AsyncClient], WeatherContextProvider]] = {
-    "qweather": _build_qweather,
-    "open-meteo": _build_open_meteo,
+    WeatherProviderName.QWEATHER: _build_qweather,
+    WeatherProviderName.OPEN_METEO: _build_open_meteo,
 }
 
 

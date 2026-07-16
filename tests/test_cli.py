@@ -12,6 +12,7 @@ import pytest
 
 from weather_briefing.cli import (
     _LOGGER,
+    PUBLISHER_BUILDERS,
     WEATHER_PROVIDER_BUILDERS,
     _aqicn_provider,
     _briefing_delivery_policy,
@@ -38,6 +39,7 @@ from weather_briefing.cli import (
 )
 from weather_briefing.config import Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
+from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.state import SQLiteStateStore
 
 
@@ -1098,8 +1100,9 @@ def test_parse_run_time_returns_now_when_value_is_none(monkeypatch) -> None:
     assert result.timezone_name == "Asia/Shanghai"
 
 
-def test_weather_provider_builders_contains_expected_keys() -> None:
-    assert set(WEATHER_PROVIDER_BUILDERS) == {"qweather", "open-meteo"}
+def test_runtime_provider_builders_cover_declared_configuration_names() -> None:
+    assert set(WEATHER_PROVIDER_BUILDERS) == set(WeatherProviderName)
+    assert set(PUBLISHER_BUILDERS) == set(PublisherName)
 
 
 async def test_daemon_schedules_forecast_and_briefing_without_running_either_immediately(monkeypatch) -> None:
