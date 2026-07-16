@@ -1064,6 +1064,42 @@ async def test_task_failure_alert_delivery_failure_is_retried(
     assert "Failed to publish or record briefing failure alert" in caplog.text
 
 
+async def test_failure_recording_error_does_not_mask_task_error(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = _TestSettings(timezone=timezone, llm_max_attempts=1)
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+
+    def fail_to_record_failure(state: SQLiteStateStore) -> int:
+        raise RuntimeError("private database path")
+
+    monkeypatch.setattr(SQLiteStateStore, "record_failure", fail_to_record_failure)
+    with SQLiteStateStore(tmp_path / "failure-recording.sqlite3") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            delivery,
+            FailingWeatherContextProvider(),
+        )
+        with (
+            caplog.at_level("ERROR", logger="weather_briefing.service"),
+            pytest.raises(WeatherContextError, match="weather context unavailable") as error,
+        ):
+            await service.run("briefing", pendulum.datetime(2026, 7, 13, 9, tz=timezone))
+
+    assert error.value.__notes__ == ["Briefing run failed", "Failure state could not be recorded"]
+    assert "Failed to record briefing failure: RuntimeError" in caplog.text
+    assert "private database path" not in caplog.text
+
+
 async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
