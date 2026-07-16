@@ -1,10 +1,11 @@
 from unittest.mock import AsyncMock
 
 import httpx
+import pendulum
 import pytest
 
 from weather_briefing.models import ContextSourceConfig, FeedConfig, SourceDocument
-from weather_briefing.sources import HTTPContextSource, RSSSource, SourceFetchError
+from weather_briefing.sources import HTTPContextSource, RSSSource, SourceFetchError, _retry_after_seconds
 
 
 async def test_rss_source_marks_configured_verbatim_article(caplog) -> None:
@@ -124,6 +125,100 @@ async def test_rss_source_retries_with_three_to_five_second_delay(monkeypatch) -
     sleep.assert_awaited_with(4.0)
     assert "private.example.invalid" not in str(caught.value)
     assert caught.value.__cause__ is None
+
+
+async def test_rss_source_does_not_retry_permanent_http_status(monkeypatch) -> None:
+    handler = AsyncMock(return_value=httpx.Response(404))
+    sleep = AsyncMock()
+    monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourceFetchError):
+            await RSSSource(client, max_attempts=3).fetch(
+                FeedConfig("source", "Source", "https://private.example.invalid")
+            )
+
+    assert handler.await_count == 1
+    sleep.assert_not_awaited()
+
+
+async def test_rss_source_does_not_retry_other_http_errors(monkeypatch) -> None:
+    attempts = 0
+    sleep = AsyncMock()
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.HTTPError("invalid request")
+
+    monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourceFetchError):
+            await RSSSource(client, max_attempts=3).fetch(
+                FeedConfig("source", "Source", "https://private.example.invalid")
+            )
+
+    assert attempts == 1
+    sleep.assert_not_awaited()
+
+
+async def test_rss_source_retries_transport_errors(monkeypatch) -> None:
+    attempts = 0
+    sleep = AsyncMock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("connection failed", request=request)
+        return httpx.Response(200, text="<?xml version='1.0'?><rss version='2.0'><channel /></rss>")
+
+    monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        articles = await RSSSource(client, max_attempts=2).fetch(
+            FeedConfig("source", "Source", "https://private.example.invalid")
+        )
+
+    assert articles == ()
+    assert attempts == 2
+    assert sleep.await_count == 1
+
+
+async def test_rss_source_respects_retry_after(monkeypatch) -> None:
+    sleep = AsyncMock()
+    monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
+    monkeypatch.setattr("weather_briefing.sources.random.uniform", lambda _low, _high: 4.0)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(429, headers={"Retry-After": "12"}))
+    ) as client:
+        with pytest.raises(SourceFetchError):
+            await RSSSource(client, max_attempts=2).fetch(
+                FeedConfig("source", "Source", "https://private.example.invalid")
+            )
+
+    sleep.assert_awaited_once_with(12.0)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("invalid", None),
+        ("Thu, 16 Jul 2026 00:00:10", None),
+        ("Thu, 16 Jul 2026 00:00:10 GMT", 10.0),
+        ("Thu, 16 Jul 2025 00:00:00 GMT", 0.0),
+        ("-1", 0.0),
+    ],
+)
+def test_retry_after_parsing(monkeypatch, value: str | None, expected: float | None) -> None:
+    monkeypatch.setattr(
+        "weather_briefing.sources.pendulum.now",
+        lambda _timezone: pendulum.datetime(2026, 7, 16, tz="UTC"),
+    )
+    headers = {} if value is None else {"Retry-After": value}
+
+    assert _retry_after_seconds(httpx.Response(503, headers=headers)) == expected
 
 
 async def test_rss_local_offset_is_normalized_then_restored() -> None:

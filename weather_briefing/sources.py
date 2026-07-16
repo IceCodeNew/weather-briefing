@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import random
+from email.utils import parsedate_to_datetime
 from time import struct_time
 from typing import Protocol
 
@@ -18,6 +19,7 @@ from .content_cleaners import ContentCleaner, ContentCleaningRules, HTMLContentC
 from .models import Article, ContextSourceConfig, FeedConfig, SourceDocument
 
 _LOGGER = logging.getLogger("weather_briefing.sources")
+_RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
 class SourceFetchError(RuntimeError):
@@ -52,6 +54,23 @@ def _entry_content(entry: feedparser.FeedParserDict) -> str:
     if contents:
         return "\n".join(str(item.get("value", "")) for item in contents).strip()
     return str(entry.get("summary", "")).strip()
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        seconds = int(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            return None
+        seconds = (pendulum.instance(retry_at) - pendulum.now("UTC")).total_seconds()
+    return max(0.0, float(seconds))
 
 
 class RSSSource:
@@ -121,6 +140,7 @@ class RSSSource:
 
     async def _fetch_with_retry(self, config: FeedConfig) -> str:
         for attempt in range(1, self._max_attempts + 1):
+            retry_after: float | None = None
             try:
                 response = await self._client.get(
                     config.url,
@@ -128,9 +148,17 @@ class RSSSource:
                 )
                 response.raise_for_status()
                 return response.text
+            except httpx.TransportError:
+                pass
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in _RETRYABLE_STATUS_CODES:
+                    break
+                retry_after = _retry_after_seconds(exc.response)
             except httpx.HTTPError:
-                if attempt < self._max_attempts:
-                    await asyncio.sleep(random.uniform(self._retry_min_seconds, self._retry_max_seconds))
+                break
+            if attempt < self._max_attempts:
+                delay = random.uniform(self._retry_min_seconds, self._retry_max_seconds)
+                await asyncio.sleep(max(delay, retry_after or 0.0))
         raise SourceFetchError(f"RSS source {config.id} failed after {self._max_attempts} attempts") from None
 
 
