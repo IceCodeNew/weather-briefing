@@ -1135,16 +1135,17 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
 
 
 class FailingOnceLLM:
-    def __init__(self, *, fail_before_response: bool = False) -> None:
+    def __init__(self, *, fail_before_response: bool = False, omit_headline: bool = False) -> None:
         self.attempts = 0
         self._fail_before_response = fail_before_response
+        self._omit_headline = omit_headline
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         self.attempts += 1
         if self.attempts == 1:
             if self._fail_before_response:
                 raise LLMError("request failed before a response was available")
-            return {
+            invalid_result = {
                 "headline": "Briefing",
                 "headline_source_ids": ["invented"],
                 "conclusions": [{"text": "Claim", "source_ids": ["invented"]}],
@@ -1153,6 +1154,9 @@ class FailingOnceLLM:
                 "advice": [],
                 "disaster_tracking": [],
             }
+            if self._omit_headline:
+                del invalid_result["headline"]
+            return invalid_result
         assert ("previous_invalid_response" in payload) is not self._fail_before_response
         allowed_source_ids = payload["allowed_source_ids"]
         assert isinstance(allowed_source_ids, list)
@@ -1168,8 +1172,11 @@ class FailingOnceLLM:
         }
 
 
-@pytest.mark.parametrize("fail_before_response", (False, True))
-async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_response: bool) -> None:
+@pytest.mark.parametrize(
+    ("fail_before_response", "omit_headline"),
+    ((False, False), (True, False), (False, True)),
+)
+async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_response: bool, omit_headline: bool) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
     article = Article(
@@ -1192,7 +1199,7 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_respo
         briefing_max_characters=3500,
         llm_max_attempts=2,
     )
-    llm = FailingOnceLLM(fail_before_response=fail_before_response)
+    llm = FailingOnceLLM(fail_before_response=fail_before_response, omit_headline=omit_headline)
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 

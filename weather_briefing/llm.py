@@ -123,6 +123,12 @@ def parse_result(
             raise LLMError(f"{key} entries must contain non-empty text")
         return text
 
+    def required_text(value: Mapping[str, Any], field: str, *, context: str = "") -> str:
+        text = value.get(field)
+        if not isinstance(text, str) or not text.strip():
+            raise LLMError(f"{context}{field} must be a non-empty string")
+        return text
+
     def parse_sourced_text_items(key: str) -> tuple[Conclusion, ...]:
         values = payload.get(key, [])
         if not isinstance(values, list):
@@ -170,10 +176,10 @@ def parse_result(
             raise LLMError("active_warnings entries must be objects")
         warnings.append(
             Warning(
-                id=str(value["id"]),
-                title=str(value["title"]),
-                status=str(value["status"]),
-                detail=str(value["detail"]),
+                id=required_text(value, "id", context="active_warnings entries: "),
+                title=required_text(value, "title", context="active_warnings entries: "),
+                status=required_text(value, "status", context="active_warnings entries: "),
+                detail=required_text(value, "detail", context="active_warnings entries: "),
                 source_ids=cited_source_ids(value, "source_ids"),
                 last_confirmed_at=now,
             )
@@ -185,7 +191,7 @@ def parse_result(
     parsed_advice = advice()
     parsed_disaster_tracking = parse_sourced_text_items("disaster_tracking")
     return BriefingResult(
-        headline=str(payload["headline"]),
+        headline=required_text(payload, "headline"),
         headline_source_ids=cited_source_ids(payload, "headline_source_ids"),
         conclusions=parsed_conclusions,
         active_warnings=tuple(warnings),

@@ -34,6 +34,10 @@ class _QWeatherResponseError(ValueError):
     """Raised for safe, code-defined QWeather response contract errors."""
 
 
+class _OpenMeteoResponseError(ValueError):
+    """Raised for safe, code-defined Open-Meteo response contract errors."""
+
+
 class WeatherContextProvider(Protocol):
     async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot: ...
 
@@ -375,8 +379,10 @@ class OpenMeteoProvider:
             )
             response.raise_for_status()
             payload = response.json()
-            daily: dict[str, list[object]] = payload["daily"]
-            times = daily["time"]
+            daily = payload["daily"]
+            if not _is_string_keyed_dict(daily):
+                raise _OpenMeteoResponseError("daily forecast must be an object")
+            times = _open_meteo_daily_values(daily, "time")
             forecast_count = min(2, len(times)) if forecast_date is None else len(times)
             weather_forecast = tuple(_format_open_meteo_day(daily, index) for index in range(forecast_count))
             if not weather_forecast:
@@ -389,6 +395,8 @@ class OpenMeteoProvider:
             )
         except WeatherContextError:
             raise
+        except _OpenMeteoResponseError as exc:
+            raise WeatherContextError(f"Open-Meteo weather forecast parsing failed: {exc}") from None
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise WeatherContextError(f"Open-Meteo weather forecast failed: {_safe_provider_error(exc)}") from None
 
@@ -706,6 +714,10 @@ def _is_string_keyed_dict(value: object) -> TypeGuard[dict[str, object]]:
     return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
+def _is_object_list(value: object) -> TypeGuard[list[object]]:
+    return isinstance(value, list)
+
+
 def _format_qweather_day(item: object) -> str:
     if not _is_string_keyed_dict(item):
         raise TypeError("daily forecast entries must be objects")
@@ -730,16 +742,34 @@ def _format_qweather_day(item: object) -> str:
     )
 
 
-def _format_open_meteo_day(daily: dict[str, list[object]], index: int) -> str:
+def _open_meteo_daily_values(daily: dict[str, object], field: str) -> list[object]:
+    if field not in daily:
+        raise _OpenMeteoResponseError(f"daily forecast missing required field: {field}")
+    values = daily[field]
+    if not _is_object_list(values):
+        raise _OpenMeteoResponseError(f"daily forecast field must be an array: {field}")
+    return values
+
+
+def _open_meteo_daily_value(daily: dict[str, object], field: str, index: int) -> object:
+    values = _open_meteo_daily_values(daily, field)
+    if index >= len(values):
+        raise _OpenMeteoResponseError(f"daily forecast field has no value at index {index}: {field}")
+    return values[index]
+
+
+def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:
     return (
-        f"{daily['time'][index]}：WMO天气代码{daily['weather_code'][index]}，"
-        f"{daily['temperature_2m_min'][index]}~{daily['temperature_2m_max'][index]}℃，"
-        f"体感{daily['apparent_temperature_min'][index]}~"
-        f"{daily['apparent_temperature_max'][index]}℃，"
-        f"预计降水{daily['precipitation_sum'][index]}毫米，"
-        f"最高降水概率{daily['precipitation_probability_max'][index]}%，"
-        f"最大风速{daily['wind_speed_10m_max'][index]}千米/小时，"
-        f"最大阵风{daily['wind_gusts_10m_max'][index]}千米/小时，"
-        f"主导风向{daily['wind_direction_10m_dominant'][index]}°，"
-        f"最高紫外线指数{daily['uv_index_max'][index]}"
+        f"{_open_meteo_daily_value(daily, 'time', index)}："
+        f"WMO天气代码{_open_meteo_daily_value(daily, 'weather_code', index)}，"
+        f"{_open_meteo_daily_value(daily, 'temperature_2m_min', index)}~"
+        f"{_open_meteo_daily_value(daily, 'temperature_2m_max', index)}℃，"
+        f"体感{_open_meteo_daily_value(daily, 'apparent_temperature_min', index)}~"
+        f"{_open_meteo_daily_value(daily, 'apparent_temperature_max', index)}℃，"
+        f"预计降水{_open_meteo_daily_value(daily, 'precipitation_sum', index)}毫米，"
+        f"最高降水概率{_open_meteo_daily_value(daily, 'precipitation_probability_max', index)}%，"
+        f"最大风速{_open_meteo_daily_value(daily, 'wind_speed_10m_max', index)}千米/小时，"
+        f"最大阵风{_open_meteo_daily_value(daily, 'wind_gusts_10m_max', index)}千米/小时，"
+        f"主导风向{_open_meteo_daily_value(daily, 'wind_direction_10m_dominant', index)}°，"
+        f"最高紫外线指数{_open_meteo_daily_value(daily, 'uv_index_max', index)}"
     )
