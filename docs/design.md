@@ -6,7 +6,11 @@
 
 核心编排不判断具体 RSS 域名、地区、模型厂商、空气质量服务或投递平台。特殊全文转发规则来自私密 JSON 配置中的 `verbatim_title_patterns`；可选 `location_ids` 决定来源适用于哪些关注地点，空数组表示全部地点。
 
-`OpenAICompatibleChatCompletionsProvider` 实现唯一的 OpenAI-compatible 请求逻辑，统一调用 `/chat/completions`。`DeepSeekProvider` 仅继承该实现并预置官方 Base URL，不覆盖请求或解析行为，因此部署只需提供 API Key 和模型名；OpenAI 或其他兼容服务使用通用 provider 并显式配置 Base URL。核心编排只依赖 `LLMProvider` 协议；未来接入 Anthropic 等非兼容 endpoint 时新增协议实现，不修改简报 service。原样转发规则与次日预报上下文规则分别由 `verbatim_title_patterns` 和 `forecast_title_patterns` 配置，避免来源特定标题进入代码。
+`AnyLLMStructuredProvider` 是应用与 any-llm SDK 之间的薄适配器，只负责固定严格结构化输出 schema 并把 SDK 响应转换为应用字典；模型厂商的认证、API Base、请求协议和参数差异由 any-llm 及其官方 SDK 处理。`LLM_PROVIDER` 直接使用 SDK 声明的 provider ID，配置层只验证该 ID，不维护厂商分支或复制 provider 环境变量。DeepSeek 已投入使用的 `DEEPSEEK_MODEL` 与 `DEEPSEEK_BASE_URL` 只在配置边界作为通用 `LLM_MODEL` 与 SDK `DEEPSEEK_API_BASE` 的后备。
+
+开发依赖安装 `any-llm-sdk[all]`，运行依赖只声明 SDK 核心包；部署者把选定的 any-llm extras 作为独立、锁定的安装要求与应用一起安装。这样仓库可以测试所有 provider 的装载边界，而生产镜像不必携带未使用厂商的 SDK。CLI 仅向继承 any-llm `BaseOpenAIProvider` 的 provider 注入现有 `LoggedAsyncClient` 并关闭 SDK 内部重试，因为该家族明确接受 OpenAI SDK 的 `http_client` 和 `max_retries`；其他官方 SDK 的客户端参数并不统一，应用不猜测或传入不兼容参数，其重试及实际 HTTP 状态遵循对应 SDK。service 的 `LLM_MAX_ATTEMPTS` 始终是外层请求与输出修复次数。
+
+`LLMStructuredOutput` 以 Pydantic 声明所有必填字段、类型、非空文本、来源数组和 advice topic，同时作为 any-llm 的 `response_format` 与 service 接收 mock/provider 输出后的复验 schema。厂商 SDK 的结构化输出能力负责生成和初次解析，本地 schema 防止测试替身或 provider 兼容差异绕过契约；来源 ID 是否属于本轮输入仍是运行时领域校验。核心编排只依赖领域端口 `LLMProvider`，它不负责任何厂商映射或 wire protocol；切换 SDK provider 不修改简报 service。原样转发规则与次日预报上下文规则分别由 `verbatim_title_patterns` 和 `forecast_title_patterns` 配置，避免来源特定标题进入代码。
 
 ## 正文清洗与全文转发
 

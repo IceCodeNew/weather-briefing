@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, overload
 
 import pendulum
+from any_llm import AnyLLM
 from apscheduler.triggers.cron import CronTrigger
 
 from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation
@@ -36,11 +37,11 @@ def _clean_env(value: str | None) -> str | None:
     return value
 
 
-def _required(name: str) -> str:
-    value = _clean_env(os.getenv(name, ""))
-    if not value:
-        raise ConfigurationError(f"Missing required environment variable: {name}")
-    return value
+def _first_configured(*names: str) -> str | None:
+    for name in names:
+        if value := _clean_env(os.getenv(name, "")):
+            return value
+    return None
 
 
 def _integer(name: str, default: int) -> int:
@@ -199,7 +200,7 @@ def _feeds(path: Path) -> tuple[FeedConfig, ...]:
 class Settings:
     """Collect validated runtime settings used to compose the application."""
 
-    api_key: str
+    api_key: str | None
     llm_provider: str
     llm_model: str
     llm_base_url: str | None
@@ -276,14 +277,20 @@ class Settings:
         daily_cron_minute = _bounded_integer("GREETING_MINUTE", 0, 0, 59)
         hourly_cron = _cron_hour("BRIEFING_CRON", "9-23")
         llm_provider = _clean_env(os.getenv("LLM_PROVIDER", "deepseek"))
+        if llm_provider not in AnyLLM.get_supported_providers():
+            raise ConfigurationError(f"Unsupported LLM_PROVIDER: {llm_provider}")
+        if not AnyLLM.get_provider_class(llm_provider).SUPPORTS_COMPLETION:
+            raise ConfigurationError(f"LLM_PROVIDER does not support completion: {llm_provider}")
+        llm_model = _clean_env(os.getenv("LLM_MODEL"))
         if llm_provider == "deepseek":
-            api_key = _required("DEEPSEEK_API_KEY")
-            llm_model = _required("DEEPSEEK_MODEL")
-            llm_base_url = _clean_env(os.getenv("DEEPSEEK_BASE_URL"))
+            api_key = _clean_env(os.getenv("DEEPSEEK_API_KEY")) or None
+            llm_model = llm_model or _clean_env(os.getenv("DEEPSEEK_MODEL"))
+            llm_base_url = _first_configured("DEEPSEEK_API_BASE", "DEEPSEEK_BASE_URL")
         else:
-            api_key = _required("LLM_API_KEY")
-            llm_model = _required("LLM_MODEL")
-            llm_base_url = _required("LLM_BASE_URL")
+            api_key = None
+            llm_base_url = None
+        if not llm_model:
+            raise ConfigurationError("Missing required environment variable: LLM_MODEL")
         locations = _locations(locations_path)
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {

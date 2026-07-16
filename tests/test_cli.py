@@ -37,7 +37,6 @@ from weather_briefing.cli import (
     run,
 )
 from weather_briefing.config import Settings
-from weather_briefing.llm import OpenAICompatibleChatCompletionsProvider
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.state import SQLiteStateStore
 
@@ -887,42 +886,52 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
 
 
 class TestLLMProvider:
-    async def test_deepseek_with_custom_base_url(self, async_client: httpx.AsyncClient) -> None:
+    async def test_deepseek_with_custom_base_url(self, async_client: httpx.AsyncClient, monkeypatch) -> None:
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        sdk_client = SimpleNamespace()
+        monkeypatch.setattr(
+            "weather_briefing.cli.create_any_llm_provider",
+            lambda *args, **kwargs: calls.append((args, kwargs)) or sdk_client,
+        )
         settings = _make_fake_settings(
             llm_provider="deepseek",
             llm_base_url="https://custom.example.invalid",
         )
         provider = _llm_provider(settings, async_client)
-        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
-        assert provider.base_url == "https://custom.example.invalid"
+        assert provider is sdk_client
+        assert calls == [
+            (
+                ("deepseek", "m", 8192, async_client),
+                {
+                    "api_key": "k",
+                    "api_base": "https://custom.example.invalid",
+                },
+            )
+        ]
 
-    async def test_deepseek_without_base_url(self, async_client: httpx.AsyncClient) -> None:
+    async def test_deepseek_without_base_url(self, async_client: httpx.AsyncClient, monkeypatch) -> None:
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(
+            "weather_briefing.cli.create_any_llm_provider",
+            lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
+        )
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
         provider = _llm_provider(settings, async_client)
-        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
-        assert provider.base_url == "https://api.deepseek.com"
+        assert provider is not None
+        assert calls[0][0][:3] == ("deepseek", "m", 8192)
+        assert calls[0][1]["api_base"] is None
 
-    async def test_openai_compatible_missing_base_url(self, async_client: httpx.AsyncClient) -> None:
-        settings = _make_fake_settings(
-            llm_provider="openai-compatible",
-            llm_base_url=None,
+    async def test_arbitrary_any_llm_provider_is_forwarded(self, async_client: httpx.AsyncClient, monkeypatch) -> None:
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+        monkeypatch.setattr(
+            "weather_briefing.cli.create_any_llm_provider",
+            lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
-        with pytest.raises(ValueError, match="LLM_BASE_URL"):
-            _llm_provider(settings, async_client)
-
-    async def test_openai_compatible_with_base_url(self, async_client: httpx.AsyncClient) -> None:
-        settings = _make_fake_settings(
-            llm_provider="openai-compatible",
-            llm_base_url="https://compatible.example.invalid/v1",
-        )
+        settings = replace(_make_fake_settings(llm_provider="mistral"), api_key=None, llm_base_url=None)
         provider = _llm_provider(settings, async_client)
-        assert isinstance(provider, OpenAICompatibleChatCompletionsProvider)
-        assert provider.base_url == "https://compatible.example.invalid/v1"
-
-    async def test_unsupported_provider(self, async_client: httpx.AsyncClient) -> None:
-        settings = _make_fake_settings(llm_provider="unsupported")
-        with pytest.raises(ValueError, match="Unsupported LLM provider"):
-            _llm_provider(settings, async_client)
+        assert provider is not None
+        assert calls[0][0][:3] == ("mistral", "m", 8192)
+        assert calls[0][1] == {"api_key": None, "api_base": None}
 
 
 class TestDeliveryProvider:

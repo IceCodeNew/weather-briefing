@@ -2,6 +2,38 @@
 
 本文补充 [design.md](design.md)，解释关键架构选择背后的理由、权衡和适用边界，尤其是仅从当前功能契约中不容易看出的运行规模或环境假设。它不是待办清单，也不复述正式设计；每条备忘应帮助维护者理解为什么采用当前方案，以及什么变化会使这个理由不再成立。涉及有意暂缓的有效设计问题时，还需要明确成立条件和重新评估触发点；假设变化时，应同步更新实现、正式设计文档和本文件。
 
+## 审查时应保留的显式边界
+
+### 配置与启动边界
+
+DeepSeek 是唯一保留旧环境变量别名的 LLM provider：`DEEPSEEK_MODEL` 后备到 `LLM_MODEL`，`DEEPSEEK_BASE_URL` 后备到 any-llm 使用的 `DEEPSEEK_API_BASE`。这是已投入部署的输入兼容，不是厂商映射；新增 provider 应直接使用 any-llm 的 provider ID 和环境变量，不得把这一分支扩展成通用 provider 配置注册表。
+
+日志初始化分为两个阶段。`main()` 在读取 Settings 前以非 DEBUG 级别建立基础 handler，保证参数或配置解析失败仍有统一日志；配置成功后再用实际 `DEBUG` 值更新级别。除非启动错误改由更外层的统一运行时接管，否则不应把两次调用合并。
+
+### 领域模型与平台适配边界
+
+`Article.id` 是带 Feed 身份的文章级稳定 ID，用于去重和模型引用；`Article.source_id` 是 Feed 配置 ID。同一内容出现在不同 Feed 时保留不同文章 ID，以维持来源隔离和可追溯性。只有在产品明确引入跨来源 canonical identity、并定义转载和更新版本的合并规则后，才应重新评估这一选择。
+
+LLM schema 到 `BriefingResult` 的转换保持为领域模型之外的 `parse_result()`。领域 dataclass 不依赖 Pydantic 或 any-llm，provider 也不拥有来源 ID 归属规则。将转换放入任一对象都会让平台 SDK 或不可信输入校验进入错误的层级。
+
+Telegram HTML 与纯文本 renderer 保留少量显式重复，publisher 数量只有两个时也保留清晰分支。平台 escaping、链接、attribution、可见长度和必填配置不同；在出现第三个共享相同骨架的平台前，不用 template method 或 registry 把差异隐藏进回调和条件分支。
+
+### 错误、隐私与可选诊断边界
+
+异常链是否保留取决于边界。CLI 先用 `logger.exception()` 保存 traceback，再以 `SystemExit(1) from None` 避免终端重复输出；RSS 最终错误隐藏可能包含私有 Feed URL 的 `HTTPError` 链，而统一 HTTP 客户端仍记录安全的异常类型和状态。不能把 `from None` 机械视为调试信息丢失，也不能在可能泄漏私密 endpoint 的路径统一恢复异常链。
+
+渲染正文诊断是可选能力，其状态读取失败不得影响消息投递，因此 `_rendered_text_logging_enabled()` 有意捕获任意 `Exception`、记录 traceback 并按关闭处理。业务请求路径不享有这个例外；例如 LLM adapter 只转换 any-llm 的公开异常，适配器编程错误应原样暴露。
+
+HTTPX `request.extensions` 是可扩展输入，不保证只由 `api_client.py` 写入。日志分类必须继续验证 tuple 形状、字符串类型和安全 label，防止 SDK、transport 或未来调用方把不可信对象或文本带入日志。
+
+### 异步、文件与参考数据边界
+
+Nominatim 限速使用 `await asyncio.sleep()`，它只挂起当前协程并把控制权交回事件循环，不是同步阻塞。改用其他异步 sleep API 不会改善当前 asyncio 应用的并发语义；只有运行时迁移到其他异步后端时才需要调整。
+
+定位缓存先写固定临时文件再原子替换。替换失败会向上传播且旧缓存保持完整；遗留临时文件会被下次写入覆盖。只有观测到权限或磁盘错误造成不可接受的残留时，才需要增加清理分支。
+
+大陆行政区排除规则在载入参考数据和比较 API 返回值时都使用 `casefold()`，不存在两边归一化不一致。空气质量分级数量很小且最后一档无上限，线性扫描比为 `bisect` 拆分阈值与结果更直接。provider UTC offset 接受整分钟的 ±14 小时范围，这是合法时区边界，不应收窄。
+
 ## 异步编排中的同步本地持久化
 
 ### 当前选择

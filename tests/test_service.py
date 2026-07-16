@@ -1153,6 +1153,7 @@ class FailingOnceLLM:
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
+                "should_publish": True,
             }
             if self._omit_headline:
                 del invalid_result["headline"]
@@ -1169,6 +1170,7 @@ class FailingOnceLLM:
             "resolved_warning_ids": [],
             "advice": [],
             "disaster_tracking": [],
+            "should_publish": True,
         }
 
 
@@ -1248,6 +1250,7 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
+                "should_publish": True,
             }
 
     publisher = RecordingPublisher()
@@ -1265,8 +1268,11 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
             delivery,
             StaticWeatherContextProvider(),
         )
-        with pytest.raises(LLMError, match="validation failed"):
+        with pytest.raises(LLMError, match="validation failed") as exc_info:
             await service.run("briefing", now)
+
+    assert exc_info.value.__cause__ is not None
+    assert "visible characters; limit is 10" in str(exc_info.value.__cause__)
 
 
 async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path) -> None:

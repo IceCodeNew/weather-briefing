@@ -3,7 +3,7 @@ import logging
 import httpx
 import pytest
 
-from weather_briefing.api_client import LoggedAsyncClient, api_call_extensions
+from weather_briefing.api_client import LoggedAsyncClient, api_call_context, api_call_extensions
 
 
 async def test_logged_client_records_annotated_success_without_request_data(caplog) -> None:
@@ -66,6 +66,27 @@ async def test_logged_client_records_unannotated_requests_as_unclassified(caplog
         await client.get("https://example.test/api")
 
     assert "API call started provider=unclassified operation=request method=GET" in caplog.text
+
+
+async def test_context_classifies_sdk_request_without_extensions(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
+    async with LoggedAsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        with api_call_context("deepseek", "chat-completions"):
+            await client.get("https://private.example.invalid/v1/chat/completions")
+
+    assert "API call started provider=deepseek operation=chat-completions method=GET" in caplog.text
+
+
+async def test_request_extensions_override_sdk_context(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
+    async with LoggedAsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        with api_call_context("deepseek", "chat-completions"):
+            await client.get(
+                "https://private.example.invalid/weather",
+                extensions=api_call_extensions("open-meteo", "weather-forecast"),
+            )
+
+    assert "API call started provider=open-meteo operation=weather-forecast method=GET" in caplog.text
 
 
 @pytest.mark.parametrize(

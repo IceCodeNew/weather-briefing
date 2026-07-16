@@ -9,7 +9,7 @@ from weather_briefing.models import ResolvedLocation
 def _required_environment(monkeypatch) -> None:
     values = {
         "DEEPSEEK_API_KEY": "test-key",
-        "DEEPSEEK_MODEL": "test-model",
+        "LLM_MODEL": "test-model",
         "BRIEFING_LOCATIONS_FILE": str(Path(__file__).parents[1] / "locations.example.json"),
         "RSS_SOURCES_FILE": str(Path(__file__).parents[1] / "rss-sources.example.json"),
     }
@@ -301,19 +301,49 @@ def test_positive_operational_settings_reject_zero(monkeypatch, name: str) -> No
         Settings.from_env()
 
 
-def test_generic_llm_provider_uses_generic_configuration(monkeypatch) -> None:
+def test_any_llm_provider_uses_sdk_managed_configuration(monkeypatch) -> None:
     _required_environment(monkeypatch)
-    monkeypatch.setenv("LLM_PROVIDER", "openai-compatible")
-    monkeypatch.setenv("LLM_API_KEY", "generic-key")
+    monkeypatch.setenv("LLM_PROVIDER", "mistral")
+    monkeypatch.setenv("MISTRAL_API_KEY", "generic-key")
     monkeypatch.setenv("LLM_MODEL", "generic-model")
-    monkeypatch.setenv("LLM_BASE_URL", "https://compatible.example.invalid/v1")
+    monkeypatch.setenv("MISTRAL_API_BASE", "https://compatible.example.invalid/v1")
 
     settings = Settings.from_env()
 
-    assert settings.api_key == "generic-key"
-    assert settings.llm_provider == "openai-compatible"
+    assert settings.api_key is None
+    assert settings.llm_provider == "mistral"
     assert settings.llm_model == "generic-model"
-    assert settings.llm_base_url == "https://compatible.example.invalid/v1"
+    assert settings.llm_base_url is None
+
+
+def test_deepseek_model_name_remains_compatible(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.delenv("LLM_MODEL")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "existing-model")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_model == "existing-model"
+
+
+def test_deepseek_prefers_any_llm_api_base_name(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://existing.example.invalid")
+    monkeypatch.setenv("DEEPSEEK_API_BASE", "https://sdk.example.invalid")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_base_url == "https://sdk.example.invalid"
+
+
+def test_deepseek_accepts_any_llm_api_base_name(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_BASE", "https://sdk.example.invalid")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_base_url == "https://sdk.example.invalid"
 
 
 class TestScheduleSettings:
@@ -377,12 +407,26 @@ class TestScheduleSettings:
 
 
 class TestConfigErrorPaths:
-    def test_missing_required_llm_key_raises_error(self, monkeypatch) -> None:
+    def test_missing_required_llm_model_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
-        monkeypatch.setenv("LLM_PROVIDER", "openai-compatible")
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("LLM_MODEL")
+        monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
 
-        with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
+        with pytest.raises(ConfigurationError, match="LLM_MODEL"):
+            Settings.from_env()
+
+    def test_unsupported_llm_provider_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("LLM_PROVIDER", "unsupported")
+
+        with pytest.raises(ConfigurationError, match="Unsupported LLM_PROVIDER"):
+            Settings.from_env()
+
+    def test_llm_provider_without_completion_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("LLM_PROVIDER", "voyage")
+
+        with pytest.raises(ConfigurationError, match="does not support completion"):
             Settings.from_env()
 
     def test_invalid_float_env_value_raises_error(self, monkeypatch) -> None:
