@@ -34,9 +34,8 @@ from .geocoding import (
     PrecisionReducingGeocodingProvider,
 )
 from .llm import (
-    DeepSeekProvider,
     LLMProvider,
-    OpenAICompatibleChatCompletionsProvider,
+    create_any_llm_provider,
 )
 from .models import ResolvedLocation
 from .publishers import DeliveryProvider, RenderedTextDiagnostics, StdoutPublisher, TelegramPublisher
@@ -294,32 +293,14 @@ async def run(
 
 
 def _llm_provider(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
-    if settings.llm_provider == "deepseek":
-        if settings.llm_base_url:
-            return DeepSeekProvider(
-                client,
-                api_key=settings.api_key,
-                model=settings.llm_model,
-                max_output_tokens=settings.llm_max_output_tokens,
-                base_url=settings.llm_base_url,
-            )
-        return DeepSeekProvider(
-            client,
-            api_key=settings.api_key,
-            model=settings.llm_model,
-            max_output_tokens=settings.llm_max_output_tokens,
-        )
-    if settings.llm_provider == "openai-compatible":
-        if not settings.llm_base_url:
-            raise ValueError("OpenAI-compatible provider requires LLM_BASE_URL")
-        return OpenAICompatibleChatCompletionsProvider(
-            client,
-            api_key=settings.api_key,
-            base_url=settings.llm_base_url,
-            model=settings.llm_model,
-            max_output_tokens=settings.llm_max_output_tokens,
-        )
-    raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
+    return create_any_llm_provider(
+        settings.llm_provider,
+        settings.llm_model,
+        settings.llm_max_output_tokens,
+        client,
+        api_key=settings.api_key,
+        api_base=settings.llm_base_url,
+    )
 
 
 def _delivery_provider(

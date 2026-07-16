@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
@@ -12,6 +15,7 @@ import httpx
 _LOGGER = logging.getLogger("weather_briefing.api_client")
 _API_CALL_EXTENSION = "weather_briefing.api_call"
 _SAFE_LABEL = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_CURRENT_API_CALL: ContextVar[tuple[str, str] | None] = ContextVar("current_api_call", default=None)
 
 
 def api_call_extensions(provider: str, operation: str) -> dict[str, object]:
@@ -21,6 +25,18 @@ def api_call_extensions(provider: str, operation: str) -> dict[str, object]:
     if _SAFE_LABEL.fullmatch(operation) is None:
         raise ValueError("API operation must be a lowercase kebab-case label")
     return {_API_CALL_EXTENSION: (provider, operation)}
+
+
+@contextmanager
+def api_call_context(provider: str, operation: str) -> Iterator[None]:
+    """Classify requests made by an SDK that cannot set HTTPX extensions."""
+    # Validate labels before storing them in the request context.
+    api_call_extensions(provider, operation)
+    token = _CURRENT_API_CALL.set((provider, operation))
+    try:
+        yield
+    finally:
+        _CURRENT_API_CALL.reset(token)
 
 
 class LoggedAsyncClient(httpx.AsyncClient):
@@ -72,7 +88,7 @@ class LoggedAsyncClient(httpx.AsyncClient):
 
 
 def _api_call_identity(request: httpx.Request) -> tuple[str, str]:
-    value = request.extensions.get(_API_CALL_EXTENSION)
+    value = request.extensions.get(_API_CALL_EXTENSION, _CURRENT_API_CALL.get())
     if not isinstance(value, tuple) or len(value) != 2:
         return "unclassified", "request"
     provider, operation = value

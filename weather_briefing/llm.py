@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import Annotated, Any, Literal, Protocol, TypeAlias
 
 import httpx
 import pendulum
+from any_llm import AnyLLM
+from any_llm.exceptions import AnyLLMError
+from any_llm.providers.openai.base import BaseOpenAIProvider
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
-from .api_client import api_call_extensions
+from .api_client import api_call_context
 from .models import Advice, AdviceTopic, BriefingResult, Conclusion, Warning
 from .time_utils import require_aware_datetime
 
@@ -26,85 +30,152 @@ class LLMProvider(Protocol):
         ...
 
 
-class OpenAICompatibleChatCompletionsProvider:
-    """Call an OpenAI-compatible chat-completions endpoint."""
+def _non_empty(value: str) -> str:
+    if not value.strip():
+        raise ValueError("must not be empty")
+    return value
 
-    API_PROVIDER = "openai-compatible"
+
+NonEmptyString: TypeAlias = Annotated[str, AfterValidator(_non_empty)]
+CitedSourceIds: TypeAlias = Annotated[list[NonEmptyString], Field(min_length=1)]
+
+
+class _StrictLLMPayload(BaseModel):
+    """Reject coercion, defaults, and undeclared fields at the LLM boundary."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class SourcedTextPayload(_StrictLLMPayload):
+    """Describe one source-cited statement in the model response."""
+
+    text: NonEmptyString
+    source_ids: CitedSourceIds
+
+
+class WarningPayload(_StrictLLMPayload):
+    """Describe one active warning in the model response."""
+
+    id: NonEmptyString
+    title: NonEmptyString
+    status: NonEmptyString
+    detail: NonEmptyString
+    source_ids: CitedSourceIds
+
+
+class AdvicePayload(SourcedTextPayload):
+    """Describe one categorized lifestyle recommendation."""
+
+    topic: Literal["clothing", "dehumidification", "exercise", "mask", "allergen"]
+
+
+class LLMStructuredOutput(_StrictLLMPayload):
+    """Define the complete, strict response contract requested from every LLM."""
+
+    headline: NonEmptyString
+    headline_source_ids: CitedSourceIds
+    conclusions: list[SourcedTextPayload]
+    active_warnings: list[WarningPayload]
+    resolved_warning_ids: list[NonEmptyString]
+    disaster_tracking: list[SourcedTextPayload]
+    advice: list[AdvicePayload]
+    should_publish: bool
+
+
+def _validate_structured_output(payload: Mapping[str, Any]) -> LLMStructuredOutput:
+    try:
+        return LLMStructuredOutput.model_validate(payload)
+    except ValidationError as exc:
+        location = ".".join(str(part) for part in exc.errors()[0]["loc"])
+        raise LLMError(f"LLM response schema validation failed at {location}") from exc
+
+
+def _decode_structured_response(response: Any) -> LLMStructuredOutput:
+    """Decode the normalized any-llm response without masking programming errors."""
+    choices = getattr(response, "choices", None)
+    if not isinstance(choices, list) or not choices:
+        raise LLMError("LLM returned no completion choices")
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        raise LLMError("LLM completion choice is missing a message")
+    parsed = getattr(message, "parsed", None)
+    if isinstance(parsed, LLMStructuredOutput):
+        return parsed
+    content = getattr(message, "content", None)
+    if not isinstance(content, str) or not content:
+        raise LLMError("LLM returned empty JSON content")
+    try:
+        return LLMStructuredOutput.model_validate_json(content)
+    except ValidationError as exc:
+        location = ".".join(str(part) for part in exc.errors()[0]["loc"])
+        raise LLMError(f"LLM response schema validation failed at {location}") from exc
+
+
+class AnyLLMStructuredProvider:
+    """Adapt an any-llm provider to the application's structured LLM boundary."""
 
     def __init__(
         self,
-        client: httpx.AsyncClient,
+        client: AnyLLM,
         *,
-        api_key: str,
-        base_url: str,
+        provider: str,
         model: str,
         max_output_tokens: int,
     ) -> None:
-        """Configure one OpenAI-compatible model endpoint and output limit."""
+        """Configure a reusable any-llm client and output limit."""
         self._client = client
-        self._api_key = api_key
-        self._base_url = base_url
+        self._provider = provider
         self._model = model
         self._max_output_tokens = max_output_tokens
 
     @property
-    def base_url(self) -> str:
-        """Return the configured API base URL."""
-        return self._base_url
+    def provider(self) -> str:
+        """Return the application-facing provider name used for diagnostics."""
+        return self._provider
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         """Request and decode one structured JSON response."""
         try:
-            response = await self._client.post(
-                f"{self._base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json={
-                    "model": self._model,
-                    "messages": [
+            with api_call_context(self._provider, "chat-completions"):
+                response = await self._client.acompletion(
+                    model=self._model,
+                    messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                     ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.2,
-                    "max_tokens": self._max_output_tokens,
-                },
-                extensions=api_call_extensions(self.API_PROVIDER, "chat-completions"),
-            )
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            if not content:
-                raise LLMError("LLM returned empty JSON content")
-            result = json.loads(content)
-        except (httpx.HTTPError, KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise LLMError("LLM request or structured response failed") from exc
-        if not isinstance(result, dict):
-            raise LLMError("LLM response must be a JSON object")
-        return result
+                    response_format=LLMStructuredOutput,
+                    temperature=0.2,
+                    max_tokens=self._max_output_tokens,
+                )
+        except AnyLLMError as exc:
+            raise LLMError("LLM request failed") from exc
+        result = _decode_structured_response(response)
+        return result.model_dump(mode="json")
 
 
-class DeepSeekProvider(OpenAICompatibleChatCompletionsProvider):
-    """Use DeepSeek through the shared OpenAI-compatible adapter."""
-
-    DEFAULT_BASE_URL = "https://api.deepseek.com"
-    API_PROVIDER = "deepseek"
-
-    def __init__(
-        self,
-        client: httpx.AsyncClient,
-        *,
-        api_key: str,
-        model: str,
-        max_output_tokens: int,
-        base_url: str = DEFAULT_BASE_URL,
-    ) -> None:
-        """Configure DeepSeek through the shared chat-completions adapter."""
-        super().__init__(
-            client,
-            api_key=api_key,
-            base_url=base_url,
-            model=model,
-            max_output_tokens=max_output_tokens,
-        )
+def create_any_llm_provider(
+    provider: str,
+    model: str,
+    max_output_tokens: int,
+    http_client: httpx.AsyncClient,
+    *,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> AnyLLMStructuredProvider:
+    """Create an application adapter for any supported any-llm completion provider."""
+    provider_class = AnyLLM.get_provider_class(provider)
+    if not provider_class.SUPPORTS_COMPLETION:
+        raise ValueError(f"any-llm provider does not support completion: {provider}")
+    client_options: dict[str, object] = {}
+    if issubclass(provider_class, BaseOpenAIProvider):
+        client_options.update(http_client=http_client, max_retries=0)
+    sdk_client = AnyLLM.create(provider, api_key=api_key, api_base=api_base, **client_options)
+    return AnyLLMStructuredProvider(
+        sdk_client,
+        provider=provider,
+        model=model,
+        max_output_tokens=max_output_tokens,
+    )
 
 
 def parse_result(
@@ -114,105 +185,45 @@ def parse_result(
 ) -> BriefingResult:
     """Validate an LLM payload and convert it to a briefing result."""
     require_aware_datetime(now, context="Briefing result time")
+    structured = _validate_structured_output(payload)
 
-    def string_ids(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
-        raw_ids = value.get(field, [])
-        if not isinstance(raw_ids, list):
-            raise LLMError(f"{field} must be an array")
-        if not all(isinstance(item, str) and item.strip() for item in raw_ids):
-            raise LLMError(f"{field} must contain non-empty strings")
-        return tuple(raw_ids)
-
-    def cited_source_ids(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
-        parsed = string_ids(value, field)
-        if not parsed:
-            raise LLMError(f"{field} must cite at least one source ID")
-        unknown = set(parsed) - valid_source_ids
+    def cited_source_ids(source_ids: list[str]) -> tuple[str, ...]:
+        unknown = set(source_ids) - valid_source_ids
         if unknown:
             raise LLMError(f"Model cited unknown source IDs: {sorted(unknown)}")
-        return parsed
+        return tuple(source_ids)
 
-    def sourced_text(value: Mapping[str, Any], key: str) -> str:
-        text = value.get("text")
-        if not isinstance(text, str) or not text.strip():
-            raise LLMError(f"{key} entries must contain non-empty text")
-        return text
+    def sourced_text_items(values: list[SourcedTextPayload]) -> tuple[Conclusion, ...]:
+        return tuple(Conclusion(text=value.text, source_ids=cited_source_ids(value.source_ids)) for value in values)
 
-    def required_text(value: Mapping[str, Any], field: str, *, context: str = "") -> str:
-        text = value.get(field)
-        if not isinstance(text, str) or not text.strip():
-            raise LLMError(f"{context}{field} must be a non-empty string")
-        return text
-
-    def parse_sourced_text_items(key: str) -> tuple[Conclusion, ...]:
-        values = payload.get(key, [])
-        if not isinstance(values, list):
-            raise LLMError(f"{key} must be an array")
-        parsed: list[Conclusion] = []
-        for value in values:
-            if not isinstance(value, dict):
-                raise LLMError(f"{key} entries must be objects")
-            parsed.append(
-                Conclusion(
-                    text=sourced_text(value, key),
-                    source_ids=cited_source_ids(value, "source_ids"),
-                )
-            )
-        return tuple(parsed)
-
-    def advice() -> tuple[Advice, ...]:
-        values = payload.get("advice", [])
-        if not isinstance(values, list):
-            raise LLMError("advice must be an array")
-        parsed: list[Advice] = []
-        for value in values:
-            if not isinstance(value, dict):
-                raise LLMError("advice entries must be objects")
-            try:
-                topic = AdviceTopic(str(value["topic"]))
-            except (KeyError, ValueError):
-                allowed = ", ".join(item.value for item in AdviceTopic)
-                raise LLMError(f"advice entries must use a valid topic: {allowed}") from None
-            parsed.append(
-                Advice(
-                    topic=topic,
-                    text=sourced_text(value, "advice"),
-                    source_ids=cited_source_ids(value, "source_ids"),
-                )
-            )
-        return tuple(parsed)
-
-    warning_values = payload.get("active_warnings", [])
-    if not isinstance(warning_values, list):
-        raise LLMError("active_warnings must be an array")
-    warnings: list[Warning] = []
-    for value in warning_values:
-        if not isinstance(value, dict):
-            raise LLMError("active_warnings entries must be objects")
-        warnings.append(
-            Warning(
-                id=required_text(value, "id", context="active_warnings entries: "),
-                title=required_text(value, "title", context="active_warnings entries: "),
-                status=required_text(value, "status", context="active_warnings entries: "),
-                detail=required_text(value, "detail", context="active_warnings entries: "),
-                source_ids=cited_source_ids(value, "source_ids"),
-                last_confirmed_at=now,
-            )
+    warnings = tuple(
+        Warning(
+            id=value.id,
+            title=value.title,
+            status=value.status,
+            detail=value.detail,
+            source_ids=cited_source_ids(value.source_ids),
+            last_confirmed_at=now,
         )
-    should_publish = payload.get("should_publish", True)
-    if not isinstance(should_publish, bool):
-        raise LLMError("should_publish must be a boolean")
-    parsed_conclusions = parse_sourced_text_items("conclusions")
-    parsed_advice = advice()
-    parsed_disaster_tracking = parse_sourced_text_items("disaster_tracking")
+        for value in structured.active_warnings
+    )
+    advice = tuple(
+        Advice(
+            topic=AdviceTopic(value.topic),
+            text=value.text,
+            source_ids=cited_source_ids(value.source_ids),
+        )
+        for value in structured.advice
+    )
+    raw_payload = structured.model_dump(mode="json")
     return BriefingResult(
-        headline=required_text(payload, "headline"),
-        headline_source_ids=cited_source_ids(payload, "headline_source_ids"),
-        conclusions=parsed_conclusions,
-        active_warnings=tuple(warnings),
-        resolved_warning_ids=string_ids(payload, "resolved_warning_ids"),
-        advice=parsed_advice,
-        disaster_tracking=parsed_disaster_tracking,
-        should_publish=should_publish,
-        raw_payload=dict(payload),
+        headline=structured.headline,
+        headline_source_ids=cited_source_ids(structured.headline_source_ids),
+        conclusions=sourced_text_items(structured.conclusions),
+        active_warnings=warnings,
+        resolved_warning_ids=tuple(structured.resolved_warning_ids),
+        advice=advice,
+        disaster_tracking=sourced_text_items(structured.disaster_tracking),
+        should_publish=structured.should_publish,
+        raw_payload=raw_payload,
     )

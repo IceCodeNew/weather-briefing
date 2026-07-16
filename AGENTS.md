@@ -64,6 +64,7 @@ Usage notes:
 - Keep this file limited to development judgment, workflow constraints, and lessons that future agents could otherwise miss. Link to the other documents instead of duplicating them.
 - Update the document that owns a changed decision in the same change as the implementation.
 - Use `docs/notes.md` to explain the rationale, trade-offs, and operating boundaries behind key architecture choices when the current contract alone would not make them clear. For accepted design concerns that remain intentionally unresolved, also state the assumptions that make the choice acceptable and concrete triggers for reevaluation; update or remove the note when those assumptions change.
+- Keep local audit-risk documents limited to unresolved or actively monitored findings. Remove a finding in the same change that resolves it instead of retaining a completed-history section, and never add the local audit document to version control.
 
 ## Engineering judgment
 
@@ -71,6 +72,7 @@ Usage notes:
 - Separate domain reference data from implementation. Geographic bounds, classification tables, matching patterns, and similar values belong in validated data files rather than Python constants.
 - Treat privacy as broader than secret scanning. Locations, coordinates, private feed URLs, source content, state, and other contextual identifiers can expose a user even when they are not credentials. Use runtime configuration and public examples in committed code and tests.
 - Keep dependencies minimal and justify every third-party package. Use high-level security interfaces for authentication and cryptography; do not implement protocols with low-level primitives when a maintained high-level library exists.
+- Before implementing an external protocol, authentication flow, structured-response validator, retry policy, rate limiter, or service client, evaluate the provider's official SDK and mature maintained high-level libraries. Prefer a thin adapter over duplicating wire formats or reusable infrastructure. If a custom implementation is necessary, document the dependency, privacy, observability, or compatibility reason in `docs/notes.md`. Do not replace small domain-specific adapters or suitable standard-library code merely to reduce line count.
 - Prefer timezone-aware Pendulum values in Python. Reject ambiguous timestamps, keep timezone assumptions at provider boundaries, and centralize unavoidable provider-specific fallback rules instead of spreading guesses through business logic.
 - Do not retain compatibility paths for abandoned internal formats unless the current requirements explicitly require them.
 - Keep code comments concise and in English.

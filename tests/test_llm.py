@@ -1,40 +1,38 @@
 import json
+from copy import deepcopy
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import AsyncMock
 
-import httpx
 import pendulum
 import pytest
+from any_llm import AnyLLM
+from any_llm.exceptions import ProviderError
 
-from weather_briefing.llm import (
-    LLMError,
-    OpenAICompatibleChatCompletionsProvider,
-    parse_result,
-)
+from weather_briefing.llm import AnyLLMStructuredProvider, LLMError, LLMStructuredOutput, parse_result
 
 
-def test_rejects_model_invented_source() -> None:
-    payload = {
-        "headline": "Briefing",
-        "headline_source_ids": ["source"],
-        "conclusions": [{"text": "Claim", "source_ids": ["invented"]}],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-    with pytest.raises(LLMError, match="unknown source"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"real"},
-        )
-
-
-def test_accepts_suppressed_message_with_unchanged_active_warning() -> None:
-    payload = {
+def _valid_payload() -> dict[str, Any]:
+    return {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
         "conclusions": [],
-        "active_warnings": [
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "disaster_tracking": [],
+        "advice": [],
+        "should_publish": True,
+    }
+
+
+def _now() -> pendulum.DateTime:
+    return pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+
+
+def test_accepts_complete_suppressed_message_with_active_warning() -> None:
+    payload = _valid_payload()
+    payload.update(
+        active_warnings=[
             {
                 "id": "warning",
                 "title": "Warning",
@@ -43,172 +41,99 @@ def test_accepts_suppressed_message_with_unchanged_active_warning() -> None:
                 "source_ids": ["source"],
             }
         ],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-        "should_publish": False,
-    }
-
-    result = parse_result(
-        payload,
-        pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-        {"source"},
+        advice=[{"topic": "clothing", "text": "Wear layers", "source_ids": ["source"]}],
+        conclusions=[{"text": "Cool morning", "source_ids": ["source"]}],
+        disaster_tracking=[{"text": "Storm nearby", "source_ids": ["source"]}],
+        should_publish=False,
     )
+
+    result = parse_result(payload, _now(), {"source"})
 
     assert not result.should_publish
     assert result.active_warnings[0].id == "warning"
+    assert result.advice[0].topic.value == "clothing"
+    assert result.conclusions[0].text == "Cool morning"
+    assert result.disaster_tracking[0].text == "Storm nearby"
+    assert result.raw_payload == payload
 
 
-def test_rejects_result_time_without_timezone() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
+def test_rejects_result_time_without_timezone_before_schema_validation() -> None:
     with pytest.raises(ValueError, match="timezone information"):
-        parse_result(payload, pendulum.naive(2026, 7, 13, 9), set())
+        parse_result({}, pendulum.naive(2026, 7, 13, 9), set())
 
 
-def test_rejects_conclusions_not_an_array() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": "not-an-array",
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
+@pytest.mark.parametrize("field", tuple(_valid_payload()))
+def test_rejects_every_missing_required_top_level_field(field: str) -> None:
+    payload = _valid_payload()
+    del payload[field]
+
+    with pytest.raises(LLMError, match=rf"schema validation failed at {field}"):
+        parse_result(payload, _now(), {"source"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("headline", None),
+        ("headline", "   "),
+        ("headline_source_ids", []),
+        ("headline_source_ids", "source"),
+        ("conclusions", "not-an-array"),
+        ("active_warnings", "not-an-array"),
+        ("resolved_warning_ids", "warning"),
+        ("disaster_tracking", "not-an-array"),
+        ("advice", "not-an-array"),
+        ("should_publish", "yes"),
+    ),
+)
+def test_rejects_invalid_top_level_field(field: str, value: object) -> None:
+    payload = _valid_payload()
+    payload[field] = value
+
+    with pytest.raises(LLMError, match=rf"schema validation failed at {field}"):
+        parse_result(payload, _now(), {"source"})
+
+
+@pytest.mark.parametrize("section", ("conclusions", "disaster_tracking"))
+@pytest.mark.parametrize(
+    "item",
+    (
+        "not-an-object",
+        {"text": "Claim"},
+        {"text": "", "source_ids": ["source"]},
+        {"text": 42, "source_ids": ["source"]},
+        {"text": "Claim", "source_ids": []},
+        {"text": "Claim", "source_ids": [None]},
+    ),
+)
+def test_rejects_invalid_sourced_item(section: str, item: object) -> None:
+    payload = _valid_payload()
+    payload[section] = [item]
+
+    with pytest.raises(LLMError, match=rf"schema validation failed at {section}.0"):
+        parse_result(payload, _now(), {"source"})
+
+
+@pytest.mark.parametrize("field", ("id", "title", "status", "detail", "source_ids"))
+def test_rejects_incomplete_warning(field: str) -> None:
+    warning = {
+        "id": "w1",
+        "title": "Warning",
+        "status": "active",
+        "detail": "Details",
+        "source_ids": ["source"],
     }
+    del warning[field]
+    payload = _valid_payload()
+    payload["active_warnings"] = [warning]
 
-    with pytest.raises(LLMError, match="must be an array"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
-
-
-def test_rejects_conclusion_entry_not_a_dict() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": ["not-a-dict"],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="entries must be objects"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
-
-
-def test_rejects_conclusion_without_source_ids() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [{"text": "Claim"}],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="must cite at least one source"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
-
-
-@pytest.mark.parametrize("source_ids", [None, "source", [None], [""]])
-def test_rejects_malformed_source_ids(source_ids) -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [{"text": "Claim", "source_ids": source_ids}],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="source_ids must"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
-
-
-@pytest.mark.parametrize("key", ["conclusions", "disaster_tracking", "advice"])
-@pytest.mark.parametrize("text", [None, "", "   ", 42])
-def test_rejects_sourced_item_without_non_empty_text(key: str, text) -> None:
-    item = {"text": text, "source_ids": ["source"]}
-    if key == "advice":
-        item["topic"] = "clothing"
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-        key: [item],
-    }
-
-    with pytest.raises(LLMError, match=f"{key} entries must contain non-empty text"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
-
-
-def test_rejects_active_warnings_not_an_array() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": "not-an-array",
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="active_warnings must be an array"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
-
-
-def test_rejects_warning_entry_not_a_dict() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": ["not-a-dict"],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="active_warnings entries must be objects"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
+    with pytest.raises(LLMError, match=rf"schema validation failed at active_warnings.0.{field}"):
+        parse_result(payload, _now(), {"source"})
 
 
 @pytest.mark.parametrize("field", ("id", "title", "status", "detail"))
 @pytest.mark.parametrize("value", (None, "", "   ", 42))
-def test_rejects_warning_without_required_text(field: str, value: object) -> None:
+def test_rejects_invalid_warning_text(field: str, value: object) -> None:
     warning = {
         "id": "w1",
         "title": "Warning",
@@ -217,249 +142,162 @@ def test_rejects_warning_without_required_text(field: str, value: object) -> Non
         "source_ids": ["source"],
     }
     warning[field] = value
-    payload = {
-        "headline": "Briefing",
-        "headline_source_ids": ["source"],
-        "conclusions": [],
-        "active_warnings": [warning],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
+    payload = _valid_payload()
+    payload["active_warnings"] = [warning]
 
-    with pytest.raises(LLMError, match=rf"active_warnings entries: {field} must be a non-empty string"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
-
-
-def test_rejects_warning_without_source_ids() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": [{"id": "w1", "title": "W", "status": "active", "detail": "D"}],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="source_ids must cite at least one source"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
-
-
-@pytest.mark.parametrize("source_ids", [None, "source", [1], [""]])
-def test_rejects_warning_with_malformed_source_ids(source_ids: object) -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": [{"id": "w1", "title": "W", "status": "active", "detail": "D", "source_ids": source_ids}],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="source_ids must"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
-
-
-def test_rejects_warning_with_unknown_source_id() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": [{"id": "w1", "title": "W", "status": "active", "detail": "D", "source_ids": ["unknown"]}],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="unknown source ID"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
-
-
-@pytest.mark.parametrize("headline", (None, "", "   ", 42))
-def test_rejects_result_without_headline_text(headline: object) -> None:
-    payload = {
-        "headline": headline,
-        "headline_source_ids": ["source"],
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="headline must be a non-empty string"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
-
-
-@pytest.mark.parametrize("resolved_warning_ids", [None, "warning", [1], [""]])
-def test_rejects_malformed_resolved_warning_ids(resolved_warning_ids: object) -> None:
-    payload = {
-        "headline": "Briefing",
-        "headline_source_ids": ["source"],
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": resolved_warning_ids,
-        "advice": [],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="resolved_warning_ids must"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
-
-
-def test_rejects_non_boolean_should_publish() -> None:
-    payload = {
-        "headline": "Briefing",
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-        "should_publish": "yes",
-    }
-
-    with pytest.raises(LLMError, match="should_publish must be a boolean"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            set(),
-        )
-
-
-@pytest.mark.parametrize("field", ("headline_source_ids",))
-def test_rejects_summary_without_source_ids(field: str) -> None:
-    payload = {
-        "headline": "Briefing",
-        "headline_source_ids": ["source"],
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [],
-        "disaster_tracking": [],
-    }
-    del payload[field]
-
-    with pytest.raises(LLMError, match=rf"{field} must cite"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
-
-
-def test_rejects_advice_without_a_valid_topic() -> None:
-    payload = {
-        "headline": "Briefing",
-        "headline_source_ids": ["source"],
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": [{"text": "Advice", "source_ids": ["source"]}],
-        "disaster_tracking": [],
-    }
-
-    with pytest.raises(LLMError, match="must use a valid topic"):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
+    with pytest.raises(LLMError, match=rf"schema validation failed at active_warnings.0.{field}"):
+        parse_result(payload, _now(), {"source"})
 
 
 @pytest.mark.parametrize(
-    ("advice", "message"),
-    (("not-an-array", "advice must be an array"), (["not-an-object"], "advice entries must be objects")),
+    "advice",
+    (
+        ["not-an-object"],
+        [{"text": "Advice", "source_ids": ["source"]}],
+        [{"topic": "unknown", "text": "Advice", "source_ids": ["source"]}],
+    ),
 )
-def test_rejects_invalid_advice_structure(advice: object, message: str) -> None:
-    payload = {
-        "headline": "Briefing",
-        "headline_source_ids": ["source"],
-        "conclusions": [],
-        "active_warnings": [],
-        "resolved_warning_ids": [],
-        "advice": advice,
-        "disaster_tracking": [],
-    }
+def test_rejects_invalid_advice(advice: object) -> None:
+    payload = _valid_payload()
+    payload["advice"] = advice
+
+    with pytest.raises(LLMError, match=r"schema validation failed at advice.0"):
+        parse_result(payload, _now(), {"source"})
+
+
+@pytest.mark.parametrize(
+    ("section", "item"),
+    (
+        ("headline_source_ids", ["invented"]),
+        ("conclusions", [{"text": "Claim", "source_ids": ["invented"]}]),
+        (
+            "active_warnings",
+            [
+                {
+                    "id": "w1",
+                    "title": "Warning",
+                    "status": "active",
+                    "detail": "Details",
+                    "source_ids": ["invented"],
+                }
+            ],
+        ),
+        ("disaster_tracking", [{"text": "Storm", "source_ids": ["invented"]}]),
+        ("advice", [{"topic": "mask", "text": "Mask", "source_ids": ["invented"]}]),
+    ),
+)
+def test_rejects_unknown_source_in_every_cited_section(section: str, item: object) -> None:
+    payload = _valid_payload()
+    payload[section] = deepcopy(item)
+
+    with pytest.raises(LLMError, match="unknown source"):
+        parse_result(payload, _now(), {"source"})
+
+
+def test_rejects_unexpected_response_field() -> None:
+    payload = _valid_payload()
+    payload["unexpected"] = True
+
+    with pytest.raises(LLMError, match=r"schema validation failed at unexpected"):
+        parse_result(payload, _now(), {"source"})
+
+
+async def test_provider_accepts_typed_parsed_response() -> None:
+    parsed = LLMStructuredOutput.model_validate(_valid_payload())
+    client = SimpleNamespace(
+        acompletion=AsyncMock(
+            return_value=SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed, content=None))]
+            )
+        )
+    )
+    provider = AnyLLMStructuredProvider(
+        cast("AnyLLM", client),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    assert await provider.summarize("prompt", {}) == _valid_payload()
+
+
+async def test_provider_rejects_empty_json_content() -> None:
+    client = SimpleNamespace(
+        acompletion=AsyncMock(
+            return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))])
+        )
+    )
+    provider = AnyLLMStructuredProvider(
+        cast("AnyLLM", client),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with pytest.raises(LLMError, match="empty JSON"):
+        await provider.summarize("prompt", {})
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    (
+        (SimpleNamespace(choices=[]), "no completion choices"),
+        (SimpleNamespace(choices=[SimpleNamespace()]), "missing a message"),
+    ),
+)
+async def test_provider_rejects_malformed_completion_response(response: object, message: str) -> None:
+    client = SimpleNamespace(acompletion=AsyncMock(return_value=response))
+    provider = AnyLLMStructuredProvider(
+        cast("AnyLLM", client),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
 
     with pytest.raises(LLMError, match=message):
-        parse_result(
-            payload,
-            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
-            {"source"},
-        )
+        await provider.summarize("prompt", {})
 
 
-async def test_openai_provider_rejects_empty_json_content() -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda _: httpx.Response(
-                200,
-                json={"choices": [{"message": {"content": ""}}]},
+async def test_provider_rejects_invalid_structured_response() -> None:
+    client = SimpleNamespace(
+        acompletion=AsyncMock(
+            return_value=SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps([1, 2, 3])))]
             )
         )
-    ) as client:
-        provider = OpenAICompatibleChatCompletionsProvider(
-            client,
-            api_key="key",
-            base_url="https://api.example.invalid/v1",
-            model="model",
-            max_output_tokens=1024,
-        )
-        with pytest.raises(LLMError, match="empty JSON"):
-            await provider.summarize("prompt", {})
+    )
+    provider = AnyLLMStructuredProvider(
+        cast("AnyLLM", client),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with pytest.raises(LLMError, match="schema validation"):
+        await provider.summarize("prompt", {})
 
 
-async def test_openai_provider_rejects_non_dict_response() -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda _: httpx.Response(
-                200,
-                json={"choices": [{"message": {"content": json.dumps([1, 2, 3])}}]},
-            )
-        )
-    ) as client:
-        provider = OpenAICompatibleChatCompletionsProvider(
-            client,
-            api_key="key",
-            base_url="https://api.example.invalid/v1",
-            model="model",
-            max_output_tokens=1024,
-        )
-        with pytest.raises(LLMError, match="JSON object"):
-            await provider.summarize("prompt", {})
+async def test_provider_wraps_sdk_error() -> None:
+    client = SimpleNamespace(acompletion=AsyncMock(side_effect=ProviderError("upstream failed")))
+    provider = AnyLLMStructuredProvider(
+        cast("AnyLLM", client),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with pytest.raises(LLMError, match="LLM request"):
+        await provider.summarize("prompt", {})
 
 
-async def test_openai_provider_rejects_http_error_response() -> None:
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
-        provider = OpenAICompatibleChatCompletionsProvider(
-            client,
-            api_key="key",
-            base_url="https://api.example.invalid/v1",
-            model="model",
-            max_output_tokens=1024,
-        )
-        with pytest.raises(LLMError, match="LLM request"):
-            await provider.summarize("prompt", {})
+async def test_provider_does_not_mask_programming_errors() -> None:
+    client = SimpleNamespace(acompletion=AsyncMock(side_effect=AttributeError("adapter bug")))
+    provider = AnyLLMStructuredProvider(
+        cast("AnyLLM", client),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with pytest.raises(AttributeError, match="adapter bug"):
+        await provider.summarize("prompt", {})

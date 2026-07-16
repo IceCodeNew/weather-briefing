@@ -41,14 +41,14 @@
 
 ## 架构与隐私
 
-1. OpenAI-compatible Chat Completions provider 承担唯一的兼容协议实现。DeepSeek provider 只允许作为继承该实现、预置 Base URL 的薄配置类，不复制请求逻辑；其他兼容服务通过 API Key、模型和 Base URL 配置切换。未来非兼容协议通过 `LLMProvider` 扩展。日常开发测试使用 mock，正式端到端测试才调用真实模型。
+1. LLM 请求协议、厂商认证、API Base 和参数差异由 any-llm SDK 及其官方 provider SDK 承担；应用支持 SDK 声明且实现 completion 的全部 provider，只保留实现 `LLMProvider` 的薄适配器、严格结构化结果 schema、运行时来源校验和非敏感请求日志分类，不得自行拼装厂商 wire protocol。日常开发测试使用 mock，正式端到端测试才调用真实模型。
 2. QWeather 使用官方推荐的 JWT 身份认证：运行时以 Base64 环境变量承载的 Ed25519 私钥 PEM 签发短期 Token，项目 ID、凭据 ID、API Host 和有效期均从环境变量注入。不得使用长期 API KEY 作为默认认证方式。
 3. LLM provider、RSS source、正文 cleaner、天气与空气质量上下文服务、状态存储和投递 provider 均为可替换边界。LLM 输出必须先转换为平台无关的结构化结果，再由投递 provider 使用平台专用模板生成并发送消息；Telegram HTML 等平台语法不得进入 LLM 或核心编排。
 4. 公开仓库不得包含凭据、真实关注地区、真实 RSS URL、经纬度、Webhook、地理编码缓存、历史简报或运行状态。仓库只维护无效或公开地点的结构示例。
 5. 提交前运行通用秘密扫描，并对项目特有的隐私配置进行检查。
 6. 需求变更应同步更新本文档。
 7. 配置项应经过类型、范围和必填校验；provider、source 和状态存储保持明确扩展边界，避免厂商逻辑进入核心编排。
-8. DeepSeek 使用 `DEEPSEEK_*` 配置，通用 OpenAI-compatible provider 使用 `LLM_*` 配置；RSS 只从命名 JSON 文件读取。SQLite 没有原生日期时间类型，应用仅在持久化边界将时区感知时间转换为固定宽度 UTC 文本，使文本字典序等同绝对时间顺序。
+8. `LLM_PROVIDER` 使用 any-llm provider ID，`LLM_MODEL` 使用对应模型 ID，凭据与 API Base 使用 SDK 为该 provider 定义的环境变量。应用仅兼容已投入使用的 `DEEPSEEK_MODEL` 与 `DEEPSEEK_BASE_URL`。开发依赖安装 `any-llm-sdk[all]`；运行依赖只安装 SDK 核心包，由部署者显式、可复现地安装实际 provider extras。RSS 只从命名 JSON 文件读取。SQLite 没有原生日期时间类型，应用仅在持久化边界将时区感知时间转换为固定宽度 UTC 文本，使文本字典序等同绝对时间顺序。
 9. 地理范围、空气质量分级与健康提示、正文清洗默认规则、provider 默认顺序及厂商指数代码等纯领域数据应存放在独立数据文件中，由实现代码加载并校验。
 10. INFO 日志必须记录每个地点的有效天气 provider 顺序，并为每次天气 API 逻辑调用记录 provider、成功或失败、耗时、成功时的实际来源与观测时间，以及失败时不包含请求内容的阶段、HTTP 状态或异常类型，使自动降级可追溯。所有实际外部 HTTP 请求，包括天气、空气质量、地理编码、LLM、RSS、辅助上下文和 Telegram 投递，还必须统一记录静态 provider、operation、方法、成功或失败、耗时，以及 HTTP 状态或异常类型；重试和分片分别按实际请求次数记录。常规 INFO 日志及仅由 DEBUG 级别启用的非敏感诊断不得包含坐标、凭据、标题、正文、URL、接收方标识、私有 endpoint、响应正文或异常消息。DEBUG 非敏感诊断应以元数据覆盖 RSS 清洗、权威预报转发、平台渲染和分片投递边界，使运维可以根据来源、发布时间、字符数、分片数和平台接受状态定位内容丢失阶段。完整渲染正文属于敏感诊断数据，默认不得记录；运行时可以通过 CLI 临时启用、查询或关闭该行为，无需重启 daemon。启用时长必须为正且不超过 24 小时，到期自动失效。只有 DEBUG 日志级别与临时开关同时有效时才输出投递 provider 生成的完整消息及平台分片；这些文本可能包含来源内容、来源 URL、坐标和其他位置上下文，但仍不得包含投递凭据、接收方标识或请求 endpoint。诊断状态初始化或读取失败不得阻断正常投递。
 
