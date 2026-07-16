@@ -17,7 +17,7 @@ from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_doc
 from .allergen import allergen_guidance, allergen_to_document, pollen_type_names
 from .api_client import api_call_extensions
 from .models import AirQualitySnapshot, AllergenLevel, AllergenSnapshot, SourceDocument, WeatherContextSnapshot
-from .reference_data import ReferenceDataError, reference_string_tuple
+from .reference_data import ReferenceDataError, reference_string, reference_string_tuple
 from .time_utils import (
     datetime_timezone_specifier,
     parse_datetime_with_default_timezone,
@@ -151,6 +151,7 @@ class QWeatherProvider:
         self._index_types = index_types or reference_string_tuple(
             "provider_defaults.json", "qweather_lifestyle_index_types"
         )
+        self._allergen_index_type = reference_string("provider_defaults.json", "qweather_allergen_index_type")
 
     async def fetch(
         self,
@@ -205,6 +206,7 @@ class QWeatherProvider:
 
             indices_payload: dict[str, object] = {}
             lifestyle_advice: tuple[str, ...] = ()
+            allergen_advice_available = False
             if forecast_date is None or str(forecast_date) == first_forecast_date:
                 operation = "lifestyle indices"
                 indices_response = await self._client.get(
@@ -224,7 +226,13 @@ class QWeatherProvider:
                         "QWeather returned a non-success indices status "
                         f"code={_safe_api_status(indices_payload.get('code'))}"
                     )
-                lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in indices_payload.get("daily", ()))
+                daily_indices = tuple(indices_payload.get("daily", ()))
+                lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in daily_indices)
+                allergen_advice_available = any(
+                    str(item.get("type")) == self._allergen_index_type
+                    for item in daily_indices
+                    if isinstance(item, dict)
+                )
             source_url = str(
                 weather_payload.get("fxLink") or indices_payload.get("fxLink") or "https://www.qweather.com/"
             )
@@ -248,6 +256,7 @@ class QWeatherProvider:
             weather_forecast=weather_forecast,
             lifestyle_advice=lifestyle_advice,
             air_quality=air_quality,
+            allergen_advice_available=allergen_advice_available,
         )
 
     async def fetch_for_date(
@@ -627,6 +636,7 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
             id=snapshot.source_id,
             name=snapshot.source_name,
             url=snapshot.source_url,
+            has_allergen_information=snapshot.allergen_advice_available,
             content=(
                 f"更新时间：{snapshot.observed_at.to_iso8601_string()}\n"
                 f"今明天气预报：\n{weather}\n"

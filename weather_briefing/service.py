@@ -8,7 +8,16 @@ from typing import Protocol
 import pendulum
 
 from .llm import LLMError, LLMProvider, parse_result
-from .models import Article, BriefingResult, ContextSourceConfig, FeedConfig, ResolvedLocation, SourceDocument, Warning
+from .models import (
+    AdviceTopic,
+    Article,
+    BriefingResult,
+    ContextSourceConfig,
+    FeedConfig,
+    ResolvedLocation,
+    SourceDocument,
+    Warning,
+)
 from .prompts import SYSTEM_PROMPT
 from .publishers import DeliveryProvider
 from .sources import ContextDocumentSource, RSSFeedSource
@@ -237,20 +246,32 @@ class BriefingService:
         )
         briefing_limit = self._delivery.briefing_limit(self._settings.briefing_max_characters)
         payload["output_constraints"] = {"briefing_max_characters": briefing_limit}
+        required_advice_topics = _required_advice_topics(kind, context)
+        payload["required_advice_topics"] = [topic.value for topic in required_advice_topics]
+        allergen_source_ids = {document.id for document in context if document.has_allergen_information}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
 
-        def validate_length(candidate: BriefingResult) -> None:
+        def validate_result(candidate: BriefingResult) -> None:
             candidate_message = self._delivery.render_briefing(candidate, source_articles, reference_context)
             if kind == "briefing" and candidate.advice:
                 raise LLMError("briefing must not repeat lifestyle advice")
             if kind == "forecast" and not candidate.should_publish:
                 raise LLMError("forecast must set should_publish=true")
+            missing_advice_topics = set(required_advice_topics) - {item.topic for item in candidate.advice}
+            if missing_advice_topics:
+                missing = ", ".join(sorted(topic.value for topic in missing_advice_topics))
+                raise LLMError(f"forecast advice is missing required topics: {missing}")
+            if any(
+                item.topic is AdviceTopic.ALLERGEN and allergen_source_ids.isdisjoint(item.source_ids)
+                for item in candidate.advice
+            ):
+                raise LLMError("allergen advice must cite a current allergen-capable source")
             if candidate_message.visible_length > briefing_limit:
                 raise LLMError(
                     f"briefing has {candidate_message.visible_length} visible characters; limit is {briefing_limit}"
                 )
 
-        result = await self._summarize(payload, now, valid_source_ids, validator=validate_length)
+        result = await self._summarize(payload, now, valid_source_ids, validator=validate_result)
         message = self._delivery.render_briefing(
             result,
             source_articles,
@@ -484,6 +505,23 @@ class BriefingService:
 
 def _unique_articles(articles: tuple[Article, ...]) -> tuple[Article, ...]:
     return tuple({article.id: article for article in articles}.values())
+
+
+def _required_advice_topics(
+    kind: str,
+    context: tuple[SourceDocument, ...],
+) -> tuple[AdviceTopic, ...]:
+    if kind != "forecast":
+        return ()
+    topics = [
+        AdviceTopic.CLOTHING,
+        AdviceTopic.DEHUMIDIFICATION,
+        AdviceTopic.EXERCISE,
+        AdviceTopic.MASK,
+    ]
+    if any(document.has_allergen_information for document in context):
+        topics.append(AdviceTopic.ALLERGEN)
+    return tuple(topics)
 
 
 def _unique_documents(

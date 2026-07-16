@@ -14,7 +14,9 @@ from weather_briefing.llm import (
 def test_rejects_model_invented_source() -> None:
     payload = {
         "headline": "Briefing",
+        "headline_source_ids": ["source"],
         "overview": "Overview",
+        "overview_source_ids": ["source"],
         "conclusions": [{"text": "Claim", "source_ids": ["invented"]}],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -32,7 +34,9 @@ def test_rejects_model_invented_source() -> None:
 def test_accepts_suppressed_message_with_unchanged_active_warning() -> None:
     payload = {
         "headline": "Briefing",
+        "headline_source_ids": ["source"],
         "overview": "Overview",
+        "overview_source_ids": ["source"],
         "conclusions": [],
         "active_warnings": [
             {
@@ -131,6 +135,51 @@ def test_rejects_conclusion_without_source_ids() -> None:
         )
 
 
+@pytest.mark.parametrize("source_ids", [None, "source", [None], [""]])
+def test_rejects_malformed_source_ids(source_ids) -> None:
+    payload = {
+        "headline": "Briefing",
+        "overview": "Overview",
+        "conclusions": [{"text": "Claim", "source_ids": source_ids}],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+    }
+
+    with pytest.raises(LLMError, match="source_ids must"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
+        )
+
+
+@pytest.mark.parametrize("key", ["conclusions", "disaster_tracking", "advice"])
+@pytest.mark.parametrize("text", [None, "", "   ", 42])
+def test_rejects_sourced_item_without_non_empty_text(key: str, text) -> None:
+    item = {"text": text, "source_ids": ["source"]}
+    if key == "advice":
+        item["topic"] = "clothing"
+    payload = {
+        "headline": "Briefing",
+        "overview": "Overview",
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+        key: [item],
+    }
+
+    with pytest.raises(LLMError, match=f"{key} entries must contain non-empty text"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
+        )
+
+
 def test_rejects_active_warnings_not_an_array() -> None:
     payload = {
         "headline": "Briefing",
@@ -224,6 +273,75 @@ def test_rejects_non_boolean_should_publish() -> None:
             payload,
             pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
             set(),
+        )
+
+
+@pytest.mark.parametrize("field", ("headline_source_ids", "overview_source_ids"))
+def test_rejects_summary_without_source_ids(field: str) -> None:
+    payload = {
+        "headline": "Briefing",
+        "headline_source_ids": ["source"],
+        "overview": "Overview",
+        "overview_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+    }
+    del payload[field]
+
+    with pytest.raises(LLMError, match=rf"{field} must cite"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
+        )
+
+
+def test_rejects_advice_without_a_valid_topic() -> None:
+    payload = {
+        "headline": "Briefing",
+        "headline_source_ids": ["source"],
+        "overview": "Overview",
+        "overview_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [{"text": "Advice", "source_ids": ["source"]}],
+        "disaster_tracking": [],
+    }
+
+    with pytest.raises(LLMError, match="must use a valid topic"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("advice", "message"),
+    (("not-an-array", "advice must be an array"), (["not-an-object"], "advice entries must be objects")),
+)
+def test_rejects_invalid_advice_structure(advice: object, message: str) -> None:
+    payload = {
+        "headline": "Briefing",
+        "headline_source_ids": ["source"],
+        "overview": "Overview",
+        "overview_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": advice,
+        "disaster_tracking": [],
+    }
+
+    with pytest.raises(LLMError, match=message):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
         )
 
 

@@ -87,8 +87,9 @@ class EmptyContextSource:
 
 
 class StaticWeatherContextProvider:
-    def __init__(self) -> None:
+    def __init__(self, *, allergen_advice_available: bool = False) -> None:
         self.coordinates: tuple[float, float] | None = None
+        self._allergen_advice_available = allergen_advice_available
 
     async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
         self.coordinates = (latitude, longitude)
@@ -98,6 +99,7 @@ class StaticWeatherContextProvider:
             source_url="https://example.invalid/weather",
             observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
             weather_forecast=("Rain later",),
+            allergen_advice_available=self._allergen_advice_available,
             air_quality=AirQualitySnapshot(
                 source_id="air-quality:test",
                 source_name="Test air quality",
@@ -141,13 +143,20 @@ class RecordingLLM:
             "text": "AQI is 42 under test-standard.",
             "source_ids": [source_id],
         }
+        required_topics = payload["required_advice_topics"]
+        assert isinstance(required_topics, list)
+        advice = [{"topic": topic, "text": conclusion["text"], "source_ids": [source_id]} for topic in required_topics]
+        if self._include_briefing_advice and not advice:
+            advice = [{"topic": "clothing", **conclusion}]
         return {
             "headline": "Daily briefing",
+            "headline_source_ids": [source_id],
             "overview": "Air quality is good.",
+            "overview_source_ids": [source_id],
             "conclusions": [conclusion],
             "active_warnings": [],
             "resolved_warning_ids": [],
-            "advice": ([conclusion] if payload["mode"] == "forecast" or self._include_briefing_advice else []),
+            "advice": advice,
             "disaster_tracking": [],
             "should_publish": self._should_publish,
         }
@@ -270,6 +279,12 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     assert "PM2.5 12 µg/m³" in content
     assert "原始浓度" not in content
     assert llm.payload["location_scope"] == expected_scope
+    assert llm.payload["required_advice_topics"] == [
+        "clothing",
+        "dehumidification",
+        "exercise",
+        "mask",
+    ]
     recent_briefings = llm.payload["recent_briefings"]
     assert _is_dict_list(recent_briefings)
     assert recent_briefings == [
@@ -281,6 +296,79 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     ]
     assert body is not None
     assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
+
+
+async def test_forecast_rejects_missing_allergen_advice_when_input_contains_it(tmp_path: Path) -> None:
+    class MissingAllergenAdviceLLM(RecordingLLM):
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            result = await super().summarize(system_prompt, payload)
+            advice = result["advice"]
+            assert _is_dict_list(advice)
+            result["advice"] = [item for item in advice if item["topic"] != "allergen"]
+            return result
+
+    settings = _TestSettings(
+        timezone=pendulum.timezone("Asia/Shanghai"),
+        feeds=(),
+        context_sources=(),
+        llm_max_attempts=1,
+    )
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+    now = pendulum.datetime(2026, 7, 13, 8, tz=settings.timezone)
+
+    with SQLiteStateStore(tmp_path / "missing-allergen.sqlite3") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            MissingAllergenAdviceLLM(),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(allergen_advice_available=True),
+        )
+        with pytest.raises(LLMError, match="validation failed") as error:
+            await service.run("forecast", now)
+
+    assert "missing required topics: allergen" in str(error.value.__cause__)
+
+
+async def test_forecast_rejects_allergen_advice_without_allergen_source(tmp_path: Path) -> None:
+    class WrongAllergenSourceLLM(RecordingLLM):
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            result = await super().summarize(system_prompt, payload)
+            advice = result["advice"]
+            assert _is_dict_list(advice)
+            allergen_advice = next(item for item in advice if item["topic"] == "allergen")
+            allergen_advice["source_ids"] = ["air-quality:test"]
+            return result
+
+    settings = _TestSettings(
+        timezone=pendulum.timezone("Asia/Shanghai"),
+        feeds=(),
+        context_sources=(),
+        llm_max_attempts=1,
+    )
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+    now = pendulum.datetime(2026, 7, 13, 8, tz=settings.timezone)
+
+    with SQLiteStateStore(tmp_path / "wrong-allergen-source.sqlite3") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            WrongAllergenSourceLLM(),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(allergen_advice_available=True),
+        )
+        with pytest.raises(LLMError, match="validation failed") as error:
+            await service.run("forecast", now)
+
+    assert "must cite a current allergen-capable source" in str(error.value.__cause__)
 
 
 async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provider(tmp_path: Path) -> None:
@@ -481,7 +569,9 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             return {
                 "headline": "Warning unchanged",
+                "headline_source_ids": list(warning.source_ids),
                 "overview": "No material change.",
+                "overview_source_ids": list(warning.source_ids),
                 "conclusions": [],
                 "active_warnings": [
                     {
@@ -560,7 +650,9 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
             source_id = str(sources[0]["source_id"])
             return {
                 "headline": "Accumulated update",
+                "headline_source_ids": [source_id],
                 "overview": "Changes are now worth sending.",
+                "overview_source_ids": [source_id],
                 "conclusions": [{"text": "Accumulated change", "source_ids": [source_id]}],
                 "active_warnings": [],
                 "resolved_warning_ids": [],
@@ -992,16 +1084,23 @@ class FailingOnceLLM:
         if self.attempts == 1:
             return {
                 "headline": "Briefing",
+                "headline_source_ids": ["invented"],
                 "overview": "Overview",
+                "overview_source_ids": ["invented"],
                 "conclusions": [{"text": "Claim", "source_ids": ["invented"]}],
                 "active_warnings": [],
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
             }
+        allowed_source_ids = payload["allowed_source_ids"]
+        assert isinstance(allowed_source_ids, list)
+        source_id = str(allowed_source_ids[0])
         return {
             "headline": "Briefing",
+            "headline_source_ids": [source_id],
             "overview": "Overview",
+            "overview_source_ids": [source_id],
             "conclusions": [],
             "active_warnings": [],
             "resolved_warning_ids": [],
@@ -1071,9 +1170,14 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
 
     class LongLLM:
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            context_documents = payload["context_documents"]
+            assert _is_dict_list(context_documents)
+            source_id = str(context_documents[0]["source_id"])
             return {
                 "headline": "A" * 100,
+                "headline_source_ids": [source_id],
                 "overview": "B" * 100,
+                "overview_source_ids": [source_id],
                 "conclusions": [],
                 "active_warnings": [],
                 "resolved_warning_ids": [],

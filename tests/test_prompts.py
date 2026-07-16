@@ -20,3 +20,10 @@ def test_prompt_separates_advice_and_avoids_repetition() -> None:
     assert "过敏原信息只能放入 advice" in SYSTEM_PROMPT
     assert "不得使用“原始浓度”" in SYSTEM_PROMPT
     assert "不得在 conclusions 中重复" in SYSTEM_PROMPT
+
+
+def test_prompt_requires_attribution_and_preserves_source_conflicts() -> None:
+    assert "headline_source_ids、overview_source_ids" in SYSTEM_PROMPT
+    assert "不得拼接成无争议的单一结论" in SYSTEM_PROMPT
+    assert "优先采用可识别的当地权威气象机构" in SYSTEM_PROMPT
+    assert "input.required_advice_topics" in SYSTEM_PROMPT

@@ -68,6 +68,7 @@ def test_allergen_to_document_format() -> None:
 
     assert document.id == "allergen:test"
     assert document.name == "Test 花粉"
+    assert document.has_allergen_information
     assert "桦木：15 粒/m³（中）" in document.content
     assert "禾本：3 粒/m³（低）" in document.content
     assert "总体等级：中" in document.content
