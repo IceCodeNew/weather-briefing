@@ -1,3 +1,5 @@
+"""Command-line composition, scheduling, and one-shot execution."""
+
 from __future__ import annotations
 
 import argparse
@@ -55,6 +57,7 @@ from .weather_context import (
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for runs, daemon, and diagnostics."""
     parser = argparse.ArgumentParser(description="Generate a stateful weather briefing")
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -201,6 +204,7 @@ async def run(
     forecast_date: str | None = None,
     run_now: bool = False,
 ) -> None:
+    """Compose dependencies and execute one task across configured locations."""
     settings = Settings.from_env()
     _configure_logging(debug=settings.debug)
     if forecast_date is not None and kind != "forecast":
@@ -466,6 +470,7 @@ def _parse_forecast_date(value: str) -> pendulum.Date:
 
 
 async def daemon() -> None:
+    """Run the in-process forecast and briefing scheduler indefinitely."""
     settings = Settings.from_env()
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
@@ -524,6 +529,7 @@ def _manage_rendered_text_diagnostics(action: str, duration_seconds: int | None 
 
 
 def main() -> None:
+    """Parse command-line arguments and dispatch the selected command."""
     load_dotenv(override=False)
     args = build_parser().parse_args()
     _configure_logging(debug=False)

@@ -1,3 +1,5 @@
+"""Platform-specific rendering of validated briefing results."""
+
 from __future__ import annotations
 
 from html import escape, unescape
@@ -16,25 +18,36 @@ from .models import (
 
 
 class MessageRenderer(Protocol):
-    def render_briefing(
-        self,
-        result: BriefingResult,
-        reference_articles: tuple[Article, ...],
-        context: tuple[SourceDocument, ...],
-    ) -> RenderedMessage: ...
+    """Render platform-neutral briefing data for one delivery platform."""
 
-    def render_verbatim(self, article: Article) -> RenderedMessage: ...
-
-    def render_alert(self, title: str, body: str) -> RenderedMessage: ...
-
-
-class TelegramHTMLRenderer:
     def render_briefing(
         self,
         result: BriefingResult,
         reference_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
+        """Render a validated briefing and its citable references."""
+        ...
+
+    def render_verbatim(self, article: Article) -> RenderedMessage:
+        """Render an article without summarizing its cleaned content."""
+        ...
+
+    def render_alert(self, title: str, body: str) -> RenderedMessage:
+        """Render an operational alert."""
+        ...
+
+
+class TelegramHTMLRenderer:
+    """Render briefings as Telegram-compatible HTML."""
+
+    def render_briefing(
+        self,
+        result: BriefingResult,
+        reference_articles: tuple[Article, ...],
+        context: tuple[SourceDocument, ...],
+    ) -> RenderedMessage:
+        """Render a sourced briefing as Telegram HTML."""
         source_links = {
             article.id: _html_link(article.url, _article_source_name(article)) for article in reference_articles
         }
@@ -57,6 +70,7 @@ class TelegramHTMLRenderer:
         return _html_message("\n".join(lines).strip())
 
     def render_verbatim(self, article: Article) -> RenderedMessage:
+        """Render cleaned article content as Telegram HTML."""
         return _html_message(
             "\n".join(
                 (
@@ -68,16 +82,20 @@ class TelegramHTMLRenderer:
         )
 
     def render_alert(self, title: str, body: str) -> RenderedMessage:
+        """Render an escaped Telegram HTML alert."""
         return _html_message(f"<b>{_html_text(title)}</b>\n\n{_html_text(body)}")
 
 
 class PlainTextRenderer:
+    """Render briefings for stdout and other plain-text transports."""
+
     def render_briefing(
         self,
         result: BriefingResult,
         reference_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
+        """Render a sourced briefing as plain text."""
         source_references = {
             article.id: f"{_article_source_name(article)}: {article.url}" for article in reference_articles
         }
@@ -98,9 +116,11 @@ class PlainTextRenderer:
         return _plain_message("\n".join(lines).strip())
 
     def render_verbatim(self, article: Article) -> RenderedMessage:
+        """Render cleaned article content as plain text."""
         return _plain_message(f"{article.title}\n\n{article.content}")
 
     def render_alert(self, title: str, body: str) -> RenderedMessage:
+        """Render an operational alert as plain text."""
         return _plain_message(f"{title}\n\n{body}")
 
 

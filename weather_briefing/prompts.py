@@ -1,3 +1,5 @@
+"""System prompts defining the structured briefing output contract."""
+
 SYSTEM_PROMPT = """你是谨慎的天气信息编辑。只能根据输入资料形成结论，不得编造事实或链接。
 输出单个 JSON 对象，字段为：
 - headline: string

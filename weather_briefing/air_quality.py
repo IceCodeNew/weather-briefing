@@ -1,3 +1,5 @@
+"""Air-quality providers, normalization, and health guidance."""
+
 from __future__ import annotations
 
 from functools import cache
@@ -17,15 +19,21 @@ class AirQualityError(RuntimeError):
 
 
 class AirQualityProvider(Protocol):
+    """Fetch provider-neutral air-quality context for coordinates."""
+
     async def fetch(
         self,
         latitude: float,
         longitude: float,
         timezone: str,
-    ) -> AirQualitySnapshot: ...
+    ) -> AirQualitySnapshot:
+        """Fetch air-quality context for a location and its timezone."""
+        ...
 
 
 class AQICNProvider:
+    """Fetch U.S. EPA AQI observations from AQICN."""
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -33,6 +41,7 @@ class AQICNProvider:
         token: str,
         base_url: str,
     ) -> None:
+        """Configure AQICN access with an injected HTTP client and token."""
         self._client = client
         self._token = token
         self._base_url = base_url
@@ -43,6 +52,7 @@ class AQICNProvider:
         longitude: float,
         timezone: str,
     ) -> AirQualitySnapshot:
+        """Fetch and normalize the AQICN observation for a location."""
         try:
             response = await self._client.get(
                 f"{self._base_url}/feed/geo:{latitude};{longitude}/",
@@ -81,6 +91,7 @@ class AQICNProvider:
 
 
 def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
+    """Convert an air-quality snapshot into a citable source document."""
     observed_at = snapshot.observed_at.to_iso8601_string() if snapshot.observed_at is not None else "不可用"
     concentration = "不可用"
     if snapshot.pm25_concentration is not None and snapshot.pm25_unit:
@@ -102,6 +113,7 @@ def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
 
 
 def health_guidance(aqi: int) -> tuple[str, str]:
+    """Return the configured category and health guidance for an AQI."""
     for maximum_aqi, category, guidance in _guidance_bands():
         if maximum_aqi is None or aqi <= maximum_aqi:
             return category, guidance

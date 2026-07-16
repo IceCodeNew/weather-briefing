@@ -1,3 +1,5 @@
+"""Core briefing orchestration and output contract enforcement."""
+
 from __future__ import annotations
 
 import asyncio
@@ -29,35 +31,57 @@ _LOGGER = logging.getLogger("weather_briefing.service")
 
 
 class BriefingSettings(Protocol):
-    @property
-    def timezone(self) -> pendulum.Timezone: ...
+    """Expose the settings required by briefing orchestration."""
 
     @property
-    def feeds(self) -> tuple[FeedConfig, ...]: ...
+    def timezone(self) -> pendulum.Timezone:
+        """Return the briefing timezone."""
+        ...
 
     @property
-    def context_sources(self) -> tuple[ContextSourceConfig, ...]: ...
+    def feeds(self) -> tuple[FeedConfig, ...]:
+        """Return configured RSS feeds."""
+        ...
 
     @property
-    def rss_stale_hours(self) -> int: ...
+    def context_sources(self) -> tuple[ContextSourceConfig, ...]:
+        """Return configured auxiliary context sources."""
+        ...
 
     @property
-    def rss_failure_threshold(self) -> int: ...
+    def rss_stale_hours(self) -> int:
+        """Return the RSS staleness threshold in hours."""
+        ...
 
     @property
-    def warning_retention_hours(self) -> int: ...
+    def rss_failure_threshold(self) -> int:
+        """Return the consecutive RSS failure alert threshold."""
+        ...
 
     @property
-    def history_hours(self) -> int: ...
+    def warning_retention_hours(self) -> int:
+        """Return the active-warning retention window in hours."""
+        ...
 
     @property
-    def briefing_max_characters(self) -> int: ...
+    def history_hours(self) -> int:
+        """Return the retained briefing context window in hours."""
+        ...
 
     @property
-    def llm_max_attempts(self) -> int: ...
+    def briefing_max_characters(self) -> int:
+        """Return the configured briefing character budget."""
+        ...
+
+    @property
+    def llm_max_attempts(self) -> int:
+        """Return the maximum LLM validation attempts."""
+        ...
 
 
 class BriefingService:
+    """Orchestrate source collection, validation, state, and delivery."""
+
     def __init__(
         self,
         settings: BriefingSettings,
@@ -70,6 +94,7 @@ class BriefingService:
         ops_delivery: DeliveryProvider,
         weather_context_provider: WeatherContextProvider | None = None,
     ) -> None:
+        """Compose briefing orchestration from its location-scoped dependencies."""
         self._settings = settings
         self._location = location
         self._state = state
@@ -89,6 +114,7 @@ class BriefingService:
         force_publish: bool = False,
         silent: bool = False,
     ) -> str | None:
+        """Run one forecast or briefing task and persist its outcome."""
         current_time = require_aware_datetime(now or pendulum.now(self._settings.timezone), context="Briefing run time")
         if forecast_date is not None and kind != "forecast":
             raise ValueError("Forecast date is only supported in forecast mode")

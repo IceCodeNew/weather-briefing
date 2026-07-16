@@ -1,3 +1,5 @@
+"""SQLite-backed briefing state and runtime diagnostics."""
+
 from __future__ import annotations
 
 import json
@@ -18,7 +20,10 @@ _LOGGER = logging.getLogger("weather_briefing.state")
 
 
 class SQLiteRuntimeDiagnostics:
+    """Persist the expiring switch for sensitive rendered-text diagnostics."""
+
     def __init__(self, path: Path) -> None:
+        """Open the diagnostics database and ensure its runtime-switch schema."""
         path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(path, timeout=_RUNTIME_DIAGNOSTIC_BUSY_TIMEOUT_SECONDS)
         self._connection.row_factory = sqlite3.Row
@@ -28,15 +33,19 @@ class SQLiteRuntimeDiagnostics:
         self._connection.commit()
 
     def close(self) -> None:
+        """Close the diagnostics database connection."""
         self._connection.close()
 
     def __enter__(self) -> SQLiteRuntimeDiagnostics:
+        """Return this diagnostics store for context-managed use."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the connection without suppressing context exceptions."""
         self.close()
 
     def enable_rendered_text_logging(self, expires_at: pendulum.DateTime) -> None:
+        """Enable sensitive rendered-text logging until an aware timestamp."""
         expires_at = require_aware_datetime(expires_at, context="Rendered text diagnostic expiration")
         self._connection.execute(
             """INSERT INTO runtime_diagnostics(name, expires_at) VALUES (?, ?)
@@ -50,6 +59,7 @@ class SQLiteRuntimeDiagnostics:
         )
 
     def disable_rendered_text_logging(self) -> None:
+        """Disable sensitive rendered-text logging immediately."""
         self._connection.execute(
             "DELETE FROM runtime_diagnostics WHERE name = ?",
             (_RENDERED_TEXT_DIAGNOSTIC,),
@@ -61,6 +71,7 @@ class SQLiteRuntimeDiagnostics:
         self,
         now: pendulum.DateTime | None = None,
     ) -> pendulum.DateTime | None:
+        """Return the active expiration time and remove expired state."""
         current_time = require_aware_datetime(
             now or pendulum.now("UTC"),
             context="Rendered text diagnostic check time",
@@ -86,23 +97,30 @@ class SQLiteRuntimeDiagnostics:
         return None
 
     def rendered_text_logging_enabled(self) -> bool:
+        """Return whether rendered-text diagnostics are currently enabled."""
         return self.rendered_text_logging_until() is not None
 
 
 class SQLiteStateStore:
+    """Persist briefing history, warnings, articles, and health state."""
+
     def __init__(self, path: Path) -> None:
+        """Open the state database and initialize its application schema."""
         path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(path)
         self._connection.row_factory = sqlite3.Row
         self._initialize()
 
     def close(self) -> None:
+        """Close the state database connection."""
         self._connection.close()
 
     def __enter__(self) -> SQLiteStateStore:
+        """Return this state store for context-managed use."""
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Close the connection without suppressing context exceptions."""
         self.close()
 
     def _initialize(self) -> None:
@@ -151,6 +169,7 @@ class SQLiteStateStore:
         self._connection.commit()
 
     def known_article_ids(self, ids: tuple[str, ...]) -> set[str]:
+        """Return the subset of article IDs already processed."""
         if not ids:
             return set()
         placeholders = ",".join("?" for _ in ids)
@@ -161,6 +180,7 @@ class SQLiteStateStore:
         return {str(row["id"]) for row in rows}
 
     def save_articles(self, articles: tuple[Article, ...], processed_at: pendulum.DateTime) -> None:
+        """Persist processed articles at an aware timestamp."""
         self._insert_articles(articles, processed_at)
         self._connection.commit()
 
@@ -186,6 +206,7 @@ class SQLiteStateStore:
         )
 
     def save_pending_articles(self, articles: tuple[Article, ...], first_seen_at: pendulum.DateTime) -> None:
+        """Persist articles awaiting successful briefing delivery."""
         self._connection.executemany(
             """INSERT OR IGNORE INTO pending_articles
             (id, source_id, source_name, title, url, published_at, content, is_verbatim, first_seen_at)
@@ -208,6 +229,7 @@ class SQLiteStateStore:
         self._connection.commit()
 
     def pending_articles(self) -> tuple[Article, ...]:
+        """Return pending articles in stable processing order."""
         rows = self._connection.execute("SELECT * FROM pending_articles ORDER BY first_seen_at, published_at")
         return tuple(_article_from_row(row) for row in rows)
 
@@ -216,6 +238,7 @@ class SQLiteStateStore:
         articles: tuple[Article, ...],
         processed_at: pendulum.DateTime,
     ) -> None:
+        """Move delivered articles from pending to processed state."""
         self._insert_articles(articles, processed_at)
         if not articles:
             self._connection.commit()
@@ -233,6 +256,7 @@ class SQLiteStateStore:
         checked_at: pendulum.DateTime,
         latest_at: pendulum.DateTime | None,
     ) -> None:
+        """Record an RSS source check and its newest observed article time."""
         self._connection.execute(
             """INSERT INTO source_health(
                 source_id, first_checked_at, last_article_at, stale_alerted_at
@@ -265,6 +289,7 @@ class SQLiteStateStore:
         now: pendulum.DateTime,
         stale_hours: int,
     ) -> list[str]:
+        """Return sources without recent articles inside the threshold."""
         threshold = now.subtract(hours=stale_hours)
         stale: list[str] = []
         for source_id in source_ids:
@@ -285,6 +310,7 @@ class SQLiteStateStore:
         now: pendulum.DateTime,
         stale_hours: int,
     ) -> list[str]:
+        """Return stale sources not yet alerted for the current stale period."""
         stale = set(self.stale_sources(source_ids, now, stale_hours))
         return [
             source_id
@@ -302,6 +328,7 @@ class SQLiteStateStore:
         source_ids: tuple[str, ...],
         alerted_at: pendulum.DateTime,
     ) -> None:
+        """Record successful stale-source alert delivery."""
         if not source_ids:
             return
         placeholders = ",".join("?" for _ in source_ids)
@@ -313,6 +340,7 @@ class SQLiteStateStore:
         self._connection.commit()
 
     def recent_briefings(self, now: pendulum.DateTime, history_hours: int) -> tuple[BriefingRecord, ...]:
+        """Return briefings inside the configured history window."""
         threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             "SELECT kind, body, published_at FROM briefings WHERE published_at >= ? ORDER BY published_at",
@@ -333,6 +361,7 @@ class SQLiteStateStore:
         start: pendulum.DateTime,
         end: pendulum.DateTime,
     ) -> bool:
+        """Return whether a briefing kind was published in a time interval."""
         row = self._connection.execute(
             "SELECT 1 FROM briefings WHERE kind = ? AND published_at >= ? AND published_at <= ? LIMIT 1",
             (kind, _storage_time(start), _storage_time(end)),
@@ -340,6 +369,7 @@ class SQLiteStateStore:
         return row is not None
 
     def recent_articles(self, now: pendulum.DateTime, history_hours: int) -> tuple[Article, ...]:
+        """Return processed articles inside the configured history window."""
         threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             "SELECT * FROM articles WHERE published_at >= ? ORDER BY published_at",
@@ -348,6 +378,7 @@ class SQLiteStateStore:
         return tuple(_article_from_row(row) for row in rows)
 
     def save_briefing(self, kind: str, body: str, published_at: pendulum.DateTime) -> None:
+        """Persist a successfully published briefing."""
         self._connection.execute(
             "INSERT INTO briefings(kind, body, published_at) VALUES (?, ?, ?)",
             (kind, body, _storage_time(published_at)),
@@ -355,6 +386,7 @@ class SQLiteStateStore:
         self._connection.commit()
 
     def save_context_documents(self, documents: tuple[SourceDocument, ...], observed_at: pendulum.DateTime) -> None:
+        """Persist context documents observed during a successful run."""
         self._connection.executemany(
             """INSERT INTO context_snapshots(source_id, name, url, content, observed_at)
             VALUES (?, ?, ?, ?, ?)""",
@@ -372,6 +404,7 @@ class SQLiteStateStore:
         self._connection.commit()
 
     def recent_context_documents(self, now: pendulum.DateTime, history_hours: int) -> tuple[SourceDocument, ...]:
+        """Return context documents inside the configured history window."""
         threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             """SELECT source_id, name, url, content FROM context_snapshots
@@ -389,6 +422,7 @@ class SQLiteStateStore:
         )
 
     def active_warnings(self, now: pendulum.DateTime, retention_hours: int) -> tuple[Warning, ...]:
+        """Return warnings confirmed inside the retention window."""
         threshold = _storage_time(now.subtract(hours=retention_hours))
         rows = self._connection.execute(
             "SELECT payload, last_confirmed_at FROM warnings WHERE last_confirmed_at >= ?",
@@ -416,6 +450,7 @@ class SQLiteStateStore:
         now: pendulum.DateTime,
         confirmed_source_ids: set[str] | None = None,
     ) -> None:
+        """Apply active and resolved warning updates atomically."""
         confirmed_source_ids = confirmed_source_ids or set()
         if resolved_warning_ids:
             placeholders = ",".join("?" for _ in resolved_warning_ids)
@@ -454,6 +489,7 @@ class SQLiteStateStore:
         history_hours: int,
         warning_retention_hours: int,
     ) -> None:
+        """Record task success and prune expired history in one transaction."""
         history_threshold = _storage_time(now.subtract(hours=history_hours))
         warning_threshold = _storage_time(now.subtract(hours=warning_retention_hours))
         self._connection.execute("DELETE FROM articles WHERE processed_at < ?", (history_threshold,))
@@ -465,6 +501,7 @@ class SQLiteStateStore:
         self._connection.commit()
 
     def record_failure(self) -> int:
+        """Increment and return the consecutive task failure count."""
         self._connection.execute(
             "UPDATE task_health SET consecutive_failures = consecutive_failures + 1 WHERE singleton = 1"
         )
@@ -473,10 +510,12 @@ class SQLiteStateStore:
         return int(row["consecutive_failures"])
 
     def task_failure_requires_alert(self) -> bool:
+        """Return whether the current task failure period lacks an alert."""
         row = self._connection.execute("SELECT 1 FROM task_failure_alert WHERE singleton = 1").fetchone()
         return row is None
 
     def mark_task_failure_alerted(self, alerted_at: pendulum.DateTime) -> None:
+        """Record successful task-failure alert delivery."""
         self._connection.execute(
             "INSERT OR REPLACE INTO task_failure_alert(singleton, alerted_at) VALUES (1, ?)",
             (_storage_time(alerted_at),),
@@ -484,6 +523,7 @@ class SQLiteStateStore:
         self._connection.commit()
 
     def record_rss_fetch_failure(self, source_id: str) -> int:
+        """Increment and return one RSS source's consecutive failure count."""
         self._connection.execute(
             """INSERT INTO rss_failure_tracker(source_id, consecutive_failures, failure_alerted_at)
             VALUES (?, 1, NULL)
@@ -499,6 +539,7 @@ class SQLiteStateStore:
         return int(row["consecutive_failures"])
 
     def record_rss_fetch_success(self, source_id: str) -> None:
+        """Reset one RSS source's failure period."""
         self._connection.execute(
             "DELETE FROM rss_failure_tracker WHERE source_id = ?",
             (source_id,),
@@ -510,6 +551,7 @@ class SQLiteStateStore:
         source_ids: tuple[str, ...],
         threshold: int,
     ) -> list[str]:
+        """Return RSS sources whose unalerted failures reached the threshold."""
         if not source_ids:
             return []
         placeholders = ",".join("?" for _ in source_ids)
@@ -529,6 +571,7 @@ class SQLiteStateStore:
         source_ids: tuple[str, ...],
         alerted_at: pendulum.DateTime,
     ) -> None:
+        """Record successful RSS failure alert delivery for sources."""
         if not source_ids:
             return
         placeholders = ",".join("?" for _ in source_ids)

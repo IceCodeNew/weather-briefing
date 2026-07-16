@@ -1,3 +1,5 @@
+"""Allergen reference data, guidance, and source conversion."""
+
 from __future__ import annotations
 
 from functools import cache
@@ -18,6 +20,7 @@ def allergen_guidance(concentration: float) -> tuple[str, str]:
 
 
 def allergen_to_document(snapshot: AllergenSnapshot) -> SourceDocument:
+    """Convert an allergen snapshot into a citable source document."""
     observed_at = snapshot.observed_at.to_iso8601_string() if snapshot.observed_at is not None else "不可用"
     levels = (
         "\n".join(f"- {level.name}：{level.concentration:g} 粒/m³（{level.category}）" for level in snapshot.levels)

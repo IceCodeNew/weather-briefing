@@ -1,3 +1,5 @@
+"""RSS and auxiliary context source adapters."""
+
 from __future__ import annotations
 
 import asyncio
@@ -23,11 +25,19 @@ class SourceFetchError(RuntimeError):
 
 
 class RSSFeedSource(Protocol):
-    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]: ...
+    """Fetch and normalize articles from an RSS feed."""
+
+    async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
+        """Fetch articles for one feed configuration."""
+        ...
 
 
 class ContextDocumentSource(Protocol):
-    async def fetch(self, config: ContextSourceConfig) -> SourceDocument: ...
+    """Fetch auxiliary context as a citable document."""
+
+    async def fetch(self, config: ContextSourceConfig) -> SourceDocument:
+        """Fetch one configured context document."""
+        ...
 
 
 def _entry_time(entry: feedparser.FeedParserDict) -> pendulum.DateTime | None:
@@ -45,6 +55,8 @@ def _entry_content(entry: feedparser.FeedParserDict) -> str:
 
 
 class RSSSource:
+    """Fetch, retry, clean, and normalize RSS feed entries."""
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -54,6 +66,7 @@ class RSSSource:
         retry_max_seconds: float = 5,
         cleaner: ContentCleaner | None = None,
     ) -> None:
+        """Configure RSS retries and optional source-content cleaning."""
         self._client = client
         self._max_attempts = max_attempts
         self._retry_min_seconds = retry_min_seconds
@@ -61,6 +74,7 @@ class RSSSource:
         self._cleaner = cleaner or HTMLContentCleaner()
 
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
+        """Fetch and normalize all usable articles from one RSS source."""
         response_text = await self._fetch_with_retry(config)
         parsed = feedparser.parse(response_text)
         if parsed.bozo and not parsed.entries:
@@ -121,10 +135,14 @@ class RSSSource:
 
 
 class HTTPContextSource:
+    """Fetch auxiliary context documents over HTTP."""
+
     def __init__(self, client: httpx.AsyncClient) -> None:
+        """Use an injected HTTP client for auxiliary context requests."""
         self._client = client
 
     async def fetch(self, config: ContextSourceConfig) -> SourceDocument:
+        """Fetch one context URL without exposing transport details."""
         try:
             response = await self._client.get(
                 config.url,

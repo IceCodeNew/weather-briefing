@@ -1,3 +1,5 @@
+"""Runtime configuration parsing and validation."""
+
 from __future__ import annotations
 
 import json
@@ -117,10 +119,12 @@ def _configured_weather_providers() -> tuple[str, ...] | None:
 
 
 def state_path_from_env() -> Path:
+    """Return the configured SQLite state path without loading all settings."""
     return Path(_clean_env(os.getenv("BRIEFING_STATE_PATH", "state/weather.sqlite3")))
 
 
 def weather_providers_for(location: ResolvedLocation, configured: tuple[str, ...] | None) -> tuple[str, ...]:
+    """Resolve the configured or region-default weather provider order."""
     if configured is not None:
         return configured
     region = "mainland_china" if location.is_mainland_china else "other"
@@ -193,6 +197,8 @@ def _feeds(path: Path) -> tuple[FeedConfig, ...]:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
+    """Collect validated runtime settings used to compose the application."""
+
     api_key: str
     llm_provider: str
     llm_model: str
@@ -242,6 +248,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        """Load and validate application settings from the environment."""
         locations_path = Path(_clean_env(os.getenv("BRIEFING_LOCATIONS_FILE", "locations.json")))
         rss_sources_path = Path(_clean_env(os.getenv("RSS_SOURCES_FILE", "rss-sources.json")))
         feeds = _feeds(rss_sources_path)

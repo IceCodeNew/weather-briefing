@@ -1,3 +1,5 @@
+"""Platform-neutral domain models and runtime configuration records."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,6 +10,8 @@ import pendulum
 
 @dataclass(frozen=True, slots=True)
 class FeedConfig:
+    """Describe an RSS feed and its location-specific content rules."""
+
     id: str
     name: str
     url: str
@@ -20,6 +24,8 @@ class FeedConfig:
 
 @dataclass(frozen=True, slots=True)
 class ContextSourceConfig:
+    """Describe an auxiliary HTTP context source."""
+
     id: str
     name: str
     url: str
@@ -27,6 +33,8 @@ class ContextSourceConfig:
 
 @dataclass(frozen=True, slots=True)
 class LocationSpec:
+    """Represent the user-provided identity or coordinates of a location."""
+
     id: str
     name: str | None = None
     latitude: float | None = None
@@ -35,6 +43,8 @@ class LocationSpec:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedLocation:
+    """Represent a location resolved to stable coordinates and metadata."""
+
     id: str
     name: str
     latitude: float
@@ -49,12 +59,16 @@ class ResolvedLocation:
 
 @dataclass(frozen=True, slots=True)
 class LocationResolution:
+    """Pair a resolved location with its cache provenance."""
+
     location: ResolvedLocation
     from_cache: bool
 
 
 @dataclass(frozen=True, slots=True)
 class Article:
+    """Represent cleaned source content ready for briefing orchestration."""
+
     id: str
     source_id: str
     source_name: str
@@ -67,6 +81,8 @@ class Article:
 
 @dataclass(frozen=True, slots=True)
 class SourceDocument:
+    """Represent citable non-article context supplied to the LLM."""
+
     id: str
     name: str
     url: str
@@ -76,6 +92,8 @@ class SourceDocument:
 
 @dataclass(frozen=True, slots=True)
 class BriefingRecord:
+    """Represent a previously published briefing."""
+
     kind: str
     body: str
     published_at: pendulum.DateTime
@@ -83,6 +101,8 @@ class BriefingRecord:
 
 @dataclass(frozen=True, slots=True)
 class AirQualitySnapshot:
+    """Represent provider-neutral air-quality observations and guidance."""
+
     source_id: str
     source_name: str
     source_url: str
@@ -99,6 +119,8 @@ class AirQualitySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class AllergenLevel:
+    """Represent the concentration and category of one allergen."""
+
     name: str
     category: str
     concentration: float
@@ -106,6 +128,8 @@ class AllergenLevel:
 
 @dataclass(frozen=True, slots=True)
 class AllergenSnapshot:
+    """Represent provider-neutral allergen observations and guidance."""
+
     source_id: str
     source_name: str
     source_url: str
@@ -117,6 +141,8 @@ class AllergenSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class WeatherContextSnapshot:
+    """Collect weather, air-quality, allergen, and lifestyle context."""
+
     source_id: str
     source_name: str
     source_url: str
@@ -130,6 +156,8 @@ class WeatherContextSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class Warning:
+    """Represent an active warning and the evidence that confirms it."""
+
     id: str
     title: str
     status: str
@@ -140,11 +168,15 @@ class Warning:
 
 @dataclass(frozen=True, slots=True)
 class Conclusion:
+    """Represent a sourced conclusion emitted by the LLM."""
+
     text: str
     source_ids: tuple[str, ...]
 
 
 class AdviceTopic(StrEnum):
+    """Enumerate supported structured lifestyle advice topics."""
+
     CLOTHING = "clothing"
     DEHUMIDIFICATION = "dehumidification"
     EXERCISE = "exercise"
@@ -154,6 +186,8 @@ class AdviceTopic(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Advice:
+    """Represent sourced lifestyle advice for one topic."""
+
     topic: AdviceTopic
     text: str
     source_ids: tuple[str, ...]
@@ -161,6 +195,8 @@ class Advice:
 
 @dataclass(frozen=True, slots=True)
 class BriefingResult:
+    """Represent a validated, platform-neutral LLM briefing result."""
+
     headline: str
     headline_source_ids: tuple[str, ...]
     conclusions: tuple[Conclusion, ...]
@@ -174,5 +210,7 @@ class BriefingResult:
 
 @dataclass(frozen=True, slots=True)
 class RenderedMessage:
+    """Pair rendered message content with its platform-visible length."""
+
     body: str
     visible_length: int

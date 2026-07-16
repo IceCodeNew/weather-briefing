@@ -1,3 +1,5 @@
+"""Validated access to packaged domain reference data."""
+
 from __future__ import annotations
 
 import json
@@ -15,6 +17,7 @@ class ReferenceDataError(RuntimeError):
 
 @cache
 def load_reference_data(filename: str) -> dict[str, object]:
+    """Load and validate one packaged JSON reference-data object."""
     if PurePath(filename).name != filename or not filename.endswith(".json"):
         raise ReferenceDataError("Reference data filename must identify one JSON file")
     try:
@@ -28,6 +31,7 @@ def load_reference_data(filename: str) -> dict[str, object]:
 
 
 def reference_value(filename: str, *path: str) -> Any:
+    """Read a nested value from a packaged reference-data file."""
     value: Any = load_reference_data(filename)
     try:
         for key in path:
@@ -39,6 +43,7 @@ def reference_value(filename: str, *path: str) -> Any:
 
 
 def reference_string(filename: str, *path: str) -> str:
+    """Read a non-empty string from packaged reference data."""
     value = reference_value(filename, *path)
     if not isinstance(value, str) or not value.strip():
         joined_path = ".".join(path)
@@ -47,6 +52,7 @@ def reference_string(filename: str, *path: str) -> str:
 
 
 def reference_string_tuple(filename: str, *path: str) -> tuple[str, ...]:
+    """Read a non-empty string sequence from packaged reference data."""
     value = reference_value(filename, *path)
     if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
         joined_path = ".".join(path)

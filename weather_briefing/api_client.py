@@ -1,3 +1,5 @@
+"""Privacy-preserving HTTP client instrumentation."""
+
 from __future__ import annotations
 
 import logging
@@ -25,6 +27,7 @@ class LoggedAsyncClient(httpx.AsyncClient):
     """Record outbound HTTP calls without logging request data."""
 
     async def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+        """Send a request while logging only its non-sensitive identity."""
         provider, operation = _api_call_identity(request)
         method = _safe_http_method(request.method)
         started_at = time.monotonic()

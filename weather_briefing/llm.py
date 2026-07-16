@@ -1,3 +1,5 @@
+"""LLM provider adapters and structured result validation."""
+
 from __future__ import annotations
 
 import json
@@ -17,10 +19,16 @@ class LLMError(RuntimeError):
 
 
 class LLMProvider(Protocol):
-    async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]: ...
+    """Produce a structured briefing payload from validated source context."""
+
+    async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+        """Return one structured model response."""
+        ...
 
 
 class OpenAICompatibleChatCompletionsProvider:
+    """Call an OpenAI-compatible chat-completions endpoint."""
+
     API_PROVIDER = "openai-compatible"
 
     def __init__(
@@ -32,6 +40,7 @@ class OpenAICompatibleChatCompletionsProvider:
         model: str,
         max_output_tokens: int,
     ) -> None:
+        """Configure one OpenAI-compatible model endpoint and output limit."""
         self._client = client
         self._api_key = api_key
         self._base_url = base_url
@@ -40,9 +49,11 @@ class OpenAICompatibleChatCompletionsProvider:
 
     @property
     def base_url(self) -> str:
+        """Return the configured API base URL."""
         return self._base_url
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+        """Request and decode one structured JSON response."""
         try:
             response = await self._client.post(
                 f"{self._base_url}/chat/completions",
@@ -72,6 +83,8 @@ class OpenAICompatibleChatCompletionsProvider:
 
 
 class DeepSeekProvider(OpenAICompatibleChatCompletionsProvider):
+    """Use DeepSeek through the shared OpenAI-compatible adapter."""
+
     DEFAULT_BASE_URL = "https://api.deepseek.com"
     API_PROVIDER = "deepseek"
 
@@ -84,6 +97,7 @@ class DeepSeekProvider(OpenAICompatibleChatCompletionsProvider):
         max_output_tokens: int,
         base_url: str = DEFAULT_BASE_URL,
     ) -> None:
+        """Configure DeepSeek through the shared chat-completions adapter."""
         super().__init__(
             client,
             api_key=api_key,
@@ -98,6 +112,7 @@ def parse_result(
     now: pendulum.DateTime,
     valid_source_ids: set[str],
 ) -> BriefingResult:
+    """Validate an LLM payload and convert it to a briefing result."""
     require_aware_datetime(now, context="Briefing result time")
 
     def string_ids(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
