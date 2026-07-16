@@ -88,8 +88,8 @@ CONTAINER_ROOT_DIR="/home/nonroot/app"
 mkdir -p "${ROOT_DIR}/app/state"
 touch "${ROOT_DIR}/.env" "${ROOT_DIR}/locations.json"
 test -s "${ROOT_DIR}/rss-sources.json" || printf '[]\n' >"${ROOT_DIR}/rss-sources.json"
-chown -R 65532:65532 "${ROOT_DIR}"
 chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}/locations.json" "${ROOT_DIR}/rss-sources.json"
+chown -R 65532:65532 "${ROOT_DIR}"
 
 docker pull "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}"
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
