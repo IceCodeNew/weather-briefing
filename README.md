@@ -71,19 +71,40 @@ BRIEFING_STATE_PATH=state/replay.sqlite3 weather-briefing run forecast --at 2026
 
 `run forecast --date YYYY-MM-DD` 可查看当地今天或指定未来日期（例如后天）的 forecast，也可以与 `--run-now` 组合。目标日期只影响要查询和总结的预报日期，实际运行时间、状态写入时间和历史窗口仍使用当前时间。`--at` 只在测试历史回放时覆盖实际运行时间。
 
-```bash
-cp env.example .env
-cp locations.example.json locations.json
-docker buildx build --load -t weather-briefing .
-docker volume create weather-briefing-state
-docker run -d --name weather-briefing --restart unless-stopped \
-  --env-file .env \
-  --mount type=bind,src="$PWD/locations.json",dst=/app/locations.json,readonly \
-  --mount source=weather-briefing-state,target=/app/state \
-  weather-briefing
+### 使用发布镜像部署
+
+下面的脚本从 Docker Hub 拉取固定版本的多架构镜像，并以非特权用户运行常驻调度器。运行前先在 `ROOT_DIR` 下准备根据 `env.example` 填写的 `.env` 和有效的 `locations.json`；路径和镜像名称可按实际环境调整。
+
+```sh
+#!/bin/sh
+set -eu
+
+CONTAINER_NAME="weather-briefing"
+WEATHER_BRIEFING_IMAGE="icecodexi/${CONTAINER_NAME}"
+WEATHER_BRIEFING_VERSION="1.0.0"
+ROOT_DIR="${HOME}/${CONTAINER_NAME}"
+CONTAINER_ROOT_DIR="/home/nonroot/app"
+
+mkdir -p "${ROOT_DIR}/app/state"
+touch "${ROOT_DIR}/.env" "${ROOT_DIR}/locations.json"
+test -s "${ROOT_DIR}/rss-sources.json" || printf '[]\n' >"${ROOT_DIR}/rss-sources.json"
+chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}/locations.json" "${ROOT_DIR}/rss-sources.json"
+chown -R 65532:65532 "${ROOT_DIR}"
+
+docker pull "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}"
+docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+docker run -d \
+    --name "${CONTAINER_NAME}" \
+    --restart unless-stopped \
+    --env-file "${ROOT_DIR}/.env" \
+    --mount "type=bind,src=${ROOT_DIR}/locations.json,dst=${CONTAINER_ROOT_DIR}/locations.json,readonly" \
+    --mount "type=bind,src=${ROOT_DIR}/rss-sources.json,dst=${CONTAINER_ROOT_DIR}/rss-sources.json,readonly" \
+    --mount "type=bind,src=${ROOT_DIR}/app/state,dst=${CONTAINER_ROOT_DIR}/state" \
+    "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}" \
+    daemon
 ```
 
-若启用 RSS，再把私密 `rss-sources.json` 以只读方式挂载到容器内配置的同名路径。配置文件不会进入镜像构建上下文。
+脚本需要有权执行 `chown` 和管理 Docker。RSS 未配置时使用空数组；配置文件以只读方式挂载，SQLite 状态保留在宿主机。升级时修改 `WEATHER_BRIEFING_VERSION` 并重新运行即可，重建容器期间会有短暂停机。
 
 也可在持久主机上使用 cron：
 

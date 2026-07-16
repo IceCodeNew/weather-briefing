@@ -53,6 +53,15 @@ jobs:
 
           image_path = pathlib.Path('.github/workflows/image.yml')
           image_path.write_text(image_path.read_text().replace(f'WEATHER_BRIEFING_VERSION: \"{prev}\"', f'WEATHER_BRIEFING_VERSION: \"{version}\"'))
+
+          readme_path = pathlib.Path('README.md')
+          readme_version = f'WEATHER_BRIEFING_VERSION=\"{prev}\"'
+          readme_content = readme_path.read_text()
+          if readme_version not in readme_content:
+              raise RuntimeError(f'README.md does not contain {readme_version}')
+          readme_path.write_text(
+              readme_content.replace(readme_version, f'WEATHER_BRIEFING_VERSION=\"{version}\"', 1)
+          )
           "
 
           uv lock
@@ -61,7 +70,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${RELEASE_GH_PAT}@github.com/${GITHUB_REPOSITORY}.git"
 
-          git add pyproject.toml weather_briefing/__init__.py .github/workflows/image.yml uv.lock
+          git add pyproject.toml weather_briefing/__init__.py .github/workflows/image.yml README.md uv.lock
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
