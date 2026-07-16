@@ -250,8 +250,14 @@ class BriefingService:
         payload["required_advice_topics"] = [topic.value for topic in required_advice_topics]
         allergen_source_ids = {document.id for document in context if document.has_allergen_information}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
+        active_warning_ids = {warning.id for warning in active_warnings}
 
         def validate_result(candidate: BriefingResult) -> None:
+            unknown_resolved_warning_ids = set(candidate.resolved_warning_ids) - active_warning_ids
+            if unknown_resolved_warning_ids:
+                raise LLMError(
+                    f"resolved_warning_ids contains unknown warning IDs: {sorted(unknown_resolved_warning_ids)}"
+                )
             candidate_message = self._delivery.render_briefing(candidate, source_articles, reference_context)
             if kind == "briefing" and candidate.advice:
                 raise LLMError("briefing must not repeat lifestyle advice")
@@ -426,12 +432,7 @@ class BriefingService:
             "now": now.isoformat(),
             "forecast_date": str(forecast_date or now.in_timezone(self._settings.timezone).date()),
             "region": self._location.name,
-            "location_id": self._location.id,
             "location_scope": location_scope,
-            "coordinates": {
-                "latitude": self._location.latitude,
-                "longitude": self._location.longitude,
-            },
             "new_articles": [
                 {
                     "source_id": article.id,
