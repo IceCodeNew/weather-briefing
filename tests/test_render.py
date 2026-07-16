@@ -1,6 +1,15 @@
 import pendulum
+import pytest
 
-from weather_briefing.models import Article, BriefingResult, Conclusion, SourceDocument, Warning
+from weather_briefing.models import (
+    Advice,
+    AdviceTopic,
+    Article,
+    BriefingResult,
+    Conclusion,
+    SourceDocument,
+    Warning,
+)
 from weather_briefing.render import PlainTextRenderer, TelegramHTMLRenderer
 
 
@@ -18,30 +27,56 @@ def test_render_briefing_uses_safe_telegram_html() -> None:
     result = BriefingResult(
         "Daily <Forecast>",
         "Warm & humid",
+        ("source",),
+        ("source",),
         (Conclusion("Carry an umbrella", ("source",)),),
     )
 
     rendered = TelegramHTMLRenderer().render_briefing(result, (article,), ())
 
-    assert rendered.body.startswith("<b>Daily &lt;Forecast&gt;</b>")
+    assert rendered.body.startswith("<b>Daily &lt;Forecast&gt;</b> （来源：")
     assert "Warm &amp; humid" in rendered.body
     assert '<a href="https://example.invalid/?a=1&amp;b=2">Feed</a>' in rendered.body
-    assert rendered.visible_length == len("Daily <Forecast>\n\nWarm & humid\n\n天气信息\n\n• Carry an umbrella Feed")
+    assert rendered.visible_length == len(
+        "Daily <Forecast> （来源：Feed）\n\n"
+        "Warm & humid （来源：Feed）\n\n"
+        "天气信息\n\n• Carry an umbrella （来源：Feed）"
+    )
 
 
 def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
-    result = BriefingResult("Daily", "Overview", ())
+    context = SourceDocument("source", "Source", "https://example.invalid/source", "")
+    result = BriefingResult("Daily", "Overview", ("source",), ("source",), ())
 
-    rendered = PlainTextRenderer().render_briefing(result, (), ())
+    rendered = PlainTextRenderer().render_briefing(result, (), (context,))
 
-    assert rendered.body == "Daily\n\nOverview"
+    assert rendered.body == (
+        "Daily （来源：Source: https://example.invalid/source）\n\n"
+        "Overview （来源：Source: https://example.invalid/source）"
+    )
     assert "<b>" not in rendered.body
+
+
+@pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer()))
+def test_renderers_fail_when_a_source_reference_is_missing(
+    renderer: TelegramHTMLRenderer | PlainTextRenderer,
+) -> None:
+    result = BriefingResult("Daily", "Overview", ("missing",), ("missing",), ())
+
+    with pytest.raises(KeyError, match="missing"):
+        renderer.render_briefing(result, (), ())
 
 
 def test_renderers_fall_back_to_source_id_for_legacy_blank_name() -> None:
     now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
     article = Article("source", "feed", "  ", "Title", "https://example.invalid/a", now, "Body")
-    result = BriefingResult("Daily", "Overview", (Conclusion("Update", ("source",)),))
+    result = BriefingResult(
+        "Daily",
+        "Overview",
+        ("source",),
+        ("source",),
+        (Conclusion("Update", ("source",)),),
+    )
 
     html = TelegramHTMLRenderer().render_briefing(result, (article,), ())
     plain = PlainTextRenderer().render_briefing(result, (article,), ())
@@ -60,8 +95,10 @@ def test_telegram_html_renderer_uses_context_source_name_as_attribution() -> Non
     result = BriefingResult(
         "Daily",
         "Overview",
+        ("allergen:open-meteo",),
+        ("allergen:open-meteo",),
         (),
-        advice=(Conclusion("花粉浓度较高", ("allergen:open-meteo",)),),
+        advice=(Advice(AdviceTopic.ALLERGEN, "花粉浓度较高", ("allergen:open-meteo",)),),
     )
 
     rendered = TelegramHTMLRenderer().render_briefing(result, (), (context,))
@@ -81,8 +118,10 @@ def test_plain_text_renderer_uses_context_source_name_as_attribution() -> None:
     result = BriefingResult(
         "Daily",
         "Overview",
+        ("allergen:open-meteo",),
+        ("allergen:open-meteo",),
         (),
-        advice=(Conclusion("花粉浓度较高", ("allergen:open-meteo",)),),
+        advice=(Advice(AdviceTopic.ALLERGEN, "花粉浓度较高", ("allergen:open-meteo",)),),
     )
 
     rendered = PlainTextRenderer().render_briefing(result, (), (context,))
@@ -97,6 +136,8 @@ def test_telegram_html_renders_active_warnings_section() -> None:
     result = BriefingResult(
         "Daily",
         "Overview",
+        ("source",),
+        ("source",),
         (),
         active_warnings=(warning,),
     )
@@ -115,6 +156,8 @@ def test_plain_text_renders_active_warnings_section() -> None:
     result = BriefingResult(
         "Daily",
         "Overview",
+        ("source",),
+        ("source",),
         (),
         active_warnings=(warning,),
     )

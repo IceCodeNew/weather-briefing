@@ -8,7 +8,7 @@ import httpx
 import pendulum
 
 from .api_client import api_call_extensions
-from .models import BriefingResult, Conclusion, Warning
+from .models import Advice, AdviceTopic, BriefingResult, Conclusion, Warning
 from .time_utils import require_aware_datetime
 
 
@@ -100,7 +100,27 @@ def parse_result(
 ) -> BriefingResult:
     require_aware_datetime(now, context="Briefing result time")
 
-    def conclusions(key: str) -> tuple[Conclusion, ...]:
+    def cited_source_ids(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
+        raw_source_ids = value.get(field, [])
+        if not isinstance(raw_source_ids, list):
+            raise LLMError(f"{field} must be an array")
+        if not all(isinstance(item, str) and item.strip() for item in raw_source_ids):
+            raise LLMError(f"{field} must contain non-empty strings")
+        parsed = tuple(raw_source_ids)
+        if not parsed:
+            raise LLMError(f"{field} must cite at least one source ID")
+        unknown = set(parsed) - valid_source_ids
+        if unknown:
+            raise LLMError(f"Model cited unknown source IDs: {sorted(unknown)}")
+        return parsed
+
+    def sourced_text(value: Mapping[str, Any], key: str) -> str:
+        text = value.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise LLMError(f"{key} entries must contain non-empty text")
+        return text
+
+    def parse_sourced_text_items(key: str) -> tuple[Conclusion, ...]:
         values = payload.get(key, [])
         if not isinstance(values, list):
             raise LLMError(f"{key} must be an array")
@@ -108,13 +128,34 @@ def parse_result(
         for value in values:
             if not isinstance(value, dict):
                 raise LLMError(f"{key} entries must be objects")
-            source_ids = tuple(str(item) for item in value.get("source_ids", []))
-            if not source_ids:
-                raise LLMError(f"{key} entries must cite at least one source ID")
-            unknown = set(source_ids) - valid_source_ids
-            if unknown:
-                raise LLMError(f"Model cited unknown source IDs: {sorted(unknown)}")
-            parsed.append(Conclusion(text=str(value["text"]), source_ids=source_ids))
+            parsed.append(
+                Conclusion(
+                    text=sourced_text(value, key),
+                    source_ids=cited_source_ids(value, "source_ids"),
+                )
+            )
+        return tuple(parsed)
+
+    def advice() -> tuple[Advice, ...]:
+        values = payload.get("advice", [])
+        if not isinstance(values, list):
+            raise LLMError("advice must be an array")
+        parsed: list[Advice] = []
+        for value in values:
+            if not isinstance(value, dict):
+                raise LLMError("advice entries must be objects")
+            try:
+                topic = AdviceTopic(str(value["topic"]))
+            except (KeyError, ValueError):
+                allowed = ", ".join(item.value for item in AdviceTopic)
+                raise LLMError(f"advice entries must use a valid topic: {allowed}") from None
+            parsed.append(
+                Advice(
+                    topic=topic,
+                    text=sourced_text(value, "advice"),
+                    source_ids=cited_source_ids(value, "source_ids"),
+                )
+            )
         return tuple(parsed)
 
     warning_values = payload.get("active_warnings", [])
@@ -142,14 +183,19 @@ def parse_result(
     should_publish = payload.get("should_publish", True)
     if not isinstance(should_publish, bool):
         raise LLMError("should_publish must be a boolean")
+    parsed_conclusions = parse_sourced_text_items("conclusions")
+    parsed_advice = advice()
+    parsed_disaster_tracking = parse_sourced_text_items("disaster_tracking")
     return BriefingResult(
         headline=str(payload["headline"]),
         overview=str(payload["overview"]),
-        conclusions=conclusions("conclusions"),
+        headline_source_ids=cited_source_ids(payload, "headline_source_ids"),
+        overview_source_ids=cited_source_ids(payload, "overview_source_ids"),
+        conclusions=parsed_conclusions,
         active_warnings=tuple(warnings),
         resolved_warning_ids=tuple(str(item) for item in payload.get("resolved_warning_ids", [])),
-        advice=conclusions("advice"),
-        disaster_tracking=conclusions("disaster_tracking"),
+        advice=parsed_advice,
+        disaster_tracking=parsed_disaster_tracking,
         should_publish=should_publish,
         raw_payload=dict(payload),
     )

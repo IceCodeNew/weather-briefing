@@ -4,6 +4,7 @@ from weather_briefing.air_quality import health_guidance
 from weather_briefing.reference_data import (
     ReferenceDataError,
     load_reference_data,
+    reference_string,
     reference_string_tuple,
     reference_value,
 )
@@ -17,6 +18,7 @@ def test_packaged_reference_data_is_available() -> None:
     )
     assert reference_string_tuple("content_cleaning.json", "default_remove_selectors")
     assert reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")
+    assert reference_string("provider_defaults.json", "qweather_allergen_index_type") == "7"
 
 
 def test_air_quality_guidance_covers_values_above_last_bounded_band() -> None:
@@ -49,6 +51,14 @@ def test_reference_value_rejects_missing_path() -> None:
 def test_reference_string_tuple_rejects_non_list_value() -> None:
     with pytest.raises(ReferenceDataError, match="non-empty string list"):
         reference_string_tuple("geography.json", "mainland_china_service_bounds")
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", 7])
+def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
+    monkeypatch.setattr("weather_briefing.reference_data.reference_value", lambda *args: value)
+
+    with pytest.raises(ReferenceDataError, match="non-empty string"):
+        reference_string("provider_defaults.json", "qweather_allergen_index_type")
 
 
 def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:

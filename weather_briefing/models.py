@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 import pendulum
 
@@ -70,6 +71,7 @@ class SourceDocument:
     name: str
     url: str
     content: str
+    has_allergen_information: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +125,7 @@ class WeatherContextSnapshot:
     lifestyle_advice: tuple[str, ...] = ()
     air_quality: AirQualitySnapshot | None = None
     allergen: AllergenSnapshot | None = None
+    allergen_advice_available: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,14 +144,31 @@ class Conclusion:
     source_ids: tuple[str, ...]
 
 
+class AdviceTopic(StrEnum):
+    CLOTHING = "clothing"
+    DEHUMIDIFICATION = "dehumidification"
+    EXERCISE = "exercise"
+    MASK = "mask"
+    ALLERGEN = "allergen"
+
+
+@dataclass(frozen=True, slots=True)
+class Advice:
+    topic: AdviceTopic
+    text: str
+    source_ids: tuple[str, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class BriefingResult:
     headline: str
     overview: str
+    headline_source_ids: tuple[str, ...]
+    overview_source_ids: tuple[str, ...]
     conclusions: tuple[Conclusion, ...]
     active_warnings: tuple[Warning, ...] = ()
     resolved_warning_ids: tuple[str, ...] = ()
-    advice: tuple[Conclusion, ...] = ()
+    advice: tuple[Advice, ...] = ()
     disaster_tracking: tuple[Conclusion, ...] = ()
     should_publish: bool = True
     raw_payload: dict[str, object] = field(default_factory=dict, compare=False)

@@ -38,6 +38,14 @@ def reference_value(filename: str, *path: str) -> Any:
     return value
 
 
+def reference_string(filename: str, *path: str) -> str:
+    value = reference_value(filename, *path)
+    if not isinstance(value, str) or not value.strip():
+        joined_path = ".".join(path)
+        raise ReferenceDataError(f"Reference data field must be a non-empty string: {filename}:{joined_path}")
+    return value
+
+
 def reference_string_tuple(filename: str, *path: str) -> tuple[str, ...]:
     value = reference_value(filename, *path)
     if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):

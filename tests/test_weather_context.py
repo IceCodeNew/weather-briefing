@@ -137,10 +137,17 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
                     "code": "200",
                     "daily": [
                         {
+                            "type": "1",
                             "name": "运动指数",
                             "category": "适宜",
                             "text": "适宜进行户外运动。",
-                        }
+                        },
+                        {
+                            "type": "7",
+                            "name": "过敏指数",
+                            "category": "不易发",
+                            "text": "天气条件不易诱发过敏。",
+                        },
                     ],
                 },
             )
@@ -178,7 +185,11 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
     assert snapshot.source_id == "weather:qweather"
     assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
     assert len(snapshot.weather_forecast) == 2
-    assert snapshot.lifestyle_advice == ("运动指数（适宜）：适宜进行户外运动。",)
+    assert snapshot.lifestyle_advice == (
+        "运动指数（适宜）：适宜进行户外运动。",
+        "过敏指数（不易发）：天气条件不易诱发过敏。",
+    )
+    assert snapshot.allergen_advice_available
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.source_name == "QWeather"
     assert snapshot.air_quality.aqi_standard == "中国环境空气质量指数（cn-mee）"
@@ -188,6 +199,7 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
         "weather:qweather",
         "air-quality:qweather",
     ]
+    assert documents[0].has_allergen_information
 
 
 async def test_qweather_provider_selects_requested_future_date() -> None:

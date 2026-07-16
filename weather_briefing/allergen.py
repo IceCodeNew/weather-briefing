@@ -27,6 +27,7 @@ def allergen_to_document(snapshot: AllergenSnapshot) -> SourceDocument:
         id=snapshot.source_id,
         name=snapshot.source_name,
         url=snapshot.source_url,
+        has_allergen_information=True,
         content=(
             f"观测时间：{observed_at}\n"
             f"花粉过敏原：\n{levels}\n"

@@ -6,6 +6,7 @@ from typing import Protocol
 from bs4 import BeautifulSoup
 
 from .models import (
+    Advice,
     Article,
     BriefingResult,
     Conclusion,
@@ -38,14 +39,18 @@ class TelegramHTMLRenderer:
             article.id: _html_link(article.url, _article_source_name(article)) for article in reference_articles
         }
         source_links.update({document.id: _html_link(document.url, document.name) for document in context})
-        lines = [f"<b>{_html_text(result.headline)}</b>", "", _html_text(result.overview), ""]
+        lines = [
+            f"<b>{_html_text(result.headline)}</b> {_html_attribution(result.headline_source_ids, source_links)}",
+            "",
+            f"{_html_text(result.overview)} {_html_attribution(result.overview_source_ids, source_links)}",
+            "",
+        ]
         if result.active_warnings:
             lines.extend(["<b>当前生效的气象预警</b>", ""])
             for warning in result.active_warnings:
-                links = " ".join(source_links[source_id] for source_id in warning.source_ids)
                 lines.append(
                     f"• <b>{_html_text(warning.title)}（{_html_text(warning.status)}）</b>："
-                    f"{_html_text(warning.detail)} {links}".rstrip()
+                    f"{_html_text(warning.detail)} {_html_attribution(warning.source_ids, source_links)}"
                 )
             lines.append("")
         lines.extend(_html_items("天气信息", result.conclusions, source_links))
@@ -79,12 +84,17 @@ class PlainTextRenderer:
             article.id: f"{_article_source_name(article)}: {article.url}" for article in reference_articles
         }
         source_references.update({document.id: f"{document.name}: {document.url}" for document in context})
-        lines = [result.headline, "", result.overview, ""]
+        lines = [
+            f"{result.headline} {_plain_attribution(result.headline_source_ids, source_references)}",
+            "",
+            f"{result.overview} {_plain_attribution(result.overview_source_ids, source_references)}",
+            "",
+        ]
         if result.active_warnings:
             lines.extend(["当前生效的气象预警", ""])
             for warning in result.active_warnings:
-                sources = " ".join(source_references[item] for item in warning.source_ids)
-                lines.append(f"- {warning.title}（{warning.status}）：{warning.detail} {sources}".rstrip())
+                sources = _plain_attribution(warning.source_ids, source_references)
+                lines.append(f"- {warning.title}（{warning.status}）：{warning.detail} {sources}")
             lines.append("")
         lines.extend(_plain_items("天气信息", result.conclusions, source_references))
         lines.extend(_plain_items("灾害动态", result.disaster_tracking, source_references))
@@ -110,26 +120,42 @@ def _html_link(url: str, label: str) -> str:
     return f'<a href="{escape(url, quote=True)}">{_html_text(label)}</a>'
 
 
-def _html_items(title: str, items: tuple[Conclusion, ...], source_links: dict[str, str]) -> list[str]:
+def _html_items(
+    title: str,
+    items: tuple[Conclusion | Advice, ...],
+    source_links: dict[str, str],
+) -> list[str]:
     if not items:
         return []
     lines = [f"<b>{_html_text(title)}</b>", ""]
     for item in items:
-        links = " ".join(source_links[source_id] for source_id in item.source_ids)
-        lines.append(f"• {_html_text(item.text)} {links}".rstrip())
+        lines.append(f"• {_html_text(item.text)} {_html_attribution(item.source_ids, source_links)}")
     lines.append("")
     return lines
 
 
-def _plain_items(title: str, items: tuple[Conclusion, ...], source_references: dict[str, str]) -> list[str]:
+def _plain_items(
+    title: str,
+    items: tuple[Conclusion | Advice, ...],
+    source_references: dict[str, str],
+) -> list[str]:
     if not items:
         return []
     lines = [title, ""]
     for item in items:
-        sources = " ".join(source_references[source_id] for source_id in item.source_ids)
-        lines.append(f"- {item.text} {sources}".rstrip())
+        lines.append(f"- {item.text} {_plain_attribution(item.source_ids, source_references)}")
     lines.append("")
     return lines
+
+
+def _html_attribution(source_ids: tuple[str, ...], source_links: dict[str, str]) -> str:
+    sources = "、".join(source_links[source_id] for source_id in source_ids)
+    return f"（来源：{sources}）"
+
+
+def _plain_attribution(source_ids: tuple[str, ...], source_references: dict[str, str]) -> str:
+    sources = "；".join(source_references[source_id] for source_id in source_ids)
+    return f"（来源：{sources}）"
 
 
 def _html_message(body: str) -> RenderedMessage:
