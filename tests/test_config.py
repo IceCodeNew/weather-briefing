@@ -2,9 +2,11 @@ import json
 from pathlib import Path
 
 import pytest
+from dotenv import dotenv_values
 
 from weather_briefing.config import ConfigurationError, Settings, weather_providers_for
 from weather_briefing.models import ResolvedLocation
+from weather_briefing.reference_data import reference_string_tuple
 
 
 def _required_environment(monkeypatch) -> None:
@@ -47,6 +49,16 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert settings.llm_base_url is None
     assert settings.qweather_index_types == ("1", "3", "6", "7", "8", "15")
     assert settings.qweather_jwt_lifetime_seconds == 900
+
+
+def test_environment_example_preserves_default_qweather_indices() -> None:
+    configured = dotenv_values(Path(__file__).parents[1] / "env.example")["QWEATHER_INDEX_TYPES"]
+
+    assert configured is not None
+    assert tuple(item.strip() for item in configured.split(",")) == reference_string_tuple(
+        "provider_defaults.json",
+        "qweather_lifestyle_index_types",
+    )
 
 
 def test_weather_provider_order_can_be_configured(monkeypatch) -> None:
