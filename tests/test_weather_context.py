@@ -1111,7 +1111,47 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
         raise AssertionError(f"Unexpected request: {request.url}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(WeatherContextError, match="weather forecast failed: TypeError"):
+        with pytest.raises(WeatherContextError, match="weather forecast parsing failed: TypeError"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    (
+        "fxDate",
+        "textDay",
+        "textNight",
+        "tempMin",
+        "tempMax",
+        "windDirDay",
+        "windScaleDay",
+        "humidity",
+        "precip",
+    ),
+)
+async def test_qweather_forecast_identifies_missing_required_field(missing_field: str) -> None:
+    incomplete_forecast = {key: value for key, value in _QWEATHER_DAILY_ITEM.items() if key != missing_field}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v7/weather/3d"
+        return httpx.Response(
+            200,
+            json={
+                "code": "200",
+                "updateTime": "2026-07-13T08:00",
+                "daily": [incomplete_forecast],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(
+            WeatherContextError,
+            match=f"weather forecast parsing failed: daily forecast missing required field: {missing_field}",
+        ):
             await QWeatherProvider(
                 client,
                 authenticator=StaticAuthenticator(),

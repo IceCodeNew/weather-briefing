@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 import httpx
 import jwt
@@ -28,6 +28,10 @@ _LOGGER = logging.getLogger("weather_briefing.weather_context")
 
 class WeatherContextError(RuntimeError):
     """Raised when a weather source is unavailable or violates its contract."""
+
+
+class _QWeatherResponseError(ValueError):
+    """Raised for safe, code-defined QWeather response contract errors."""
 
 
 class WeatherContextProvider(Protocol):
@@ -181,6 +185,7 @@ class QWeatherProvider:
                     "QWeather returned a non-success weather status "
                     f"code={_safe_api_status(weather_payload.get('code'))}"
                 )
+            operation = "weather forecast parsing"
             daily_forecasts = weather_payload.get("daily", ())
             first_forecast_date = next(
                 (
@@ -243,6 +248,8 @@ class QWeatherProvider:
             )
         except WeatherContextError:
             raise
+        except _QWeatherResponseError as exc:
+            raise WeatherContextError(f"QWeather {operation} failed: {exc}") from None
         except (httpx.HTTPError, jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
             detail = _safe_provider_error(exc)
             raise WeatherContextError(f"QWeather {operation} failed: {detail}") from None
@@ -695,7 +702,26 @@ def _format_qweather_lifestyle(item: dict[str, object]) -> str:
     return f"{name}（{category}）：{text}"
 
 
-def _format_qweather_day(item: dict[str, object]) -> str:
+def _is_string_keyed_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _format_qweather_day(item: object) -> str:
+    if not _is_string_keyed_dict(item):
+        raise TypeError("daily forecast entries must be objects")
+    required_fields = (
+        "fxDate",
+        "textDay",
+        "textNight",
+        "tempMin",
+        "tempMax",
+        "windDirDay",
+        "windScaleDay",
+        "humidity",
+        "precip",
+    )
+    if missing_field := next((field for field in required_fields if field not in item), None):
+        raise _QWeatherResponseError(f"daily forecast missing required field: {missing_field}")
     return (
         f"{item['fxDate']}：{item['textDay']}转{item['textNight']}，"
         f"{item['tempMin']}~{item['tempMax']}℃，"
