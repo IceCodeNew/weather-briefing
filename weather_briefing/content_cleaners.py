@@ -1,3 +1,5 @@
+"""Composable HTML-to-text content cleaning rules."""
+
 from __future__ import annotations
 
 import re
@@ -16,17 +18,26 @@ class ContentCleaningError(ValueError):
 
 
 class ContentCleaner(Protocol):
-    def clean(self, content: str, rules: ContentCleaningRules) -> str: ...
+    """Normalize source content according to injected cleaning rules."""
+
+    def clean(self, content: str, rules: ContentCleaningRules) -> str:
+        """Clean source content according to injected rules."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
 class ContentCleaningRules:
+    """Hold source-specific selectors and text removal patterns."""
+
     remove_selectors: tuple[str, ...] = ()
     remove_patterns: tuple[str, ...] = ()
 
 
 class HTMLContentCleaner:
+    """Convert untrusted HTML into filtered plain text."""
+
     def clean(self, content: str, rules: ContentCleaningRules) -> str:
+        """Remove configured noise and return normalized text lines."""
         default_selectors, default_patterns = _default_cleaning_rules()
         soup = BeautifulSoup(content, "html.parser")
         for comment in soup.find_all(string=lambda value: isinstance(value, Comment)):

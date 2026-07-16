@@ -1,3 +1,5 @@
+"""Location geocoding, fallback selection, and local caching."""
+
 from __future__ import annotations
 
 import asyncio
@@ -21,11 +23,19 @@ class GeocodingError(RuntimeError):
 
 
 class GeocodingProvider(Protocol):
-    async def geocode(self, location: LocationSpec) -> ResolvedLocation: ...
+    """Resolve a named location to coordinates and geographic metadata."""
+
+    async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        """Resolve one named location."""
+        ...
 
 
 class ReverseGeocodingProvider(Protocol):
-    async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation: ...
+    """Resolve coordinates to a canonical location name and metadata."""
+
+    async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation:
+        """Reverse-geocode one coordinate-bearing location."""
+        ...
 
 
 @cache
@@ -52,11 +62,14 @@ def _mainland_china_rules() -> tuple[float, float, float, float, frozenset[str]]
 
 
 def possibly_mainland_china(latitude: float, longitude: float) -> bool:
+    """Return whether coordinates fall inside the broad service bounds."""
     latitude_min, latitude_max, longitude_min, longitude_max, _ = _mainland_china_rules()
     return latitude_min <= latitude <= latitude_max and longitude_min <= longitude <= longitude_max
 
 
 class OpenMeteoGeocodingProvider:
+    """Resolve named locations through the Open-Meteo geocoding API."""
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -64,11 +77,13 @@ class OpenMeteoGeocodingProvider:
         base_url: str = "https://geocoding-api.open-meteo.com",
         api_key: str | None = None,
     ) -> None:
+        """Configure Open-Meteo geocoding access and its optional API key."""
         self._client = client
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        """Resolve a location using a matching Open-Meteo result."""
         location_name = _required_location_name(location)
         params: dict[str, str | int] = {
             "name": location_name,
@@ -122,6 +137,8 @@ class OpenMeteoGeocodingProvider:
 
 
 class NominatimGeocodingProvider:
+    """Resolve and reverse-resolve locations through Nominatim."""
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -129,6 +146,7 @@ class NominatimGeocodingProvider:
         user_agent: str,
         base_url: str = "https://nominatim.openstreetmap.org",
     ) -> None:
+        """Configure rate-limited Nominatim access with an identifying user agent."""
         if not user_agent.strip():
             raise ValueError("Nominatim requires an identifying User-Agent")
         self._client = client
@@ -138,6 +156,7 @@ class NominatimGeocodingProvider:
         self._last_request_at = 0.0
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        """Resolve a named location while respecting Nominatim rate limits."""
         location_name = _required_location_name(location)
         async with self._lock:
             result: dict[str, object] | None = None
@@ -197,6 +216,7 @@ class NominatimGeocodingProvider:
         )
 
     async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation:
+        """Resolve coordinates to the nearest canonical OSM address."""
         if location.latitude is None or location.longitude is None:
             raise GeocodingError(f"Reverse geocoding requires coordinates for location: {location.id}")
         async with self._lock:
@@ -246,12 +266,16 @@ class NominatimGeocodingProvider:
 
 
 class FallbackGeocodingProvider:
+    """Try geocoding providers in order until one resolves a location."""
+
     def __init__(self, *providers: GeocodingProvider) -> None:
+        """Require and retain providers in fallback priority order."""
         if not providers:
             raise ValueError("At least one geocoding provider is required")
         self._providers = providers
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        """Resolve a location with the first successful provider."""
         location_name = _required_location_name(location)
         errors: list[GeocodingError] = []
         for provider in self._providers:
@@ -263,10 +287,14 @@ class FallbackGeocodingProvider:
 
 
 class PrecisionReducingGeocodingProvider:
+    """Retry failed Chinese place names at progressively lower precision."""
+
     def __init__(self, provider: GeocodingProvider) -> None:
+        """Wrap a geocoder with progressively broader Chinese-name retries."""
         self._provider = provider
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+        """Resolve a location directly before trying safe broader names."""
         location_name = _required_location_name(location)
         try:
             return await self._provider.geocode(location)
@@ -288,6 +316,8 @@ class PrecisionReducingGeocodingProvider:
 
 
 class CachedLocationResolver:
+    """Resolve complete locations while caching provider-derived metadata."""
+
     def __init__(
         self,
         provider: GeocodingProvider,
@@ -295,14 +325,17 @@ class CachedLocationResolver:
         *,
         reverse_provider: ReverseGeocodingProvider | None = None,
     ) -> None:
+        """Configure forward and optional reverse geocoding with a local cache."""
         self._provider = provider
         self._cache_path = cache_path
         self._reverse_provider = reverse_provider
 
     async def resolve(self, location: LocationSpec) -> ResolvedLocation:
+        """Resolve a location and return its normalized value."""
         return (await self.resolve_with_metadata(location)).location
 
     async def resolve_with_metadata(self, location: LocationSpec) -> LocationResolution:
+        """Resolve a location and report whether its result came from cache."""
         location_name = (location.name or "").strip() or None
         if location.latitude is not None and location.longitude is not None:
             if location_name is None:

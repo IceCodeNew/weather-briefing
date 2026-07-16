@@ -1,3 +1,5 @@
+"""Delivery composition and message publisher adapters."""
+
 from __future__ import annotations
 
 import logging
@@ -14,17 +16,25 @@ _LOGGER = logging.getLogger("weather_briefing.publishers")
 
 
 class Publisher(Protocol):
+    """Transport a rendered message to its destination."""
+
     async def publish(
         self,
         message: RenderedMessage,
         *,
         single_message: bool = False,
         silent: bool = False,
-    ) -> None: ...
+    ) -> None:
+        """Publish one rendered message with delivery hints."""
+        ...
 
 
 class RenderedTextDiagnostics(Protocol):
-    def rendered_text_logging_enabled(self) -> bool: ...
+    """Expose the runtime switch for sensitive rendered-text logging."""
+
+    def rendered_text_logging_enabled(self) -> bool:
+        """Return whether sensitive rendered-text logging is enabled."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +47,7 @@ class DeliveryProvider:
     diagnostics: RenderedTextDiagnostics | None = None
 
     def briefing_limit(self, configured_limit: int) -> int:
+        """Clamp a configured briefing limit to the platform limit."""
         if self.single_message_limit is None:
             return configured_limit
         return min(configured_limit, self.single_message_limit)
@@ -47,6 +58,7 @@ class DeliveryProvider:
         reference_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
+        """Render a briefing with the configured platform renderer."""
         return self.renderer.render_briefing(result, reference_articles, context)
 
     async def publish_rendered(
@@ -56,10 +68,12 @@ class DeliveryProvider:
         single_message: bool = False,
         silent: bool = False,
     ) -> None:
+        """Publish an already rendered message with delivery hints."""
         _log_rendered_text(self.diagnostics, "briefing", message.body)
         await self.publisher.publish(message, single_message=single_message, silent=silent)
 
     async def publish_verbatim(self, article: Article, *, silent: bool = False) -> None:
+        """Render and publish one cleaned article without summarization."""
         message = self.renderer.render_verbatim(article)
         _LOGGER.debug(
             "Rendered verbatim message: visible_characters=%d payload_characters=%d",
@@ -70,12 +84,15 @@ class DeliveryProvider:
         await self.publisher.publish(message, silent=silent)
 
     async def publish_alert(self, title: str, body: str) -> None:
+        """Render and publish an operational alert."""
         message = self.renderer.render_alert(title, body)
         _log_rendered_text(self.diagnostics, "alert", message.body)
         await self.publisher.publish(message)
 
 
 class StdoutPublisher:
+    """Write rendered messages to standard output."""
+
     async def publish(
         self,
         message: RenderedMessage,
@@ -83,6 +100,7 @@ class StdoutPublisher:
         single_message: bool = False,
         silent: bool = False,
     ) -> None:
+        """Print the rendered body and ignore platform delivery hints."""
         print(message.body)
 
 
@@ -91,6 +109,8 @@ class DeliveryError(RuntimeError):
 
 
 class TelegramPublisher:
+    """Publish rendered HTML messages through the Telegram Bot API."""
+
     MAX_MESSAGE_LENGTH = 4096
 
     def __init__(
@@ -100,6 +120,7 @@ class TelegramPublisher:
         chat_id: str,
         diagnostics: RenderedTextDiagnostics | None = None,
     ) -> None:
+        """Configure Telegram delivery and optional sensitive-text diagnostics."""
         self._client = client
         self._url = f"https://api.telegram.org/bot{token}/sendMessage"
         self._chat_id = chat_id
@@ -112,6 +133,7 @@ class TelegramPublisher:
         single_message: bool = False,
         silent: bool = False,
     ) -> None:
+        """Publish one message, splitting it only when allowed."""
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
             raise DeliveryError("Telegram single message exceeds the platform limit")
         chunks = (message.body,) if single_message else _split_message(message.body, self.MAX_MESSAGE_LENGTH)

@@ -1,3 +1,5 @@
+"""Weather provider adapters and provider-neutral context conversion."""
+
 from __future__ import annotations
 
 import base64
@@ -39,23 +41,32 @@ class _OpenMeteoResponseError(ValueError):
 
 
 class WeatherContextProvider(Protocol):
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot: ...
+    """Fetch provider-neutral weather context for coordinates."""
+
+    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+        """Fetch the current weather context for a location."""
+        ...
 
 
 @runtime_checkable
 class DatedWeatherContextProvider(Protocol):
+    """Fetch weather context for an explicit forecast date."""
+
     async def fetch_for_date(
         self,
         latitude: float,
         longitude: float,
         forecast_date: pendulum.Date,
-    ) -> WeatherContextSnapshot: ...
+    ) -> WeatherContextSnapshot:
+        """Fetch weather context for a location and forecast date."""
+        ...
 
 
 class LoggedWeatherContextProvider:
     """Record a non-sensitive history of logical weather provider calls."""
 
     def __init__(self, name: str, provider: WeatherContextProvider) -> None:
+        """Wrap a named provider with non-sensitive timing and outcome logs."""
         self._name = name
         self._provider = provider
 
@@ -66,6 +77,7 @@ class LoggedWeatherContextProvider:
         *,
         forecast_date: pendulum.Date | None = None,
     ) -> WeatherContextSnapshot:
+        """Fetch weather context while recording non-sensitive call metadata."""
         started_at = time.monotonic()
         _LOGGER.info("Weather API call started provider=%s", self._name)
         try:
@@ -101,14 +113,21 @@ class LoggedWeatherContextProvider:
         longitude: float,
         forecast_date: pendulum.Date,
     ) -> WeatherContextSnapshot:
+        """Fetch logged weather context for an explicit date."""
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
 
 class QWeatherAuthenticator(Protocol):
-    def authorization_header(self) -> str: ...
+    """Generate an authorization header for QWeather requests."""
+
+    def authorization_header(self) -> str:
+        """Return a fresh QWeather authorization header."""
+        ...
 
 
 class QWeatherJWTAuthenticator:
+    """Issue short-lived QWeather EdDSA JWT credentials."""
+
     def __init__(
         self,
         *,
@@ -118,6 +137,7 @@ class QWeatherJWTAuthenticator:
         lifetime_seconds: int = 900,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        """Validate and retain credentials for short-lived QWeather JWTs."""
         if not 1 <= lifetime_seconds <= 86_400:
             raise ValueError("QWeather JWT lifetime must be between 1 and 86400 seconds")
         self._project_id = project_id
@@ -130,6 +150,7 @@ class QWeatherJWTAuthenticator:
         self._clock = clock
 
     def authorization_header(self) -> str:
+        """Create a Bearer header containing a fresh short-lived JWT."""
         issued_at = int(self._clock()) - 30
         token = jwt.encode(
             {
@@ -145,6 +166,8 @@ class QWeatherJWTAuthenticator:
 
 
 class QWeatherProvider:
+    """Fetch weather, lifestyle, and air-quality context from QWeather."""
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -153,6 +176,7 @@ class QWeatherProvider:
         base_url: str,
         index_types: tuple[str, ...] | None = None,
     ) -> None:
+        """Configure authenticated QWeather access and lifestyle index selection."""
         self._client = client
         self._authenticator = authenticator
         self._base_url = base_url
@@ -168,6 +192,7 @@ class QWeatherProvider:
         *,
         forecast_date: pendulum.Date | None = None,
     ) -> WeatherContextSnapshot:
+        """Fetch and normalize QWeather context for a location."""
         operation = "authentication"
         try:
             headers = {"Authorization": self._authenticator.authorization_header()}
@@ -276,6 +301,7 @@ class QWeatherProvider:
         longitude: float,
         forecast_date: pendulum.Date,
     ) -> WeatherContextSnapshot:
+        """Fetch QWeather context for an explicit forecast date."""
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
     async def _fetch_air_quality(
@@ -323,6 +349,8 @@ class QWeatherProvider:
 
 
 class OpenMeteoProvider:
+    """Fetch global weather, air-quality, and pollen context from Open-Meteo."""
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -331,6 +359,7 @@ class OpenMeteoProvider:
         air_quality_base_url: str = "https://air-quality-api.open-meteo.com",
         api_key: str | None = None,
     ) -> None:
+        """Configure Open-Meteo weather and air-quality endpoints."""
         self._client = client
         self._weather_base_url = weather_base_url
         self._air_quality_base_url = air_quality_base_url
@@ -343,6 +372,7 @@ class OpenMeteoProvider:
         *,
         forecast_date: pendulum.Date | None = None,
     ) -> WeatherContextSnapshot:
+        """Fetch and normalize Open-Meteo context for a location."""
         params: dict[str, str | int | float] = {
             "latitude": latitude,
             "longitude": longitude,
@@ -417,6 +447,7 @@ class OpenMeteoProvider:
         longitude: float,
         forecast_date: pendulum.Date,
     ) -> WeatherContextSnapshot:
+        """Fetch Open-Meteo context for an explicit forecast date."""
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
     async def _fetch_air_quality_and_allergen(
@@ -547,7 +578,10 @@ class OpenMeteoProvider:
 
 
 class FallbackWeatherContextProvider:
+    """Try weather providers in configured priority order."""
+
     def __init__(self, *providers: WeatherContextProvider) -> None:
+        """Require and retain weather providers in fallback priority order."""
         if not providers:
             raise ValueError("At least one weather context provider is required")
         self._providers = providers
@@ -559,6 +593,7 @@ class FallbackWeatherContextProvider:
         *,
         forecast_date: pendulum.Date | None = None,
     ) -> WeatherContextSnapshot:
+        """Return current context from the first successful provider."""
         for provider in self._providers[:-1]:
             try:
                 return await fetch_weather_context(provider, latitude, longitude, forecast_date)
@@ -572,6 +607,7 @@ class FallbackWeatherContextProvider:
         longitude: float,
         forecast_date: pendulum.Date,
     ) -> WeatherContextSnapshot:
+        """Return dated context from the first compatible provider."""
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
 
@@ -581,6 +617,7 @@ async def fetch_weather_context(
     longitude: float,
     forecast_date: pendulum.Date | None,
 ) -> WeatherContextSnapshot:
+    """Fetch current or dated context through a provider capability boundary."""
     if forecast_date is None:
         return await provider.fetch(latitude, longitude)
     if not isinstance(provider, DatedWeatherContextProvider):
@@ -605,11 +642,14 @@ def _safe_api_status(value: object) -> str:
 
 
 class AirQualitySupplementingWeatherProvider:
+    """Fill missing weather-provider air quality from a dedicated provider."""
+
     def __init__(
         self,
         weather_provider: WeatherContextProvider,
         air_quality_provider: AirQualityProvider | None,
     ) -> None:
+        """Compose weather context with an optional air-quality fallback."""
         self._weather_provider = weather_provider
         self._air_quality_provider = air_quality_provider
 
@@ -620,6 +660,7 @@ class AirQualitySupplementingWeatherProvider:
         *,
         forecast_date: pendulum.Date | None = None,
     ) -> WeatherContextSnapshot:
+        """Fetch current weather context and supplement missing air quality."""
         snapshot = await fetch_weather_context(self._weather_provider, latitude, longitude, forecast_date)
         if snapshot.air_quality is not None:
             return snapshot
@@ -644,10 +685,12 @@ class AirQualitySupplementingWeatherProvider:
         longitude: float,
         forecast_date: pendulum.Date,
     ) -> WeatherContextSnapshot:
+        """Fetch dated weather context and supplement missing air quality."""
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
 
 def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocument, ...]:
+    """Convert a weather snapshot into citable LLM source documents."""
     weather = "\n".join(f"- {item}" for item in snapshot.weather_forecast)
     lifestyle = "\n".join(f"- {item}" for item in snapshot.lifestyle_advice) or "不可用"
     documents = [
