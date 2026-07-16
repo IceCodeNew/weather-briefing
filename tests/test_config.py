@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -142,6 +143,112 @@ def test_rss_source_treats_null_optional_arrays_as_empty(monkeypatch, tmp_path: 
     assert feed.location_ids == ()
 
 
+@pytest.mark.parametrize(
+    "field",
+    (
+        "verbatim_title_patterns",
+        "forecast_title_patterns",
+        "content_remove_selectors",
+        "content_remove_patterns",
+        "location_ids",
+    ),
+)
+def test_rss_source_optional_arrays_reject_non_arrays(monkeypatch, tmp_path: Path, field: str) -> None:
+    _required_environment(monkeypatch)
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "test",
+                    "name": "Test",
+                    "url": "https://example.invalid/feed",
+                    field: "not-an-array",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+    with pytest.raises(ConfigurationError, match=rf"RSS source test field {field} must be a JSON array"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("field", "entry"),
+    (
+        ("verbatim_title_patterns", ""),
+        ("forecast_title_patterns", " "),
+        ("content_remove_selectors", 1),
+        ("content_remove_patterns", {}),
+        ("location_ids", None),
+    ),
+)
+def test_rss_source_optional_arrays_require_non_empty_strings(
+    monkeypatch,
+    tmp_path: Path,
+    field: str,
+    entry: object,
+) -> None:
+    _required_environment(monkeypatch)
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "test",
+                    "name": "Test",
+                    "url": "https://example.invalid/feed",
+                    field: [entry],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+    with pytest.raises(
+        ConfigurationError,
+        match=rf"RSS source test field {field}\[0\] must be a non-empty string",
+    ):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("field", "entry"),
+    (
+        ("content_remove_selectors", "["),
+        ("content_remove_patterns", "["),
+    ),
+)
+def test_rss_source_cleaning_rules_reject_invalid_syntax(
+    monkeypatch,
+    tmp_path: Path,
+    field: str,
+    entry: str,
+) -> None:
+    _required_environment(monkeypatch)
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "test",
+                    "name": "Test",
+                    "url": "https://example.invalid/feed",
+                    field: [entry],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+    with pytest.raises(ConfigurationError, match=rf"RSS source test field {field}\[0\] is invalid"):
+        Settings.from_env()
+
+
 def test_location_file_supports_name_coordinates_or_both(monkeypatch, tmp_path: Path) -> None:
     _required_environment(monkeypatch)
     location_file = tmp_path / "locations.json"
@@ -275,12 +382,29 @@ def test_env_value_with_unmatched_quotes_is_unchanged(monkeypatch, value: str) -
     assert settings.api_key == value
 
 
-@pytest.mark.parametrize("value", ("1", "true", "yes", "'true'", '"yes"'))
+@pytest.mark.parametrize("value", ("1", "true", "yes", "'true'", '"yes"', "' true '", '" yes "'))
 def test_debug_accepts_truthy_values_with_optional_outer_quotes(monkeypatch, value: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("DEBUG", value)
 
     assert Settings.from_env().debug
+
+
+@pytest.mark.parametrize("value", ("", "0", "false", "no", "'false'", '"no"', "' false '", '" no "'))
+def test_debug_accepts_false_values_with_optional_outer_quotes(monkeypatch, value: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("DEBUG", value)
+
+    assert not Settings.from_env().debug
+
+
+@pytest.mark.parametrize("value", ("tru", "enabled", "2"))
+def test_debug_rejects_unknown_values(monkeypatch, value: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("DEBUG", value)
+
+    with pytest.raises(ConfigurationError, match="DEBUG must be one of"):
+        Settings.from_env()
 
 
 @pytest.mark.parametrize(
@@ -531,6 +655,36 @@ class TestConfigErrorPaths:
 
         with pytest.raises(ConfigurationError, match="CONTEXT_SOURCES_JSON must be a JSON array"):
             Settings.from_env()
+
+    def test_context_source_not_object_includes_index_in_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("CONTEXT_SOURCES_JSON", "[1]")
+
+        with pytest.raises(ConfigurationError, match=r"CONTEXT_SOURCES_JSON\[0\] must be a JSON object"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("field", ("id", "name", "url"))
+    def test_context_source_requires_named_fields(self, monkeypatch, field: str) -> None:
+        _required_environment(monkeypatch)
+        source = {"id": "context", "name": "Context", "url": "https://example.invalid/context"}
+        del source[field]
+        monkeypatch.setenv("CONTEXT_SOURCES_JSON", json.dumps([source]))
+
+        with pytest.raises(ConfigurationError, match=rf"CONTEXT_SOURCES_JSON\[0\]\.{field}"):
+            Settings.from_env()
+
+    def test_context_source_accepts_and_strips_required_strings(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv(
+            "CONTEXT_SOURCES_JSON",
+            '[{"id":" context ","name":" Context ","url":" https://example.invalid/context "}]',
+        )
+
+        source = Settings.from_env().context_sources[0]
+
+        assert source.id == "context"
+        assert source.name == "Context"
+        assert source.url == "https://example.invalid/context"
 
     def test_invalid_timezone_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)

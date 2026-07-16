@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, overload
@@ -11,6 +13,8 @@ from typing import Any, overload
 import pendulum
 from any_llm import AnyLLM
 from apscheduler.triggers.cron import CronTrigger
+from soupsieve import SelectorSyntaxError
+from soupsieve import compile as compile_selector
 
 from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation
 from .reference_data import reference_string_tuple
@@ -97,6 +101,15 @@ def _positive_float(name: str, default: float) -> float:
     return value
 
 
+def _boolean(name: str, default: bool) -> bool:
+    value = _clean_env(os.getenv(name, str(default))).strip().casefold()
+    if value in {"1", "true", "yes"}:
+        return True
+    if value in {"0", "false", "no", ""}:
+        return False
+    raise ConfigurationError(f"{name} must be one of: true, false, 1, 0, yes, no")
+
+
 def _json_file(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -107,6 +120,45 @@ def _json_file(path: Path) -> list[dict[str, Any]]:
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ConfigurationError(f"{path} must be a JSON array of objects")
     return value
+
+
+def _optional_string_array(
+    item: dict[str, Any],
+    source_id: str,
+    field: str,
+    *,
+    validator: Callable[[str], object] | None = None,
+) -> tuple[str, ...]:
+    value = item.get(field)
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigurationError(f"RSS source {source_id} field {field} must be a JSON array")
+    entries: list[str] = []
+    for index, entry in enumerate(value):
+        path = f"RSS source {source_id} field {field}[{index}]"
+        if not isinstance(entry, str) or not entry.strip():
+            raise ConfigurationError(f"{path} must be a non-empty string")
+        if validator is not None:
+            try:
+                validator(entry)
+            except (re.error, SelectorSyntaxError) as exc:
+                raise ConfigurationError(f"{path} is invalid") from exc
+        entries.append(entry)
+    return tuple(entries)
+
+
+def _context_source(item: object, index: int) -> ContextSourceConfig:
+    if not isinstance(item, dict):
+        raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}] must be a JSON object")
+
+    values: dict[str, str] = {}
+    for field in ("id", "name", "url"):
+        value = item.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}].{field} must be a non-empty string")
+        values[field] = value.strip()
+    return ContextSourceConfig(id=values["id"], name=values["name"], url=values["url"])
 
 
 def _configured_weather_providers() -> tuple[str, ...] | None:
@@ -184,13 +236,21 @@ def _feeds(path: Path) -> tuple[FeedConfig, ...]:
                 id=source_id,
                 name=source_name,
                 url=source_url,
-                verbatim_title_patterns=tuple(str(pattern) for pattern in item.get("verbatim_title_patterns") or []),
-                forecast_title_patterns=tuple(str(pattern) for pattern in item.get("forecast_title_patterns") or []),
-                content_remove_selectors=tuple(
-                    str(selector) for selector in item.get("content_remove_selectors") or []
+                verbatim_title_patterns=_optional_string_array(item, source_id, "verbatim_title_patterns"),
+                forecast_title_patterns=_optional_string_array(item, source_id, "forecast_title_patterns"),
+                content_remove_selectors=_optional_string_array(
+                    item,
+                    source_id,
+                    "content_remove_selectors",
+                    validator=compile_selector,
                 ),
-                content_remove_patterns=tuple(str(pattern) for pattern in item.get("content_remove_patterns") or []),
-                location_ids=tuple(str(location_id) for location_id in item.get("location_ids") or []),
+                content_remove_patterns=_optional_string_array(
+                    item,
+                    source_id,
+                    "content_remove_patterns",
+                    validator=re.compile,
+                ),
+                location_ids=_optional_string_array(item, source_id, "location_ids"),
             )
         )
     return tuple(feeds)
@@ -258,12 +318,9 @@ class Settings:
             context_items = json.loads(context_raw)
         except json.JSONDecodeError as exc:
             raise ConfigurationError("CONTEXT_SOURCES_JSON must contain valid JSON") from exc
-        if not isinstance(context_items, list) or not all(isinstance(item, dict) for item in context_items):
+        if not isinstance(context_items, list):
             raise ConfigurationError("CONTEXT_SOURCES_JSON must be a JSON array of objects")
-        context_sources = tuple(
-            ContextSourceConfig(id=str(item["id"]), name=str(item["name"]), url=str(item["url"]))
-            for item in context_items
-        )
+        context_sources = tuple(_context_source(item, index) for index, item in enumerate(context_items))
         try:
             timezone = pendulum.timezone(_clean_env(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai")))
         except (ValueError, KeyError) as exc:
@@ -371,5 +428,5 @@ class Settings:
             greeting_hour=daily_cron_hour,
             greeting_minute=daily_cron_minute,
             hourly_cron=hourly_cron,
-            debug=_clean_env(os.getenv("DEBUG", "")).lower() in ("1", "true", "yes"),
+            debug=_boolean("DEBUG", False),
         )
