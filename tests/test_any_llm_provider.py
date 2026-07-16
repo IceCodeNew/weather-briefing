@@ -1,12 +1,11 @@
 import json
 import logging
 from types import SimpleNamespace
-from typing import cast
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 from any_llm import AnyLLM
+from pydantic import BaseModel
 
 from weather_briefing.api_client import LoggedAsyncClient
 from weather_briefing.llm import (
@@ -14,6 +13,32 @@ from weather_briefing.llm import (
     LLMStructuredOutput,
     create_any_llm_provider,
 )
+
+
+class _CompletionClientStub:
+    def __init__(self, response: object) -> None:
+        self._response = response
+        self.calls: list[dict[str, object]] = []
+
+    async def acompletion(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: type[BaseModel],
+        temperature: float,
+        max_tokens: int,
+    ) -> object:
+        self.calls.append(
+            {
+                "model": model,
+                "messages": messages,
+                "response_format": response_format,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        return self._response
 
 
 async def test_any_llm_provider_uses_structured_chat_completion() -> None:
@@ -27,15 +52,11 @@ async def test_any_llm_provider_uses_structured_chat_completion() -> None:
         "disaster_tracking": [],
         "should_publish": True,
     }
-    client = SimpleNamespace(
-        acompletion=AsyncMock(
-            return_value=SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(model_result)))]
-            )
-        )
+    client = _CompletionClientStub(
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(model_result)))])
     )
     provider = AnyLLMStructuredProvider(
-        cast("AnyLLM", client),
+        client,
         provider="deepseek",
         model="requested-model",
         max_output_tokens=4096,
@@ -43,25 +64,27 @@ async def test_any_llm_provider_uses_structured_chat_completion() -> None:
 
     result = await provider.summarize("Return JSON", {"input": "数据"})
 
-    client.acompletion.assert_awaited_once_with(
-        model="requested-model",
-        messages=[
-            {"role": "system", "content": "Return JSON"},
-            {"role": "user", "content": '{"input": "数据"}'},
-        ],
-        response_format=LLMStructuredOutput,
-        temperature=0.2,
-        max_tokens=4096,
-    )
+    assert client.calls == [
+        {
+            "model": "requested-model",
+            "messages": [
+                {"role": "system", "content": "Return JSON"},
+                {"role": "user", "content": '{"input": "数据"}'},
+            ],
+            "response_format": LLMStructuredOutput,
+            "temperature": 0.2,
+            "max_tokens": 4096,
+        }
+    ]
     assert result == model_result
 
 
 async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) -> None:
     created: list[tuple[str, dict[str, object]]] = []
 
-    def fake_create(provider: str, **options: object) -> SimpleNamespace:
+    def fake_create(provider: str, **options: object) -> _CompletionClientStub:
         created.append((provider, options))
-        return SimpleNamespace()
+        return _CompletionClientStub(SimpleNamespace())
 
     monkeypatch.setattr(AnyLLM, "create", fake_create)
     async with httpx.AsyncClient() as http_client:

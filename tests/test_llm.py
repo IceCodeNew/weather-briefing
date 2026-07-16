@@ -1,15 +1,48 @@
 import json
 from copy import deepcopy
 from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import AsyncMock
+from typing import Any
 
 import pendulum
 import pytest
-from any_llm import AnyLLM
 from any_llm.exceptions import ProviderError
+from pydantic import BaseModel
 
 from weather_briefing.llm import AnyLLMStructuredProvider, LLMError, LLMStructuredOutput, parse_result
+
+
+class _CompletionClientStub:
+    def __init__(self, response: object | None = None, *, error: BaseException | None = None) -> None:
+        self._response = response
+        self._error = error
+
+    async def acompletion(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: type[BaseModel],
+        temperature: float,
+        max_tokens: int,
+    ) -> object:
+        if self._error is not None:
+            raise self._error
+        if self._response is None:
+            raise AssertionError("Completion response was not configured")
+        return self._response
+
+
+async def test_completion_client_stub_requires_a_configured_response() -> None:
+    client = _CompletionClientStub()
+
+    with pytest.raises(AssertionError, match="not configured"):
+        await client.acompletion(
+            model="model",
+            messages=[],
+            response_format=LLMStructuredOutput,
+            temperature=0.2,
+            max_tokens=1024,
+        )
 
 
 def _valid_payload() -> dict[str, Any]:
@@ -204,15 +237,11 @@ def test_rejects_unexpected_response_field() -> None:
 
 async def test_provider_accepts_typed_parsed_response() -> None:
     parsed = LLMStructuredOutput.model_validate(_valid_payload())
-    client = SimpleNamespace(
-        acompletion=AsyncMock(
-            return_value=SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed, content=None))]
-            )
-        )
+    client = _CompletionClientStub(
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed, content=None))])
     )
     provider = AnyLLMStructuredProvider(
-        cast("AnyLLM", client),
+        client,
         provider="openai",
         model="model",
         max_output_tokens=1024,
@@ -222,13 +251,9 @@ async def test_provider_accepts_typed_parsed_response() -> None:
 
 
 async def test_provider_rejects_empty_json_content() -> None:
-    client = SimpleNamespace(
-        acompletion=AsyncMock(
-            return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))])
-        )
-    )
+    client = _CompletionClientStub(SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))]))
     provider = AnyLLMStructuredProvider(
-        cast("AnyLLM", client),
+        client,
         provider="openai",
         model="model",
         max_output_tokens=1024,
@@ -246,9 +271,9 @@ async def test_provider_rejects_empty_json_content() -> None:
     ),
 )
 async def test_provider_rejects_malformed_completion_response(response: object, message: str) -> None:
-    client = SimpleNamespace(acompletion=AsyncMock(return_value=response))
+    client = _CompletionClientStub(response)
     provider = AnyLLMStructuredProvider(
-        cast("AnyLLM", client),
+        client,
         provider="openai",
         model="model",
         max_output_tokens=1024,
@@ -259,15 +284,11 @@ async def test_provider_rejects_malformed_completion_response(response: object, 
 
 
 async def test_provider_rejects_invalid_structured_response() -> None:
-    client = SimpleNamespace(
-        acompletion=AsyncMock(
-            return_value=SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps([1, 2, 3])))]
-            )
-        )
+    client = _CompletionClientStub(
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps([1, 2, 3])))])
     )
     provider = AnyLLMStructuredProvider(
-        cast("AnyLLM", client),
+        client,
         provider="openai",
         model="model",
         max_output_tokens=1024,
@@ -278,9 +299,9 @@ async def test_provider_rejects_invalid_structured_response() -> None:
 
 
 async def test_provider_wraps_sdk_error() -> None:
-    client = SimpleNamespace(acompletion=AsyncMock(side_effect=ProviderError("upstream failed")))
+    client = _CompletionClientStub(error=ProviderError("upstream failed"))
     provider = AnyLLMStructuredProvider(
-        cast("AnyLLM", client),
+        client,
         provider="openai",
         model="model",
         max_output_tokens=1024,
@@ -291,9 +312,9 @@ async def test_provider_wraps_sdk_error() -> None:
 
 
 async def test_provider_does_not_mask_programming_errors() -> None:
-    client = SimpleNamespace(acompletion=AsyncMock(side_effect=AttributeError("adapter bug")))
+    client = _CompletionClientStub(error=AttributeError("adapter bug"))
     provider = AnyLLMStructuredProvider(
-        cast("AnyLLM", client),
+        client,
         provider="openai",
         model="model",
         max_output_tokens=1024,
