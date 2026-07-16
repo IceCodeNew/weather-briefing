@@ -63,6 +63,7 @@ Usage notes:
 - Keep current requirements and architecture in `docs/`. Describe the current contract directly rather than narrating superseded designs.
 - Keep this file limited to development judgment, workflow constraints, and lessons that future agents could otherwise miss. Link to the other documents instead of duplicating them.
 - Update the document that owns a changed decision in the same change as the implementation.
+- Use `docs/notes.md` to explain the rationale, trade-offs, and operating boundaries behind key architecture choices when the current contract alone would not make them clear. For accepted design concerns that remain intentionally unresolved, also state the assumptions that make the choice acceptable and concrete triggers for reevaluation; update or remove the note when those assumptions change.
 
 ## Engineering judgment
 
