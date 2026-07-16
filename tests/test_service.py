@@ -210,6 +210,68 @@ def _location(
 
 
 @pytest.mark.parametrize(
+    ("kind", "historical_ids"),
+    (("briefing", ["historical-verbatim"]), ("forecast", ["historical-verbatim", "historical-summary"])),
+)
+def test_build_payload_serializes_article_groups_consistently(
+    tmp_path: Path,
+    kind: str,
+    historical_ids: list[str],
+) -> None:
+    now = pendulum.datetime(2026, 7, 13, 8, tz="Asia/Shanghai")
+
+    def article(identifier: str, *, is_verbatim: bool = False) -> Article:
+        return Article(
+            id=identifier,
+            source_id="feed",
+            source_name=f"Publisher {identifier}",
+            title=f"Title {identifier}",
+            url=f"https://example.invalid/{identifier}",
+            published_at=now.add(minutes=len(identifier)),
+            content=f"Content {identifier}",
+            is_verbatim=is_verbatim,
+        )
+
+    def expected(item: Article) -> dict[str, object]:
+        return {
+            "source_id": item.id,
+            "publisher": item.source_name,
+            "title": item.title,
+            "url": item.url,
+            "published_at": item.published_at.isoformat(),
+            "content": item.content,
+            "verbatim": item.is_verbatim,
+        }
+
+    new = article("new")
+    deferred = article("deferred")
+    historical_verbatim = article("historical-verbatim", is_verbatim=True)
+    historical_summary = article("historical-summary")
+    historical = (historical_verbatim, historical_summary)
+
+    with SQLiteStateStore(tmp_path / f"{kind}.sqlite3") as state:
+        service = object.__new__(BriefingService)
+        service._settings = _TestSettings(timezone=pendulum.timezone("Asia/Shanghai"))
+        service._location = _location()
+        service._state = state
+        payload = service._build_payload(
+            kind,
+            now,
+            None,
+            (new,),
+            (deferred,),
+            historical,
+            (),
+            (),
+            (),
+        )
+
+    assert payload["new_articles"] == [expected(new)]
+    assert payload["deferred_articles"] == [expected(deferred)]
+    assert payload["historical_articles"] == [expected(item) for item in historical if item.id in historical_ids]
+
+
+@pytest.mark.parametrize(
     ("location", "expected_scope"),
     (
         (
