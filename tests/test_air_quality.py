@@ -211,6 +211,16 @@ def test_health_guidance_unbounded_band_required(monkeypatch) -> None:
     _guidance_bands.cache_clear()
 
 
+def test_health_guidance_defends_against_missing_unbounded_band(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "weather_briefing.air_quality._guidance_bands",
+        lambda: ((10, "bad", "do not go out"),),
+    )
+
+    with pytest.raises(ReferenceDataError, match="must end with an unbounded band"):
+        health_guidance(11)
+
+
 def test_air_quality_guidance_bands_must_be_non_empty_list(monkeypatch) -> None:
     from weather_briefing.air_quality import _guidance_bands
 

@@ -363,7 +363,7 @@ class BriefingService:
         payload: dict[str, object],
         now: pendulum.DateTime,
         valid_source_ids: set[str],
-        validator: Callable[[BriefingResult], None] | None = None,
+        validator: Callable[[BriefingResult], None],
     ) -> BriefingResult:
         instructions = SYSTEM_PROMPT
         current_payload: dict[str, object] = payload
@@ -374,8 +374,7 @@ class BriefingService:
                 _LOGGER.debug("LLM summarization attempt %d/%d", attempt + 1, self._settings.llm_max_attempts)
                 raw_result = await self._llm.summarize(instructions, current_payload)
                 result = parse_result(raw_result, now, valid_source_ids)
-                if validator is not None:
-                    validator(result)
+                validator(result)
                 _LOGGER.debug(
                     "LLM summarization successful on attempt %d/%d", attempt + 1, self._settings.llm_max_attempts
                 )

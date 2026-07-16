@@ -1135,12 +1135,15 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
 
 
 class FailingOnceLLM:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_before_response: bool = False) -> None:
         self.attempts = 0
+        self._fail_before_response = fail_before_response
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         self.attempts += 1
         if self.attempts == 1:
+            if self._fail_before_response:
+                raise LLMError("request failed before a response was available")
             return {
                 "headline": "Briefing",
                 "headline_source_ids": ["invented"],
@@ -1150,6 +1153,7 @@ class FailingOnceLLM:
                 "advice": [],
                 "disaster_tracking": [],
             }
+        assert ("previous_invalid_response" in payload) is not self._fail_before_response
         allowed_source_ids = payload["allowed_source_ids"]
         assert isinstance(allowed_source_ids, list)
         source_id = str(allowed_source_ids[0])
@@ -1164,7 +1168,8 @@ class FailingOnceLLM:
         }
 
 
-async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
+@pytest.mark.parametrize("fail_before_response", (False, True))
+async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_response: bool) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
     article = Article(
@@ -1187,7 +1192,7 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path) -> None:
         briefing_max_characters=3500,
         llm_max_attempts=2,
     )
-    llm = FailingOnceLLM()
+    llm = FailingOnceLLM(fail_before_response=fail_before_response)
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
