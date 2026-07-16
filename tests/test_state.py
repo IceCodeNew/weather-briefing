@@ -267,10 +267,11 @@ def test_record_failure_increments_consecutive_count(tmp_path: Path) -> None:
 
 
 def test_record_success_resets_failure_count(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.record_failure()
         state.record_failure()
-        state.record_success()
+        state.record_success(now, history_hours=48, warning_retention_hours=12)
         assert state.record_failure() == 1
 
 
@@ -281,8 +282,63 @@ def test_record_success_reopens_task_failure_alert(tmp_path: Path) -> None:
         state.mark_task_failure_alerted(now)
         assert not state.task_failure_requires_alert()
 
-        state.record_success()
+        state.record_success(now, history_hours=48, warning_retention_hours=12)
         assert state.task_failure_requires_alert()
+
+
+def test_record_success_prunes_expired_history_and_preserves_boundaries(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    history_boundary = now.subtract(hours=48)
+    warning_boundary = now.subtract(hours=12)
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        old_article = Article(
+            "old-article",
+            "source",
+            "Source",
+            "Old",
+            "https://example.invalid/old",
+            history_boundary.subtract(hours=1),
+            "old",
+        )
+        boundary_article = Article(
+            "boundary-article",
+            "source",
+            "Source",
+            "Boundary",
+            "https://example.invalid/boundary",
+            history_boundary,
+            "boundary",
+        )
+        state.save_articles((old_article,), history_boundary.subtract(seconds=1))
+        state.save_articles((boundary_article,), history_boundary)
+        state.save_briefing("briefing", "old", history_boundary.subtract(seconds=1))
+        state.save_briefing("briefing", "boundary", history_boundary)
+
+        old_document = SourceDocument("old-context", "Old", "https://example.invalid/old-context", "old")
+        boundary_document = SourceDocument(
+            "boundary-context",
+            "Boundary",
+            "https://example.invalid/boundary-context",
+            "boundary",
+        )
+        state.save_context_documents((old_document,), history_boundary.subtract(seconds=1))
+        state.save_context_documents((boundary_document,), history_boundary)
+
+        old_warning = Warning("old-warning", "Old", "active", "old", ("source",), now)
+        boundary_warning = Warning("boundary-warning", "Boundary", "active", "boundary", ("source",), now)
+        state.update_warnings((old_warning,), (), warning_boundary.subtract(seconds=1), {"source"})
+        state.update_warnings((boundary_warning,), (), warning_boundary, {"source"})
+
+        state.record_success(now, history_hours=48, warning_retention_hours=12)
+
+    with closing(sqlite3.connect(state_path)) as connection:
+        assert connection.execute("SELECT id FROM articles ORDER BY id").fetchall() == [("boundary-article",)]
+        assert connection.execute("SELECT body FROM briefings ORDER BY body").fetchall() == [("boundary",)]
+        assert connection.execute("SELECT source_id FROM context_snapshots ORDER BY source_id").fetchall() == [
+            ("boundary-context",)
+        ]
+        assert connection.execute("SELECT id FROM warnings ORDER BY id").fetchall() == [("boundary-warning",)]
 
 
 def test_parse_time_rejects_invalid_format() -> None:
