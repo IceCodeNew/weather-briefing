@@ -22,6 +22,11 @@
       "matchDatasources": ["docker"],
       "minimumReleaseAge": null,
       "automerge": true
+    },
+    {
+      "matchDatasources": ["pypi"],
+      "matchRegistryUrls": ["https://pypi.flatt.tech/simple"],
+      "minimumReleaseAge": null
     }
   ],
   "automergeType": "branch",
