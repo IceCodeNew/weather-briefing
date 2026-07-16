@@ -206,6 +206,35 @@ def test_rejects_warning_entry_not_a_dict() -> None:
         )
 
 
+@pytest.mark.parametrize("field", ("id", "title", "status", "detail"))
+@pytest.mark.parametrize("value", (None, "", "   ", 42))
+def test_rejects_warning_without_required_text(field: str, value: object) -> None:
+    warning = {
+        "id": "w1",
+        "title": "Warning",
+        "status": "active",
+        "detail": "Details",
+        "source_ids": ["source"],
+    }
+    warning[field] = value
+    payload = {
+        "headline": "Briefing",
+        "headline_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [warning],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+    }
+
+    with pytest.raises(LLMError, match=rf"active_warnings entries: {field} must be a non-empty string"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
+        )
+
+
 def test_rejects_warning_without_source_ids() -> None:
     payload = {
         "headline": "Briefing",
@@ -258,6 +287,26 @@ def test_rejects_warning_with_unknown_source_id() -> None:
             payload,
             pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
             set(),
+        )
+
+
+@pytest.mark.parametrize("headline", (None, "", "   ", 42))
+def test_rejects_result_without_headline_text(headline: object) -> None:
+    payload = {
+        "headline": headline,
+        "headline_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+    }
+
+    with pytest.raises(LLMError, match="headline must be a non-empty string"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
         )
 
 

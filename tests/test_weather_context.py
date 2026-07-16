@@ -1,4 +1,5 @@
 import base64
+from typing import TypeGuard
 
 import httpx
 import jwt
@@ -23,6 +24,10 @@ from weather_briefing.weather_context import (
 class StaticAuthenticator:
     def authorization_header(self) -> str:
         return "Bearer runtime-token"
+
+
+def _is_string_keyed_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
 
 
 _QWEATHER_DAILY_ITEM = {
@@ -744,6 +749,59 @@ async def test_open_meteo_rejects_empty_forecast() -> None:
         )
     ) as client:
         with pytest.raises(WeatherContextError, match="no daily forecast"):
+            await OpenMeteoProvider(client).fetch(1, 2)
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    (
+        "time",
+        "weather_code",
+        "temperature_2m_max",
+        "temperature_2m_min",
+        "apparent_temperature_max",
+        "apparent_temperature_min",
+        "precipitation_sum",
+        "precipitation_probability_max",
+        "wind_speed_10m_max",
+        "wind_gusts_10m_max",
+        "wind_direction_10m_dominant",
+        "uv_index_max",
+    ),
+)
+async def test_open_meteo_forecast_identifies_missing_required_field(missing_field: str) -> None:
+    response = _open_meteo_weather_response()
+    daily = response["daily"]
+    assert _is_string_keyed_dict(daily)
+    del daily[missing_field]
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=response))) as client:
+        with pytest.raises(
+            WeatherContextError,
+            match=f"weather forecast parsing failed: daily forecast missing required field: {missing_field}",
+        ):
+            await OpenMeteoProvider(client).fetch(1, 2)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("daily", [], "daily forecast must be an object"),
+        ("weather_code", 1, "daily forecast field must be an array: weather_code"),
+        ("weather_code", [], "daily forecast field has no value at index 0: weather_code"),
+    ),
+)
+async def test_open_meteo_forecast_identifies_invalid_field_shape(field: str, value: object, message: str) -> None:
+    response = _open_meteo_weather_response()
+    if field == "daily":
+        response[field] = value
+    else:
+        daily = response["daily"]
+        assert _is_string_keyed_dict(daily)
+        daily[field] = value
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=response))) as client:
+        with pytest.raises(WeatherContextError, match=f"weather forecast parsing failed: {message}"):
             await OpenMeteoProvider(client).fetch(1, 2)
 
 
