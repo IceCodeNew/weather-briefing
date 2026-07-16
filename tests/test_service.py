@@ -277,6 +277,8 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     assert "PM2.5 12 µg/m³" in content
     assert "原始浓度" not in content
     assert llm.payload["location_scope"] == expected_scope
+    assert "coordinates" not in llm.payload
+    assert "location_id" not in llm.payload
     assert llm.payload["required_advice_topics"] == [
         "clothing",
         "dehumidification",
@@ -603,6 +605,69 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
         assert await service.run("briefing", now.add(hours=1)) is None
         assert state.active_warnings(now.add(hours=1), 12)[0].id == warning.id
 
+    assert publisher.messages == []
+
+
+async def test_unknown_resolved_warning_id_triggers_contract_retry(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    article = Article(
+        "warning-article",
+        "feed",
+        "Weather feed",
+        "Warning issued",
+        "https://example.invalid/warning",
+        now,
+        "Heat warning is active",
+    )
+    warning = Warning(
+        "heat-warning",
+        "Heat warning",
+        "active",
+        "Heat warning is active",
+        (article.id,),
+        now,
+    )
+    settings = _TestSettings(timezone=timezone, llm_max_attempts=2)
+
+    class ResolvingWarningLLM:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            self.attempts += 1
+            return {
+                "headline": "Warning update",
+                "headline_source_ids": [article.id],
+                "conclusions": [],
+                "active_warnings": [],
+                "resolved_warning_ids": ["invented-warning" if self.attempts == 1 else warning.id],
+                "advice": [],
+                "disaster_tracking": [],
+                "should_publish": False,
+            }
+
+    llm = ResolvingWarningLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    with SQLiteStateStore(tmp_path / "warning.sqlite3") as state:
+        state.save_articles((article,), now)
+        state.update_warnings((warning,), (), now, {article.id})
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            llm,
+            delivery,
+            delivery,
+        )
+
+        assert await service.run("briefing", now.add(hours=1)) is None
+        assert state.active_warnings(now.add(hours=1), 12) == ()
+
+    assert llm.attempts == 2
     assert publisher.messages == []
 
 

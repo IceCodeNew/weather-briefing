@@ -216,11 +216,30 @@ def test_rejects_warning_without_source_ids() -> None:
         "disaster_tracking": [],
     }
 
-    with pytest.raises(LLMError, match="Active warnings must cite at least one source"):
+    with pytest.raises(LLMError, match="source_ids must cite at least one source"):
         parse_result(
             payload,
             pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
             set(),
+        )
+
+
+@pytest.mark.parametrize("source_ids", [None, "source", [1], [""]])
+def test_rejects_warning_with_malformed_source_ids(source_ids: object) -> None:
+    payload = {
+        "headline": "Briefing",
+        "conclusions": [],
+        "active_warnings": [{"id": "w1", "title": "W", "status": "active", "detail": "D", "source_ids": source_ids}],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+    }
+
+    with pytest.raises(LLMError, match="source_ids must"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
         )
 
 
@@ -239,6 +258,26 @@ def test_rejects_warning_with_unknown_source_id() -> None:
             payload,
             pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
             set(),
+        )
+
+
+@pytest.mark.parametrize("resolved_warning_ids", [None, "warning", [1], [""]])
+def test_rejects_malformed_resolved_warning_ids(resolved_warning_ids: object) -> None:
+    payload = {
+        "headline": "Briefing",
+        "headline_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": resolved_warning_ids,
+        "advice": [],
+        "disaster_tracking": [],
+    }
+
+    with pytest.raises(LLMError, match="resolved_warning_ids must"):
+        parse_result(
+            payload,
+            pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai"),
+            {"source"},
         )
 
 

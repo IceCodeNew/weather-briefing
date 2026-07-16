@@ -100,13 +100,16 @@ def parse_result(
 ) -> BriefingResult:
     require_aware_datetime(now, context="Briefing result time")
 
-    def cited_source_ids(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
-        raw_source_ids = value.get(field, [])
-        if not isinstance(raw_source_ids, list):
+    def string_ids(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
+        raw_ids = value.get(field, [])
+        if not isinstance(raw_ids, list):
             raise LLMError(f"{field} must be an array")
-        if not all(isinstance(item, str) and item.strip() for item in raw_source_ids):
+        if not all(isinstance(item, str) and item.strip() for item in raw_ids):
             raise LLMError(f"{field} must contain non-empty strings")
-        parsed = tuple(raw_source_ids)
+        return tuple(raw_ids)
+
+    def cited_source_ids(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
+        parsed = string_ids(value, field)
         if not parsed:
             raise LLMError(f"{field} must cite at least one source ID")
         unknown = set(parsed) - valid_source_ids
@@ -165,18 +168,13 @@ def parse_result(
     for value in warning_values:
         if not isinstance(value, dict):
             raise LLMError("active_warnings entries must be objects")
-        source_ids = tuple(str(item) for item in value.get("source_ids", []))
-        if not source_ids:
-            raise LLMError("Active warnings must cite at least one source ID")
-        if set(source_ids) - valid_source_ids:
-            raise LLMError("Warning cited an unknown source ID")
         warnings.append(
             Warning(
                 id=str(value["id"]),
                 title=str(value["title"]),
                 status=str(value["status"]),
                 detail=str(value["detail"]),
-                source_ids=source_ids,
+                source_ids=cited_source_ids(value, "source_ids"),
                 last_confirmed_at=now,
             )
         )
@@ -191,7 +189,7 @@ def parse_result(
         headline_source_ids=cited_source_ids(payload, "headline_source_ids"),
         conclusions=parsed_conclusions,
         active_warnings=tuple(warnings),
-        resolved_warning_ids=tuple(str(item) for item in payload.get("resolved_warning_ids", [])),
+        resolved_warning_ids=string_ids(payload, "resolved_warning_ids"),
         advice=parsed_advice,
         disaster_tracking=parsed_disaster_tracking,
         should_publish=should_publish,
