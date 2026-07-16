@@ -9,7 +9,6 @@ from weather_briefing.publishers import (
     DeliveryProvider,
     StdoutPublisher,
     TelegramPublisher,
-    _safe_html_boundary,
     _split_message,
 )
 from weather_briefing.render import PlainTextRenderer
@@ -69,7 +68,36 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
 
 
 def test_split_message_prefers_line_boundary() -> None:
-    assert _split_message("first line\nsecond line", 12) == ("first line", "second line")
+    assert _split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
+
+
+@pytest.mark.parametrize(
+    ("body", "limit", "expected"),
+    (
+        ("<b>abcdefgh</b>", 5, ("<b>abcde</b>", "<b>fgh</b>")),
+        (
+            "<b><i>abcdef</i></b>",
+            3,
+            ("<b><i>abc</i></b>", "<b><i>def</i></b>"),
+        ),
+        ("<b>ab&amp;cd</b>", 3, ("<b>ab&amp;</b>", "<b>cd</b>")),
+        ("<b>ab&#38;cd</b>", 3, ("<b>ab&#38;</b>", "<b>cd</b>")),
+        ("<b>abc&amp;d</b>", 3, ("<b>abc</b>", "<b>&amp;d</b>")),
+        ("<b>abc</b><i>def</i>", 3, ("<b>abc</b>", "<i>def</i>")),
+        ("<b>abc</b><i></i>", 3, ("<b>abc</b>",)),
+        (
+            "<b>first line\nsecond line</b>",
+            12,
+            ("<b>first line</b>", "<b>\nsecond line</b>"),
+        ),
+    ),
+)
+def test_split_message_balances_html_tags(
+    body: str,
+    limit: int,
+    expected: tuple[str, ...],
+) -> None:
+    assert _split_message(body, limit) == expected
 
 
 async def test_telegram_publisher_uses_runtime_values(caplog) -> None:
@@ -190,19 +218,3 @@ async def test_stdout_publisher_outputs_message_body(capsys) -> None:
     await StdoutPublisher().publish(RenderedMessage("test body", 9))
 
     assert capsys.readouterr().out.strip() == "test body"
-
-
-def test_safe_html_boundary_avoids_splitting_inside_html_entity() -> None:
-    assert _safe_html_boundary("text with &amp more text", 16) == 10
-
-
-def test_safe_html_boundary_avoids_splitting_inside_html_tag() -> None:
-    assert _safe_html_boundary("text <b>bold</b>", 7) == 5
-
-
-def test_safe_html_boundary_returns_limit_when_no_boundary_issue() -> None:
-    assert _safe_html_boundary("plain text without html", 10) == 10
-
-
-def test_safe_html_boundary_returns_limit_when_boundary_is_zero() -> None:
-    assert _safe_html_boundary("<tag", 1) == 1

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Protocol
 
 import httpx
@@ -199,25 +200,76 @@ def _rendered_text_logging_enabled(diagnostics: RenderedTextDiagnostics | None) 
 def _split_message(body: str, limit: int) -> tuple[str, ...]:
     if len(body) <= limit:
         return (body,)
-    chunks: list[str] = []
-    remaining = body
-    while remaining:
-        split_at = remaining.rfind("\n", 0, limit + 1)
-        if split_at <= 0:
-            split_at = _safe_html_boundary(remaining, limit)
-        chunks.append(remaining[:split_at].rstrip())
-        remaining = remaining[split_at:].lstrip("\n")
-    return tuple(chunks)
+    chunker = _TelegramHTMLChunker(limit)
+    chunker.feed(body)
+    chunker.close()
+    return chunker.finish()
 
 
-def _safe_html_boundary(value: str, limit: int) -> int:
-    boundary = limit
-    last_entity_start = value.rfind("&", 0, boundary)
-    last_entity_end = value.rfind(";", 0, boundary)
-    if last_entity_start > last_entity_end:
-        boundary = last_entity_start
-    last_tag_start = value.rfind("<", 0, boundary)
-    last_tag_end = value.rfind(">", 0, boundary)
-    if last_tag_start > last_tag_end:
-        boundary = last_tag_start
-    return boundary or limit
+class _TelegramHTMLChunker(HTMLParser):
+    """Split Telegram HTML while making every chunk independently valid."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(convert_charrefs=False)
+        self._limit = limit
+        self._chunks: list[str] = []
+        self._parts: list[str] = []
+        self._open_tags: list[tuple[str, str]] = []
+        self._visible_length = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._visible_length == self._limit:
+            self._finish_chunk()
+        start_tag = self.get_starttag_text()
+        assert start_tag is not None
+        self._parts.append(start_tag)
+        self._open_tags.append((tag, start_tag))
+
+    def handle_endtag(self, tag: str) -> None:
+        self._parts.append(f"</{tag}>")
+        self._open_tags.pop()
+
+    def handle_data(self, data: str) -> None:
+        while True:
+            available = self._limit - self._visible_length
+            if available == 0:
+                self._finish_chunk()
+                available = self._limit
+            if len(data) <= available:
+                self._parts.append(data)
+                self._visible_length += len(data)
+                return
+            split_at = data.rfind("\n", 0, available + 1)
+            if split_at > 0:
+                self._parts.append(data[:split_at])
+                self._visible_length += split_at
+                data = data[split_at:]
+            else:
+                self._parts.append(data[:available])
+                self._visible_length += available
+                data = data[available:]
+            self._finish_chunk()
+
+    def handle_entityref(self, name: str) -> None:
+        self._append_entity(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self._append_entity(f"&#{name};")
+
+    def finish(self) -> tuple[str, ...]:
+        self._finish_chunk()
+        return tuple(self._chunks)
+
+    def _append_entity(self, value: str) -> None:
+        if self._visible_length == self._limit:
+            self._finish_chunk()
+        self._parts.append(value)
+        self._visible_length += 1
+
+    def _finish_chunk(self) -> None:
+        if self._visible_length == 0:
+            return
+        closing_tags = (f"</{tag}>" for tag, _ in reversed(self._open_tags))
+        self._chunks.append("".join((*self._parts, *closing_tags)))
+        self._parts = [start_tag for _, start_tag in self._open_tags]
+        self._visible_length = 0
