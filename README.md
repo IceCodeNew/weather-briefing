@@ -82,7 +82,7 @@ set -eu
 CONTAINER_NAME="weather-briefing"
 WEATHER_BRIEFING_IMAGE="icecodexi/${CONTAINER_NAME}"
 WEATHER_BRIEFING_VERSION="1.0.0"
-ROOT_DIR="/home/neo/${CONTAINER_NAME}"
+ROOT_DIR="${HOME}/${CONTAINER_NAME}"
 CONTAINER_ROOT_DIR="/home/nonroot/app"
 
 mkdir -p "${ROOT_DIR}/app/state"
