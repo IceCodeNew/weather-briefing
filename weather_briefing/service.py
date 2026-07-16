@@ -30,6 +30,18 @@ from .weather_context import WeatherContextProvider, fetch_weather_context, snap
 _LOGGER = logging.getLogger("weather_briefing.service")
 
 
+def _serialize_article(article: Article) -> dict[str, object]:
+    return {
+        "source_id": article.id,
+        "publisher": article.source_name,
+        "title": article.title,
+        "url": article.url,
+        "published_at": article.published_at.isoformat(),
+        "content": article.content,
+        "verbatim": article.is_verbatim,
+    }
+
+
 class BriefingSettings(Protocol):
     """Expose the settings required by briefing orchestration."""
 
@@ -462,40 +474,10 @@ class BriefingService:
             "forecast_date": str(forecast_date or now.in_timezone(self._settings.timezone).date()),
             "region": self._location.name,
             "location_scope": location_scope,
-            "new_articles": [
-                {
-                    "source_id": article.id,
-                    "publisher": article.source_name,
-                    "title": article.title,
-                    "url": article.url,
-                    "published_at": article.published_at.isoformat(),
-                    "content": article.content,
-                    "verbatim": article.is_verbatim,
-                }
-                for article in articles
-            ],
-            "deferred_articles": [
-                {
-                    "source_id": article.id,
-                    "publisher": article.source_name,
-                    "title": article.title,
-                    "url": article.url,
-                    "published_at": article.published_at.isoformat(),
-                    "content": article.content,
-                    "verbatim": article.is_verbatim,
-                }
-                for article in deferred_articles
-            ],
+            "new_articles": [_serialize_article(article) for article in articles],
+            "deferred_articles": [_serialize_article(article) for article in deferred_articles],
             "historical_articles": [
-                {
-                    "source_id": article.id,
-                    "publisher": article.source_name,
-                    "title": article.title,
-                    "url": article.url,
-                    "published_at": article.published_at.isoformat(),
-                    "content": article.content,
-                    "verbatim": article.is_verbatim,
-                }
+                _serialize_article(article)
                 for article in historical_articles
                 if kind == "forecast" or article.is_verbatim
             ],
