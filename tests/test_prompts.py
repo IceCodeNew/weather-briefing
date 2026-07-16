@@ -19,11 +19,20 @@ def test_prompt_uses_actionable_publication_threshold() -> None:
 def test_prompt_separates_advice_and_avoids_repetition() -> None:
     assert "过敏原信息只能放入 advice" in SYSTEM_PROMPT
     assert "不得使用“原始浓度”" in SYSTEM_PROMPT
-    assert "不得在 conclusions 中重复" in SYSTEM_PROMPT
+    assert "与口罩或运动建议合并为一项" in SYSTEM_PROMPT
+    assert "同一事实只在最合适的章节表达一次" in SYSTEM_PROMPT
+    assert "不得原样复述或改写后重复表达" in SYSTEM_PROMPT
+
+
+def test_prompt_condenses_the_overview_into_the_headline() -> None:
+    assert "将当下最重要的天气概况浓缩其中" in SYSTEM_PROMPT
+    assert "不要另写摘要段落" in SYSTEM_PROMPT
+    assert "- overview:" not in SYSTEM_PROMPT
+    assert "overview_source_ids" not in SYSTEM_PROMPT
 
 
 def test_prompt_requires_attribution_and_preserves_source_conflicts() -> None:
-    assert "headline_source_ids、overview_source_ids" in SYSTEM_PROMPT
+    assert "headline_source_ids 以及 conclusions" in SYSTEM_PROMPT
     assert "不得拼接成无争议的单一结论" in SYSTEM_PROMPT
     assert "优先采用可识别的当地权威气象机构" in SYSTEM_PROMPT
     assert "input.required_advice_topics" in SYSTEM_PROMPT

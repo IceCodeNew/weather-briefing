@@ -9,7 +9,6 @@ async def test_deepseek_provider_reuses_chat_completions_with_default_base_url()
     requests: list[httpx.Request] = []
     model_result = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],

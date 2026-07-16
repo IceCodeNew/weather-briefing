@@ -192,6 +192,7 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
     assert snapshot.allergen_advice_available
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.source_name == "QWeather"
+    assert snapshot.air_quality.source_url == "https://www.qweather.com/weather/test.html"
     assert snapshot.air_quality.aqi_standard == "中国环境空气质量指数（cn-mee）"
     assert snapshot.air_quality.observed_at is None
     documents = snapshot_to_documents(snapshot)

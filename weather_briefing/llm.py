@@ -188,9 +188,7 @@ def parse_result(
     parsed_disaster_tracking = parse_sourced_text_items("disaster_tracking")
     return BriefingResult(
         headline=str(payload["headline"]),
-        overview=str(payload["overview"]),
         headline_source_ids=cited_source_ids(payload, "headline_source_ids"),
-        overview_source_ids=cited_source_ids(payload, "overview_source_ids"),
         conclusions=parsed_conclusions,
         active_warnings=tuple(warnings),
         resolved_warning_ids=tuple(str(item) for item in payload.get("resolved_warning_ids", [])),

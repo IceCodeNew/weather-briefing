@@ -162,9 +162,7 @@ class Advice:
 @dataclass(frozen=True, slots=True)
 class BriefingResult:
     headline: str
-    overview: str
     headline_source_ids: tuple[str, ...]
-    overview_source_ids: tuple[str, ...]
     conclusions: tuple[Conclusion, ...]
     active_warnings: tuple[Warning, ...] = ()
     resolved_warning_ids: tuple[str, ...] = ()

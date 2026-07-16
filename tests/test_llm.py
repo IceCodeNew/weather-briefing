@@ -15,8 +15,6 @@ def test_rejects_model_invented_source() -> None:
     payload = {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
-        "overview": "Overview",
-        "overview_source_ids": ["source"],
         "conclusions": [{"text": "Claim", "source_ids": ["invented"]}],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -35,8 +33,6 @@ def test_accepts_suppressed_message_with_unchanged_active_warning() -> None:
     payload = {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
-        "overview": "Overview",
-        "overview_source_ids": ["source"],
         "conclusions": [],
         "active_warnings": [
             {
@@ -66,7 +62,6 @@ def test_accepts_suppressed_message_with_unchanged_active_warning() -> None:
 def test_rejects_result_time_without_timezone() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -81,7 +76,6 @@ def test_rejects_result_time_without_timezone() -> None:
 def test_rejects_conclusions_not_an_array() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": "not-an-array",
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -100,7 +94,6 @@ def test_rejects_conclusions_not_an_array() -> None:
 def test_rejects_conclusion_entry_not_a_dict() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": ["not-a-dict"],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -119,7 +112,6 @@ def test_rejects_conclusion_entry_not_a_dict() -> None:
 def test_rejects_conclusion_without_source_ids() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [{"text": "Claim"}],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -139,7 +131,6 @@ def test_rejects_conclusion_without_source_ids() -> None:
 def test_rejects_malformed_source_ids(source_ids) -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [{"text": "Claim", "source_ids": source_ids}],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -163,7 +154,6 @@ def test_rejects_sourced_item_without_non_empty_text(key: str, text) -> None:
         item["topic"] = "clothing"
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -183,7 +173,6 @@ def test_rejects_sourced_item_without_non_empty_text(key: str, text) -> None:
 def test_rejects_active_warnings_not_an_array() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": "not-an-array",
         "resolved_warning_ids": [],
@@ -202,7 +191,6 @@ def test_rejects_active_warnings_not_an_array() -> None:
 def test_rejects_warning_entry_not_a_dict() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": ["not-a-dict"],
         "resolved_warning_ids": [],
@@ -221,7 +209,6 @@ def test_rejects_warning_entry_not_a_dict() -> None:
 def test_rejects_warning_without_source_ids() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": [{"id": "w1", "title": "W", "status": "active", "detail": "D"}],
         "resolved_warning_ids": [],
@@ -240,7 +227,6 @@ def test_rejects_warning_without_source_ids() -> None:
 def test_rejects_warning_with_unknown_source_id() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": [{"id": "w1", "title": "W", "status": "active", "detail": "D", "source_ids": ["unknown"]}],
         "resolved_warning_ids": [],
@@ -259,7 +245,6 @@ def test_rejects_warning_with_unknown_source_id() -> None:
 def test_rejects_non_boolean_should_publish() -> None:
     payload = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -276,13 +261,11 @@ def test_rejects_non_boolean_should_publish() -> None:
         )
 
 
-@pytest.mark.parametrize("field", ("headline_source_ids", "overview_source_ids"))
+@pytest.mark.parametrize("field", ("headline_source_ids",))
 def test_rejects_summary_without_source_ids(field: str) -> None:
     payload = {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
-        "overview": "Overview",
-        "overview_source_ids": ["source"],
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -303,8 +286,6 @@ def test_rejects_advice_without_a_valid_topic() -> None:
     payload = {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
-        "overview": "Overview",
-        "overview_source_ids": ["source"],
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
@@ -328,8 +309,6 @@ def test_rejects_invalid_advice_structure(advice: object, message: str) -> None:
     payload = {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
-        "overview": "Overview",
-        "overview_source_ids": ["source"],
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],

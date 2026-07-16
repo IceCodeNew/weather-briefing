@@ -9,7 +9,6 @@ async def test_openai_compatible_provider_uses_chat_completions_json_mode() -> N
     requests: list[httpx.Request] = []
     model_result = {
         "headline": "Briefing",
-        "overview": "Overview",
         "conclusions": [],
         "active_warnings": [],
         "resolved_warning_ids": [],

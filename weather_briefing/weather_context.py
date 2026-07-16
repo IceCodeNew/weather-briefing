@@ -247,7 +247,7 @@ class QWeatherProvider:
             detail = _safe_provider_error(exc)
             raise WeatherContextError(f"QWeather {operation} failed: {detail}") from None
 
-        air_quality = await self._fetch_air_quality(latitude, longitude, headers)
+        air_quality = await self._fetch_air_quality(latitude, longitude, headers, source_url)
         return WeatherContextSnapshot(
             source_id="weather:qweather",
             source_name="QWeather",
@@ -268,7 +268,11 @@ class QWeatherProvider:
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
     async def _fetch_air_quality(
-        self, latitude: float, longitude: float, headers: dict[str, str]
+        self,
+        latitude: float,
+        longitude: float,
+        headers: dict[str, str],
+        source_url: str,
     ) -> AirQualitySnapshot | None:
         try:
             response = await self._client.get(
@@ -288,7 +292,7 @@ class QWeatherProvider:
             return AirQualitySnapshot(
                 source_id="air-quality:qweather",
                 source_name="QWeather",
-                source_url=str(_first_attribution(payload) or "https://www.qweather.com/"),
+                source_url=source_url,
                 observed_at=None,
                 aqi=aqi,
                 aqi_display=str(index.get("aqiDisplay", index["aqi"])),
@@ -676,16 +680,6 @@ def _sub_index(pollutant: dict[str, Any], standard: str) -> float | None:
         if isinstance(value, dict) and value.get("code") == standard:
             return float(value["aqi"])
     return None
-
-
-def _first_attribution(payload: dict[str, object]) -> str | None:
-    metadata = payload.get("metadata", {})
-    if not isinstance(metadata, dict):
-        return None
-    attributions = metadata.get("attributions", ())
-    if not isinstance(attributions, list) or not attributions:
-        return None
-    return str(attributions[0])
 
 
 def _aqi_standard(index: dict[str, object]) -> str:
