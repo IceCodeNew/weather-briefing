@@ -216,22 +216,18 @@ class QWeatherProvider:
                 )
             operation = "weather forecast parsing"
             daily_forecasts = weather_payload.get("daily", ())
-            first_forecast_date = next(
-                (
-                    str(item["fxDate"])
-                    for item in daily_forecasts
-                    if isinstance(item, dict) and item.get("fxDate") is not None
-                ),
-                None,
-            )
+            forecast_index: int | None = None
             if forecast_date is None:
                 selected_forecasts = daily_forecasts[:2]
             else:
-                selected_forecasts = tuple(
-                    item
-                    for item in daily_forecasts
+                matching_forecasts = tuple(
+                    (index, item)
+                    for index, item in enumerate(daily_forecasts)
                     if isinstance(item, dict) and item.get("fxDate") == str(forecast_date)
                 )
+                selected_forecasts = tuple(item for _, item in matching_forecasts)
+                if matching_forecasts:
+                    forecast_index = matching_forecasts[0][0]
             weather_forecast = tuple(_format_qweather_day(item) for item in selected_forecasts)
             if not weather_forecast:
                 if forecast_date is None:
@@ -241,10 +237,10 @@ class QWeatherProvider:
             indices_payload: dict[str, object] = {}
             lifestyle_advice: tuple[str, ...] = ()
             allergen_advice_available = False
-            if forecast_date is None or str(forecast_date) == first_forecast_date:
-                operation = "lifestyle indices"
+            try:
+                indices_days = "3d" if forecast_index else "1d"
                 indices_response = await self._client.get(
-                    f"{self._base_url}/v7/indices/1d",
+                    f"{self._base_url}/v7/indices/{indices_days}",
                     params={
                         "type": ",".join(self._index_types),
                         "location": f"{longitude:.2f},{latitude:.2f}",
@@ -254,24 +250,39 @@ class QWeatherProvider:
                     extensions=api_call_extensions("qweather", "lifestyle-indices"),
                 )
                 indices_response.raise_for_status()
-                indices_payload = indices_response.json()
-                if indices_payload.get("code") != "200":
-                    raise WeatherContextError(
-                        "QWeather returned a non-success indices status "
-                        f"code={_safe_api_status(indices_payload.get('code'))}"
+                parsed_indices_payload = indices_response.json()
+                if parsed_indices_payload.get("code") != "200":
+                    raise _QWeatherResponseError(
+                        f"non-success indices status code={_safe_api_status(parsed_indices_payload.get('code'))}"
                     )
-                daily_indices = tuple(indices_payload.get("daily", ()))
+                indices_payload = parsed_indices_payload
+                daily_indices = tuple(
+                    item
+                    for item in indices_payload.get("daily", ())
+                    if forecast_date is None or (isinstance(item, dict) and item.get("date") == str(forecast_date))
+                )
                 lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in daily_indices)
                 allergen_advice_available = any(
                     str(item.get("type")) == self._allergen_index_type
                     for item in daily_indices
                     if isinstance(item, dict)
                 )
+            except (httpx.HTTPError, _QWeatherResponseError, KeyError, TypeError, ValueError) as exc:
+                reason = str(exc) if isinstance(exc, _QWeatherResponseError) else _safe_provider_error(exc)
+                _LOGGER.warning(
+                    "Weather API optional call failed provider=qweather operation=lifestyle-indices reason=%s",
+                    reason,
+                )
             source_url = str(
                 weather_payload.get("fxLink") or indices_payload.get("fxLink") or "https://www.qweather.com/"
             )
+            update_time = weather_payload.get("updateTime")
+            if not isinstance(update_time, str) or not update_time.strip():
+                update_time = indices_payload.get("updateTime")
+            if not isinstance(update_time, str) or not update_time.strip():
+                raise WeatherContextError("QWeather response is missing a non-empty updateTime")
             observed_at = parse_datetime_with_default_timezone(
-                str(weather_payload.get("updateTime") or indices_payload["updateTime"]),
+                update_time.strip(),
                 "Asia/Shanghai",
                 context="QWeather update time",
             )
@@ -283,7 +294,13 @@ class QWeatherProvider:
             detail = _safe_provider_error(exc)
             raise WeatherContextError(f"QWeather {operation} failed: {detail}") from None
 
-        air_quality = await self._fetch_air_quality(latitude, longitude, headers, source_url)
+        air_quality = await self._fetch_air_quality(
+            latitude,
+            longitude,
+            headers,
+            source_url,
+            forecast_index=forecast_index,
+        )
         return WeatherContextSnapshot(
             source_id="weather:qweather",
             source_name="QWeather",
@@ -310,36 +327,35 @@ class QWeatherProvider:
         longitude: float,
         headers: dict[str, str],
         source_url: str,
+        *,
+        forecast_index: int | None,
     ) -> AirQualitySnapshot | None:
         try:
+            endpoint = "current" if forecast_index is None else "daily"
             response = await self._client.get(
-                f"{self._base_url}/airquality/v1/current/{latitude:.2f}/{longitude:.2f}",
+                f"{self._base_url}/airquality/v1/{endpoint}/{latitude:.2f}/{longitude:.2f}",
                 params={"lang": "zh"},
                 headers=headers,
                 extensions=api_call_extensions("qweather", "air-quality"),
             )
             response.raise_for_status()
             payload = response.json()
-            index = _first_mapping(payload, "indexes")
-            pm25 = _mapping_by_code(payload, "pollutants", "pm2p5")
-            concentration: dict[str, Any] = pm25.get("concentration", {})
-            health: dict[str, Any] = index.get("health", {})
-            advice: dict[str, Any] = health.get("advice", {})
-            aqi = float(index["aqi"])
-            return AirQualitySnapshot(
-                source_id="air-quality:qweather",
-                source_name="QWeather",
-                source_url=source_url,
-                observed_at=None,
-                aqi=aqi,
-                aqi_display=str(index.get("aqiDisplay", index["aqi"])),
-                aqi_standard=_aqi_standard(index),
-                pm25_aqi=_sub_index(pm25, str(index["code"])),
-                pm25_concentration=float(concentration["value"]),
-                pm25_unit=str(concentration["unit"]),
-                category=str(index.get("category", "未知")),
-                health_guidance=str(advice.get("generalPopulation") or health.get("effect", "")),
-            )
+            observed_at = None
+            if forecast_index is not None:
+                days = payload["days"]
+                if (
+                    not isinstance(days, list)
+                    or forecast_index >= len(days)
+                    or not isinstance(days[forecast_index], dict)
+                ):
+                    raise ValueError("daily air-quality forecast is unavailable")
+                payload = days[forecast_index]
+                observed_at = parse_datetime_with_default_timezone(
+                    str(payload["forecastStartTime"]),
+                    "Asia/Shanghai",
+                    context="QWeather air-quality forecast start time",
+                )
+            return _qweather_air_quality_snapshot(payload, source_url, observed_at)
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             _LOGGER.warning(
                 "Weather API optional call failed provider=qweather operation=air-quality reason=%s",
@@ -430,7 +446,11 @@ class OpenMeteoProvider:
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise WeatherContextError(f"Open-Meteo weather forecast failed: {_safe_provider_error(exc)}") from None
 
-        air_quality, allergen = await self._fetch_air_quality_and_allergen(latitude, longitude)
+        air_quality, allergen = await self._fetch_air_quality_and_allergen(
+            latitude,
+            longitude,
+            forecast_date=forecast_date,
+        )
         return WeatherContextSnapshot(
             source_id="weather:open-meteo",
             source_name="Open-Meteo",
@@ -451,7 +471,11 @@ class OpenMeteoProvider:
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
     async def _fetch_air_quality_and_allergen(
-        self, latitude: float, longitude: float
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        forecast_date: pendulum.Date | None,
     ) -> tuple[AirQualitySnapshot | None, AllergenSnapshot | None]:
         try:
             pollen_types = pollen_type_names()
@@ -461,19 +485,23 @@ class OpenMeteoProvider:
                 type(exc).__name__,
             )
             pollen_types = ()
+        variables = (
+            "us_aqi",
+            "us_aqi_pm2_5",
+            "pm2_5",
+            *(f"{key}_pollen" for key, _ in pollen_types),
+        )
         params: dict[str, str | int | float] = {
             "latitude": latitude,
             "longitude": longitude,
-            "current": ",".join(
-                (
-                    "us_aqi",
-                    "us_aqi_pm2_5",
-                    "pm2_5",
-                    *(f"{key}_pollen" for key, _ in pollen_types),
-                )
-            ),
             "timezone": "auto",
         }
+        if forecast_date is None:
+            params["current"] = ",".join(variables)
+        else:
+            params["hourly"] = ",".join(variables)
+            params["start_date"] = str(forecast_date)
+            params["end_date"] = str(forecast_date)
         if self._api_key:
             params["apikey"] = self._api_key
         try:
@@ -484,7 +512,14 @@ class OpenMeteoProvider:
             )
             response.raise_for_status()
             payload = response.json()
-            current: dict[str, object] = payload["current"]
+            if forecast_date is None:
+                air_quality_values: dict[str, Any] = payload["current"]
+                allergen_values = air_quality_values
+            else:
+                hourly = payload["hourly"]
+                if not _is_string_keyed_dict(hourly):
+                    raise TypeError("hourly air quality must be an object")
+                air_quality_values, allergen_values = _open_meteo_daily_peak_values(hourly, pollen_types)
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             _LOGGER.warning(
                 "Weather API optional call failed provider=open-meteo operation=air-quality reason=%s",
@@ -494,13 +529,13 @@ class OpenMeteoProvider:
         allergen = None
         if pollen_types:
             try:
-                allergen = self._parse_allergen(current, payload, pollen_types)
+                allergen = self._parse_allergen(allergen_values, payload, pollen_types)
             except ReferenceDataError as exc:
                 _LOGGER.warning(
                     "Weather API optional enrichment failed provider=open-meteo operation=allergen reason=%s",
                     type(exc).__name__,
                 )
-        return self._parse_air_quality(current, payload), allergen
+        return self._parse_air_quality(air_quality_values, payload), allergen
 
     @staticmethod
     def _parse_air_quality(current: dict[str, Any], payload: dict[str, Any]) -> AirQualitySnapshot | None:
@@ -664,6 +699,8 @@ class AirQualitySupplementingWeatherProvider:
         snapshot = await fetch_weather_context(self._weather_provider, latitude, longitude, forecast_date)
         if snapshot.air_quality is not None:
             return snapshot
+        if forecast_date is not None:
+            return snapshot
         if self._air_quality_provider is None:
             raise WeatherContextError("Weather source did not provide air quality; configure AQICN_API_TOKEN")
         try:
@@ -718,6 +755,33 @@ def _first_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(values, list) or not values or not isinstance(values[0], dict):
         raise ValueError(f"{key} must contain at least one object")
     return values[0]
+
+
+def _qweather_air_quality_snapshot(
+    payload: dict[str, Any],
+    source_url: str,
+    observed_at: pendulum.DateTime | None,
+) -> AirQualitySnapshot:
+    index = _first_mapping(payload, "indexes")
+    pm25 = _mapping_by_code(payload, "pollutants", "pm2p5")
+    concentration: dict[str, Any] = pm25.get("concentration", {})
+    health: dict[str, Any] = index.get("health", {})
+    advice: dict[str, Any] = health.get("advice", {})
+    aqi = float(index["aqi"])
+    return AirQualitySnapshot(
+        source_id="air-quality:qweather",
+        source_name="QWeather",
+        source_url=source_url,
+        observed_at=observed_at,
+        aqi=aqi,
+        aqi_display=str(index.get("aqiDisplay", index["aqi"])),
+        aqi_standard=_aqi_standard(index),
+        pm25_aqi=_sub_index(pm25, str(index["code"])),
+        pm25_concentration=float(concentration["value"]),
+        pm25_unit=str(concentration["unit"]),
+        category=str(index.get("category", "未知")),
+        health_guidance=str(advice.get("generalPopulation") or health.get("effect", "")),
+    )
 
 
 def _mapping_by_code(payload: dict[str, Any], key: str, code: str) -> dict[str, Any]:
@@ -799,6 +863,61 @@ def _open_meteo_daily_value(daily: dict[str, object], field: str, index: int) ->
     if index >= len(values):
         raise _OpenMeteoResponseError(f"daily forecast field has no value at index {index}: {field}")
     return values[index]
+
+
+def _open_meteo_daily_peak_values(
+    hourly: dict[str, object],
+    pollen_types: tuple[tuple[str, str], ...],
+) -> tuple[dict[str, object], dict[str, object]]:
+    times = _open_meteo_daily_values(hourly, "time")
+    aqi_values = _open_meteo_daily_values(hourly, "us_aqi")
+    pm25_aqi_values = _open_meteo_daily_values(hourly, "us_aqi_pm2_5")
+    pm25_values = _open_meteo_daily_values(hourly, "pm2_5")
+    air_quality_candidates: list[tuple[float, int, float, float]] = []
+    for index in range(min(len(times), len(aqi_values), len(pm25_aqi_values), len(pm25_values))):
+        try:
+            air_quality_candidates.append(
+                (
+                    _float_value(aqi_values[index]),
+                    index,
+                    _float_value(pm25_aqi_values[index]),
+                    _float_value(pm25_values[index]),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    air_quality: dict[str, object] = {}
+    if air_quality_candidates:
+        aqi, index, pm25_aqi, pm25 = max(air_quality_candidates, key=lambda candidate: candidate[0])
+        air_quality = {
+            "time": times[index],
+            "us_aqi": aqi,
+            "us_aqi_pm2_5": pm25_aqi,
+            "pm2_5": pm25,
+        }
+
+    allergen: dict[str, object] = {}
+    for key, _ in pollen_types:
+        values = hourly.get(f"{key}_pollen")
+        if not _is_object_list(values):
+            continue
+        candidates: list[tuple[float, int]] = []
+        for index in range(min(len(times), len(values))):
+            try:
+                candidates.append((_float_value(values[index]), index))
+            except (TypeError, ValueError):
+                continue
+        if not candidates:
+            continue
+        peak = max(candidates, key=lambda candidate: candidate[0])
+        allergen[f"{key}_pollen"] = peak[0]
+    return air_quality, allergen
+
+
+def _float_value(value: object) -> float:
+    if not isinstance(value, str | int | float):
+        raise TypeError("value must be numeric")
+    return float(value)
 
 
 def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:

@@ -18,6 +18,8 @@ LLM schema 到 `BriefingResult` 的转换保持为领域模型之外的 `parse_r
 
 Telegram HTML 与纯文本 renderer 保留少量显式重复，publisher 数量只有两个时也保留清晰分支。平台 escaping、链接、attribution、可见长度和必填配置不同；在出现第三个共享相同骨架的平台前，不用 template method 或 registry 把差异隐藏进回调和条件分支。
 
+[design.md](design.md) 定义目标日期的天气附加数据契约。选择保守日峰值是因为简报强调是否需要提前准备，而非计算累计健康暴露；它避免短时高风险被日均值摊薄，同时保持同一时刻的 AQI 与污染物组合。当前数据边界也不允许用实时观测冒充预报。若 provider 提供有明确标准的日级聚合、当前观测来源增加目标日期预报，或产品改为评估累计暴露，应重新评估聚合及补充策略。
+
 ### 错误、隐私与可选诊断边界
 
 异常链是否保留取决于边界。CLI 先用 `logger.exception()` 保存 traceback，再以 `SystemExit(1) from None` 避免终端重复输出；RSS 最终错误隐藏可能包含私有 Feed URL 的 `HTTPError` 链，而统一 HTTP 客户端仍记录安全的异常类型和状态。不能把 `from None` 机械视为调试信息丢失，也不能在可能泄漏私密 endpoint 的路径统一恢复异常链。
