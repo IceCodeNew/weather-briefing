@@ -208,7 +208,8 @@ class BriefingService:
         if rss_failure_alert_ids:
             await self._publish_rss_health_alert(
                 "天气 RSS 源持续获取失败",
-                f"以下 RSS 源已连续失败 {self._settings.rss_failure_threshold} 次：{', '.join(rss_failure_alert_ids)}",
+                f"以下 RSS 源已连续至少 {self._settings.rss_failure_threshold} 个调度轮次获取失败："
+                f"{', '.join(rss_failure_alert_ids)}",
                 lambda: self._state.mark_rss_failure_alerted(tuple(rss_failure_alert_ids), now),
             )
         stale = self._state.stale_sources_requiring_alert(
