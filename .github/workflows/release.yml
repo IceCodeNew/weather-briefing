@@ -32,11 +32,24 @@ jobs:
             echo "Error: version must be in X.Y.Z format"
             exit 1
           fi
-      - name: Update files
+      - name: Create release and next development commits
         env:
           WEATHER_BRIEFING_VERSION: ${{ github.event.inputs.version }}
           RELEASE_GH_PAT: ${{ secrets.RELEASE_GH_PAT }}
         run: |
+          set -euo pipefail
+
+          if git rev-parse "refs/tags/${WEATHER_BRIEFING_VERSION}" >/dev/null 2>&1; then
+            echo "Refusing to reuse existing release tag ${WEATHER_BRIEFING_VERSION}"
+            exit 1
+          fi
+
+          NEXT_DEVELOPMENT_VERSION=$(python3 -c "
+          version = '${WEATHER_BRIEFING_VERSION}'
+          major, minor, patch = version.split('.')
+          print(f'{major}.{minor}.{int(patch) + 1}-dev')
+          ")
+
           python3 -c "
           import tomllib, pathlib
 
@@ -46,11 +59,18 @@ jobs:
           with open(toml_path, 'rb') as f:
               data = tomllib.load(f)
           prev = data['project']['version']
-          content = toml_path.read_text().replace(f'version = \"{prev}\"', f'version = \"{version}\"')
-          toml_path.write_text(content)
+          version_entry = f'version = \"{prev}\"'
+          content = toml_path.read_text()
+          if content.count(version_entry) != 1:
+              raise RuntimeError(f'pyproject.toml must contain exactly one {version_entry}')
+          toml_path.write_text(content.replace(version_entry, f'version = \"{version}\"', 1))
 
           init_path = pathlib.Path('weather_briefing/__init__.py')
-          init_path.write_text(init_path.read_text().replace(f'__version__ = \"{prev}\"', f'__version__ = \"{version}\"'))
+          version_assignment = f'__version__ = \"{prev}\"'
+          init_content = init_path.read_text()
+          if init_content.count(version_assignment) != 1:
+              raise RuntimeError(f'weather_briefing/__init__.py must contain exactly one {version_assignment}')
+          init_path.write_text(init_content.replace(version_assignment, f'__version__ = \"{version}\"', 1))
 
           readme_path = pathlib.Path('README.md')
           readme_version = f'WEATHER_BRIEFING_VERSION=\"{prev}\"'
@@ -70,15 +90,41 @@ jobs:
 
           git add pyproject.toml weather_briefing/__init__.py README.md uv.lock
           if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "chore: bump version to ${WEATHER_BRIEFING_VERSION}"
-          fi
-
-          if git rev-parse "refs/tags/${WEATHER_BRIEFING_VERSION}" >/dev/null 2>&1; then
-            echo "Refusing to reuse existing release tag ${WEATHER_BRIEFING_VERSION}"
+            echo "Release version update produced no changes"
             exit 1
           fi
-
+          git commit -m "chore: release ${WEATHER_BRIEFING_VERSION}"
           git tag -a "${WEATHER_BRIEFING_VERSION}" -m "Release ${WEATHER_BRIEFING_VERSION}"
+
+          python3 -c "
+          import pathlib
+
+          release_version = '${WEATHER_BRIEFING_VERSION}'
+          development_version = '${NEXT_DEVELOPMENT_VERSION}'
+
+          toml_path = pathlib.Path('pyproject.toml')
+          version_entry = f'version = \"{release_version}\"'
+          content = toml_path.read_text()
+          if content.count(version_entry) != 1:
+              raise RuntimeError(f'pyproject.toml must contain exactly one {version_entry}')
+          toml_path.write_text(content.replace(version_entry, f'version = \"{development_version}\"', 1))
+
+          init_path = pathlib.Path('weather_briefing/__init__.py')
+          version_assignment = f'__version__ = \"{release_version}\"'
+          init_content = init_path.read_text()
+          if init_content.count(version_assignment) != 1:
+              raise RuntimeError(f'weather_briefing/__init__.py must contain exactly one {version_assignment}')
+          init_path.write_text(
+              init_content.replace(version_assignment, f'__version__ = \"{development_version}\"', 1)
+          )
+          "
+
+          uv lock
+          git add pyproject.toml weather_briefing/__init__.py uv.lock
+          if git diff --cached --quiet; then
+            echo "Development version update produced no changes"
+            exit 1
+          fi
+          git commit -m "chore: start ${NEXT_DEVELOPMENT_VERSION} development"
+
           git push --atomic origin HEAD:master "refs/tags/${WEATHER_BRIEFING_VERSION}"

@@ -7,11 +7,13 @@ import asyncio
 import logging
 import re
 import sqlite3
+import subprocess
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AsyncExitStack, contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pendulum
@@ -56,7 +58,7 @@ from .weather_context import (
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for runs, daemon, and diagnostics."""
     parser = argparse.ArgumentParser(description="Generate a stateful weather briefing")
-    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-V", "--version", action=_VersionAction, nargs=0)
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("kind", choices=("forecast", "briefing"))
@@ -87,6 +89,47 @@ def build_parser() -> argparse.ArgumentParser:
     rendered_text_actions.add_parser("status")
     rendered_text_actions.add_parser("disable")
     return parser
+
+
+class _VersionAction(argparse.Action):
+    """Resolve development Git metadata only when version output is requested."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: str | Sequence[Any] | None,
+        option_string: str | None = None,
+    ) -> None:
+        del namespace, values, option_string
+        print(f"{parser.prog} {_display_version()}")
+        parser.exit()
+
+
+def _display_version() -> str:
+    """Add Git revision details to development versions when available."""
+    if not __version__.endswith("-dev"):
+        return __version__
+
+    try:
+        revision = subprocess.run(
+            ("git", "rev-parse", "--short=7", "HEAD"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ("git", "status", "--porcelain"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return __version__
+
+    version = __version__.removesuffix("-dev")
+    dirty = "-dirty" if status else ""
+    return f"{version}{dirty}-g{revision}"
 
 
 _DIAGNOSTIC_DURATION_PATTERN = re.compile(r"^(?P<value>[1-9][0-9]*)(?P<unit>[smh])$")
