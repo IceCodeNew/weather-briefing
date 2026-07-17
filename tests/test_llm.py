@@ -1,4 +1,5 @@
 import json
+import logging
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
@@ -32,6 +33,21 @@ class _CompletionClientStub:
         return self._response
 
 
+class _DiagnosticsStub:
+    def __init__(self, enabled: bool) -> None:
+        self._enabled = enabled
+        self.calls = 0
+
+    def rendered_text_logging_enabled(self) -> bool:
+        self.calls += 1
+        return self._enabled
+
+
+class _FailingDiagnosticsStub:
+    def rendered_text_logging_enabled(self) -> bool:
+        raise RuntimeError("diagnostic state unavailable")
+
+
 async def test_completion_client_stub_requires_a_configured_response() -> None:
     client = _CompletionClientStub()
 
@@ -60,6 +76,61 @@ def _valid_payload() -> dict[str, Any]:
 
 def _now() -> pendulum.DateTime:
     return pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+
+
+async def test_sensitive_llm_diagnostics_log_application_owned_request_and_response(caplog) -> None:
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(_valid_payload())))])
+    diagnostics = _DiagnosticsStub(True)
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(response),
+        provider="deepseek",
+        model="model",
+        max_output_tokens=1024,
+        diagnostics=diagnostics,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="weather_briefing.llm"):
+        assert await provider.summarize("private system prompt", {"content": "private source body"}) == _valid_payload()
+
+    assert "private system prompt" in caplog.text
+    assert "private source body" in caplog.text
+    assert "'headline': 'Briefing'" in caplog.text
+    assert "api_key" not in caplog.text
+    assert "endpoint" not in caplog.text
+    assert diagnostics.calls == 1
+
+
+async def test_sensitive_llm_diagnostics_remain_silent_when_switch_is_disabled(caplog) -> None:
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(_valid_payload())))])
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(response),
+        provider="deepseek",
+        model="model",
+        max_output_tokens=1024,
+        diagnostics=_DiagnosticsStub(False),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="weather_briefing.llm"):
+        await provider.summarize("private system prompt", {"content": "private source body"})
+
+    assert "Sensitive LLM" not in caplog.text
+
+
+async def test_sensitive_llm_diagnostic_state_failure_does_not_affect_request(caplog) -> None:
+    response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(_valid_payload())))])
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(response),
+        provider="deepseek",
+        model="model",
+        max_output_tokens=1024,
+        diagnostics=_FailingDiagnosticsStub(),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="weather_briefing.llm"):
+        assert await provider.summarize("private system prompt", {}) == _valid_payload()
+
+    assert "Sensitive LLM diagnostic state check failed" in caplog.text
+    assert "private system prompt" not in caplog.text
 
 
 def test_accepts_complete_suppressed_message_with_active_warning() -> None:

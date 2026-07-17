@@ -10,6 +10,10 @@ DeepSeek 是唯一保留旧环境变量别名的 LLM provider：`DEEPSEEK_MODEL`
 
 日志初始化分为两个阶段。`main()` 在读取 Settings 前以非 DEBUG 级别建立基础 handler，保证参数或配置解析失败仍有统一日志；配置成功后再用实际 `DEBUG` 值更新级别。除非启动错误改由更外层的统一运行时接管，否则不应把两次调用合并。
 
+`DEBUG` 只提高应用 logger 的级别；root handler 和可能记录完整 LLM 请求的 SDK logger 保持 WARNING。这是隐私边界，因为无法对第三方 DEBUG 消息的内容或未来版本作出安全承诺；root handler 的第二道限制还覆盖 provider SDK 自行设置 logger 级别的情况。取舍是常规 `DEBUG` 不再显示 APScheduler 和第三方库的调试细节；排障应优先使用应用的非敏感请求元数据。只有在受控的临时诊断机制能独立过滤凭据、请求正文、URL 和位置上下文时，才应重新评估开放指定第三方 logger，不应放宽 root handler。
+
+临时正文开关需要更完整的 LLM 排障信息，但直接开放 any-llm、OpenAI、HTTPX 或 provider SDK 的原始 DEBUG 与“不得记录 token、chat ID 和请求 endpoint”的安全保证冲突：第三方日志格式不受应用控制，通用过滤也无法可靠区分正文中的来源 URL 与传输 endpoint。因此该开关只启用应用 adapter 拥有、字段白名单明确的 LLM 请求与结构化响应诊断；原始 SDK logger 仍保持 WARNING。若未来 SDK 提供稳定的结构化安全日志接口，可重新评估接入，但不得依赖异常消息或事后正则清洗来保护认证信息。
+
 ### 领域模型与平台适配边界
 
 `Article.id` 是带 Feed 身份的文章级稳定 ID，用于去重和模型引用；`Article.source_id` 是 Feed 配置 ID。同一内容出现在不同 Feed 时保留不同文章 ID，以维持来源隔离和可追溯性。只有在产品明确引入跨来源 canonical identity、并定义转载和更新版本的合并规则后，才应重新评估这一选择。

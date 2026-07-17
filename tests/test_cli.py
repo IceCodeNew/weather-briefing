@@ -1,4 +1,5 @@
 import base64
+import io
 import logging
 import sqlite3
 from collections.abc import AsyncIterator
@@ -12,6 +13,7 @@ import pytest
 
 from weather_briefing.cli import (
     _LOGGER,
+    _SENSITIVE_SDK_LOGGERS,
     PUBLISHER_BUILDERS,
     WEATHER_PROVIDER_BUILDERS,
     _aqicn_provider,
@@ -40,7 +42,9 @@ from weather_briefing.cli import (
 from weather_briefing.config import Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.registries import PublisherName, WeatherProviderName
-from weather_briefing.state import SQLiteStateStore
+from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
+
+_REQUIRED_SENSITIVE_SDK_LOGGERS = frozenset({"any_llm", "openai", "httpx", "httpcore"})
 
 
 def test_configure_logging_is_idempotent_and_updates_level() -> None:
@@ -49,8 +53,9 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
     original_propagate = _LOGGER.propagate
     original_root_handlers = logging.root.handlers[:]
     original_root_level = logging.root.level
-    original_httpx_level = logging.getLogger("httpx").level
-    original_httpcore_level = logging.getLogger("httpcore").level
+    assert set(_SENSITIVE_SDK_LOGGERS) >= _REQUIRED_SENSITIVE_SDK_LOGGERS
+    sdk_loggers = [logging.getLogger(name) for name in _SENSITIVE_SDK_LOGGERS]
+    original_sdk_levels = [logger.level for logger in sdk_loggers]
     try:
         _LOGGER.handlers.clear()
         logging.root.handlers.clear()
@@ -64,9 +69,9 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         assert _LOGGER.level == logging.DEBUG
         assert not _LOGGER.propagate
         assert logging.root.handlers == [root_handler]
-        assert logging.root.level == logging.DEBUG
-        assert logging.getLogger("httpx").level == logging.WARNING
-        assert logging.getLogger("httpcore").level == logging.WARNING
+        assert logging.root.level == logging.WARNING
+        assert root_handler.level == logging.WARNING
+        assert all(logger.level == logging.WARNING for logger in sdk_loggers)
     finally:
         _LOGGER.handlers.clear()
         _LOGGER.handlers.extend(original_handlers)
@@ -75,8 +80,47 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         logging.root.handlers.clear()
         logging.root.handlers.extend(original_root_handlers)
         logging.root.setLevel(original_root_level)
-        logging.getLogger("httpx").setLevel(original_httpx_level)
-        logging.getLogger("httpcore").setLevel(original_httpcore_level)
+        for logger, original_level in zip(sdk_loggers, original_sdk_levels, strict=True):
+            logger.setLevel(original_level)
+
+
+def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() -> None:
+    original_handlers = _LOGGER.handlers[:]
+    original_level = _LOGGER.level
+    original_propagate = _LOGGER.propagate
+    original_root_handlers = logging.root.handlers[:]
+    original_root_level = logging.root.level
+    sdk_loggers = [logging.getLogger(name) for name in (*_SENSITIVE_SDK_LOGGERS, "provider_sdk")]
+    original_sdk_levels = [logger.level for logger in sdk_loggers]
+    try:
+        _LOGGER.handlers.clear()
+        logging.root.handlers.clear()
+        output = io.StringIO()
+        _LOGGER.addHandler(logging.StreamHandler(output))
+        logging.root.addHandler(logging.StreamHandler(output))
+        _configure_logging(debug=True)
+
+        logging.getLogger("weather_briefing.service").debug("LLM attempt=1 input_characters=42")
+        logging.getLogger("any_llm").debug("private prompt from any-llm")
+        logging.getLogger("openai._base_client").debug("private request body from OpenAI SDK")
+        logging.getLogger("provider_sdk").setLevel(logging.DEBUG)
+        logging.getLogger("provider_sdk").debug("private payload from a provider SDK")
+
+        logged_text = output.getvalue()
+        assert "LLM attempt=1 input_characters=42" in logged_text
+        assert "private prompt" not in logged_text
+        assert "private request body" not in logged_text
+        assert "private payload" not in logged_text
+    finally:
+        _LOGGER.handlers.clear()
+        _LOGGER.handlers.extend(original_handlers)
+        _LOGGER.setLevel(original_level)
+        _LOGGER.propagate = original_propagate
+        logging.root.handlers.clear()
+        logging.root.handlers.extend(original_root_handlers)
+        logging.root.setLevel(original_root_level)
+        for logger, original_level in zip(sdk_loggers, original_sdk_levels, strict=True):
+            logger.setLevel(original_level)
 
 
 @pytest.mark.parametrize(
@@ -688,7 +732,7 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
         assert diagnostics is None
 
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", delivery_without_diagnostics)
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c, d: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
     class FakeResolver:
@@ -778,7 +822,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: AlertDelivery())
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c, d: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
     class FakeResolver:
@@ -843,7 +887,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: None)
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c: None)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c, d: None)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
     class FakeResolver:
@@ -892,7 +936,12 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
 
 
 class TestLLMProvider:
-    async def test_deepseek_with_custom_base_url(self, async_client: httpx.AsyncClient, monkeypatch) -> None:
+    async def test_deepseek_with_custom_base_url(
+        self,
+        async_client: httpx.AsyncClient,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         sdk_client = SimpleNamespace()
         monkeypatch.setattr(
@@ -903,17 +952,20 @@ class TestLLMProvider:
             llm_provider="deepseek",
             llm_base_url="https://custom.example.invalid",
         )
-        provider = _llm_provider(settings, async_client)
-        assert provider is sdk_client
-        assert calls == [
-            (
-                ("deepseek", "m", 8192, async_client),
-                {
-                    "api_key": "k",
-                    "api_base": "https://custom.example.invalid",
-                },
-            )
-        ]
+
+        with SQLiteRuntimeDiagnostics(tmp_path / "diagnostics.db") as diagnostics:
+            provider = _llm_provider(settings, async_client, diagnostics)
+            assert provider is sdk_client
+            assert calls == [
+                (
+                    ("deepseek", "m", 8192, async_client),
+                    {
+                        "api_key": "k",
+                        "api_base": "https://custom.example.invalid",
+                        "diagnostics": diagnostics,
+                    },
+                )
+            ]
 
     async def test_deepseek_without_base_url(self, async_client: httpx.AsyncClient, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -937,7 +989,7 @@ class TestLLMProvider:
         provider = _llm_provider(settings, async_client)
         assert provider is not None
         assert calls[0][0][:3] == ("mistral", "m", 8192)
-        assert calls[0][1] == {"api_key": None, "api_base": None}
+        assert calls[0][1] == {"api_key": None, "api_base": None, "diagnostics": None}
 
 
 class TestDeliveryProvider:
