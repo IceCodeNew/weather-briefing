@@ -145,8 +145,11 @@ class SQLiteStateStore:
             );
             CREATE TABLE IF NOT EXISTS context_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
-                name TEXT NOT NULL, url TEXT NOT NULL, content TEXT NOT NULL,
+                name TEXT NOT NULL, url TEXT NOT NULL, content TEXT NOT NULL, history_summary TEXT,
                 observed_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS context_budget_alert (
+                source_id TEXT PRIMARY KEY, content_fingerprint TEXT NOT NULL, alerted_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS source_health (
                 source_id TEXT PRIMARY KEY, first_checked_at TEXT NOT NULL,
@@ -166,6 +169,9 @@ class SQLiteStateStore:
             INSERT OR IGNORE INTO task_health(singleton, consecutive_failures) VALUES (1, 0);
             """
         )
+        context_columns = {str(row["name"]) for row in self._connection.execute("PRAGMA table_info(context_snapshots)")}
+        if "history_summary" not in context_columns:
+            self._connection.execute("ALTER TABLE context_snapshots ADD COLUMN history_summary TEXT")
         self._connection.commit()
 
     def known_article_ids(self, ids: tuple[str, ...]) -> set[str]:
@@ -388,14 +394,15 @@ class SQLiteStateStore:
     def save_context_documents(self, documents: tuple[SourceDocument, ...], observed_at: pendulum.DateTime) -> None:
         """Persist context documents observed during a successful run."""
         self._connection.executemany(
-            """INSERT INTO context_snapshots(source_id, name, url, content, observed_at)
-            VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO context_snapshots(source_id, name, url, content, history_summary, observed_at)
+            VALUES (?, ?, ?, ?, ?, ?)""",
             [
                 (
                     document.id,
                     document.name,
                     document.url,
                     document.content,
+                    document.history_summary,
                     _storage_time(observed_at),
                 )
                 for document in documents
@@ -407,7 +414,7 @@ class SQLiteStateStore:
         """Return context documents inside the configured history window."""
         threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
-            """SELECT source_id, name, url, content FROM context_snapshots
+            """SELECT source_id, name, url, content, history_summary FROM context_snapshots
             WHERE observed_at >= ? ORDER BY observed_at""",
             (threshold,),
         )
@@ -417,9 +424,48 @@ class SQLiteStateStore:
                 name=str(row["name"]),
                 url=str(row["url"]),
                 content=str(row["content"]),
+                history_summary=str(row["history_summary"]) if row["history_summary"] is not None else None,
             )
             for row in rows
         )
+
+    def context_budget_sources_requiring_alert(self, fingerprints: dict[str, str]) -> tuple[str, ...]:
+        """Return changed overflow sources and clear alerts for recovered sources."""
+        if not fingerprints:
+            self._connection.execute("DELETE FROM context_budget_alert")
+            self._connection.commit()
+            return ()
+        placeholders = ",".join("?" for _ in fingerprints)
+        self._connection.execute(
+            f"DELETE FROM context_budget_alert WHERE source_id NOT IN ({placeholders})",  # noqa: S608
+            tuple(fingerprints),
+        )
+        rows = self._connection.execute(
+            f"SELECT source_id, content_fingerprint FROM context_budget_alert "  # noqa: S608
+            f"WHERE source_id IN ({placeholders})",
+            tuple(fingerprints),
+        )
+        alerted = {str(row["source_id"]): str(row["content_fingerprint"]) for row in rows}
+        self._connection.commit()
+        return tuple(
+            source_id for source_id, fingerprint in fingerprints.items() if alerted.get(source_id) != fingerprint
+        )
+
+    def mark_context_budget_alerted(
+        self,
+        fingerprints: dict[str, str],
+        alerted_at: pendulum.DateTime,
+    ) -> None:
+        """Record delivered context-budget alerts by source and content fingerprint."""
+        alerted_at = require_aware_datetime(alerted_at, context="Context budget alert time")
+        self._connection.executemany(
+            """INSERT INTO context_budget_alert(source_id, content_fingerprint, alerted_at) VALUES (?, ?, ?)
+            ON CONFLICT(source_id) DO UPDATE SET
+                content_fingerprint = excluded.content_fingerprint,
+                alerted_at = excluded.alerted_at""",
+            [(source_id, fingerprint, _storage_time(alerted_at)) for source_id, fingerprint in fingerprints.items()],
+        )
+        self._connection.commit()
 
     def active_warnings(self, now: pendulum.DateTime, retention_hours: int) -> tuple[Warning, ...]:
         """Return warnings confirmed inside the retention window."""

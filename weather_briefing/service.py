@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -30,12 +32,60 @@ from .time_utils import require_aware_datetime
 from .weather_context import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
 
 _LOGGER = logging.getLogger("weather_briefing.service")
+_FINGERPRINT_CHUNK_CHARACTERS = 64 * 1024
+_FINGERPRINT_SINGLE_PASS_CHARACTERS = 4 * _FINGERPRINT_CHUNK_CHARACTERS
 
 
 @dataclass(frozen=True, slots=True)
 class _HistoricalContextCandidate:
     document: SourceDocument
     role: Literal["latest", "retention_baseline", "recent_change"]
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoricalContextOverflow:
+    source_id: str
+    role: Literal["latest", "retention_baseline"]
+    fingerprint: str
+
+
+@dataclass(slots=True)
+class _ContextSourceChanges:
+    baseline: tuple[int, SourceDocument]
+    recent: deque[tuple[int, SourceDocument]]
+
+
+class _Digest(Protocol):
+    def update(self, data: bytes, /) -> object:
+        """Add bytes to the digest state."""
+        ...
+
+
+def _utf8_length(value: str) -> int:
+    return sum(
+        len(value[start : start + _FINGERPRINT_CHUNK_CHARACTERS].encode())
+        for start in range(0, len(value), _FINGERPRINT_CHUNK_CHARACTERS)
+    )
+
+
+def _update_framed_text_digest(digest: _Digest, value: str) -> None:
+    """Hash length-prefixed UTF-8 without allocating bytes for the full value."""
+    if len(value) <= _FINGERPRINT_SINGLE_PASS_CHARACTERS:
+        encoded = value.encode()
+        digest.update(len(encoded).to_bytes(8, byteorder="big"))
+        digest.update(encoded)
+        return
+    digest.update(_utf8_length(value).to_bytes(8, byteorder="big"))
+    for start in range(0, len(value), _FINGERPRINT_CHUNK_CHARACTERS):
+        digest.update(value[start : start + _FINGERPRINT_CHUNK_CHARACTERS].encode())
+
+
+def _context_overflow_fingerprint(candidate: _HistoricalContextCandidate) -> str:
+    digest = hashlib.sha256()
+    _update_framed_text_digest(digest, candidate.role)
+    _update_framed_text_digest(digest, candidate.document.content)
+    _update_framed_text_digest(digest, candidate.document.history_summary or "")
+    return digest.hexdigest()
 
 
 def _serialize_article(article: Article) -> dict[str, object]:
@@ -281,10 +331,12 @@ class BriefingService:
             context_items.extend(snapshot_to_documents(weather_context))
         context = tuple(context_items)
         historical_context = self._state.recent_context_documents(now, self._settings.history_hours)
-        historical_context_payload, historical_context_characters = _bounded_context_history(
-            historical_context,
-            max_documents=self._settings.llm_history_max_documents,
-            max_characters=self._settings.llm_history_max_characters,
+        historical_context_payload, historical_context_characters, historical_context_overflows = (
+            _bounded_context_history(
+                historical_context,
+                max_documents=self._settings.llm_history_max_documents,
+                max_characters=self._settings.llm_history_max_characters,
+            )
         )
         _LOGGER.debug(
             "Historical context bounded: input_documents=%d selected_documents=%d serialized_characters=%d",
@@ -292,6 +344,7 @@ class BriefingService:
             len(historical_context_payload),
             historical_context_characters,
         )
+        await self._publish_context_budget_alert(historical_context_overflows, now)
         reference_context = _unique_documents((*historical_context, *context))
         active_warnings = self._state.active_warnings(now, self._settings.warning_retention_hours)
         if not unpublished_articles and not context and not active_warnings:
@@ -414,6 +467,27 @@ class BriefingService:
             mark_alerted()
         except Exception:
             _LOGGER.exception("Failed to publish or record RSS health alert")
+
+    async def _publish_context_budget_alert(
+        self,
+        overflows: tuple[_HistoricalContextOverflow, ...],
+        now: pendulum.DateTime,
+    ) -> None:
+        fingerprints = _context_budget_fingerprints(overflows)
+        try:
+            source_ids = self._state.context_budget_sources_requiring_alert(fingerprints)
+            if not source_ids:
+                return
+            await self._ops_delivery.publish_alert(
+                "天气历史上下文超出 LLM 输入预算",
+                "以下来源的最新值或窗口基线在确定性压缩后仍无法纳入输入：" + ", ".join(source_ids),
+            )
+            self._state.mark_context_budget_alerted(
+                {source_id: fingerprints[source_id] for source_id in source_ids},
+                now,
+            )
+        except Exception:
+            _LOGGER.exception("Failed to publish or record context budget alert")
 
     def _save_result_state(
         self,
@@ -555,14 +629,19 @@ def _serialize_context_document(
     document: SourceDocument,
     *,
     history_role: Literal["latest", "retention_baseline", "recent_change"],
+    compact: bool = False,
 ) -> dict[str, object]:
-    return {
+    entry: dict[str, object] = {
         "source_id": document.id,
         "name": document.name,
         "url": document.url,
-        "content": document.content,
+        "content": document.history_summary if compact else document.content,
         "history_role": history_role,
     }
+    if compact:
+        entry["content_compacted"] = True
+        entry["original_content_characters"] = len(document.content)
+    return entry
 
 
 def _bounded_context_history(
@@ -570,66 +649,151 @@ def _bounded_context_history(
     *,
     max_documents: int,
     max_characters: int,
-) -> tuple[list[dict[str, object]], int]:
-    candidates = _context_history_candidates(documents, max_documents)
-    selected: list[dict[str, object]] = []
+) -> tuple[list[dict[str, object]], int, tuple[_HistoricalContextOverflow, ...]]:
+    candidates, omitted_overflows = _context_history_selection(documents, max_documents)
+    selected: list[tuple[_HistoricalContextCandidate, dict[str, object]]] = []
+    overflows = list(omitted_overflows)
     serialized_characters = len("[]")
     for candidate in candidates:
         entry = _serialize_context_document(candidate.document, history_role=candidate.role)
-        candidate_payload = [*selected, entry]
+        candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
         candidate_characters = len(json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":")))
         if candidate_characters <= max_characters:
-            selected = candidate_payload
+            selected.append((candidate, entry))
             serialized_characters = candidate_characters
-    return selected, serialized_characters
+            continue
+        if candidate.document.history_summary:
+            entry = _serialize_context_document(
+                candidate.document,
+                history_role=candidate.role,
+                compact=True,
+            )
+            candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
+            candidate_characters = len(json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":")))
+            if candidate_characters <= max_characters:
+                selected.append((candidate, entry))
+                serialized_characters = candidate_characters
+                continue
+        if candidate.role != "recent_change":
+            compactable: list[tuple[int, int, dict[str, object]]] = []
+            for index, (selected_candidate, selected_entry) in enumerate(selected):
+                if selected_candidate.document.history_summary and not selected_entry.get("content_compacted"):
+                    compact_entry = _serialize_context_document(
+                        selected_candidate.document,
+                        history_role=selected_candidate.role,
+                        compact=True,
+                    )
+                    full_characters = len(json.dumps(selected_entry, ensure_ascii=False, separators=(",", ":")))
+                    compact_characters = len(json.dumps(compact_entry, ensure_ascii=False, separators=(",", ":")))
+                    if compact_characters < full_characters:
+                        compactable.append((full_characters - compact_characters, index, compact_entry))
+            compactable.sort(key=lambda item: item[0], reverse=True)
+            for _, index, compact_entry in compactable:
+                selected[index] = (selected[index][0], compact_entry)
+                selected_payload = [selected_entry for _, selected_entry in selected]
+                serialized_characters = len(json.dumps(selected_payload, ensure_ascii=False, separators=(",", ":")))
+                candidate_payload = [*selected_payload, entry]
+                candidate_characters = len(json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":")))
+                if candidate_characters <= max_characters:
+                    selected.append((candidate, entry))
+                    serialized_characters = candidate_characters
+                    break
+            else:
+                fingerprint = _context_overflow_fingerprint(candidate)
+                overflows.append(_HistoricalContextOverflow(candidate.document.id, candidate.role, fingerprint))
+                continue
+            continue
+    return [entry for _, entry in selected], serialized_characters, tuple(overflows)
+
+
+def _context_budget_fingerprints(overflows: tuple[_HistoricalContextOverflow, ...]) -> dict[str, str]:
+    """Combine mandatory overflow fingerprints into one stable value per source."""
+    grouped: dict[str, list[str]] = {}
+    for overflow in overflows:
+        grouped.setdefault(overflow.source_id, []).append(overflow.fingerprint)
+    return {
+        source_id: hashlib.sha256("\0".join(sorted(fingerprints)).encode()).hexdigest()
+        for source_id, fingerprints in grouped.items()
+    }
 
 
 def _context_history_candidates(
     documents: tuple[SourceDocument, ...],
     max_documents: int,
 ) -> tuple[_HistoricalContextCandidate, ...]:
-    changes_by_source: dict[str, list[tuple[int, SourceDocument]]] = {}
-    for index, document in enumerate(documents):
-        source_changes = changes_by_source.setdefault(document.id, [])
-        previous_document = source_changes[-1][1] if source_changes else None
-        if previous_document is None or _context_document_value(previous_document) != _context_document_value(document):
-            source_changes.append((index, document))
+    candidates, _ = _context_history_selection(documents, max_documents)
+    return candidates
 
-    source_changes = sorted(changes_by_source.values(), key=lambda changes: changes[-1][0], reverse=True)
-    prioritized: list[tuple[int, _HistoricalContextCandidate]] = []
+
+def _context_history_selection(
+    documents: tuple[SourceDocument, ...],
+    max_documents: int,
+) -> tuple[tuple[_HistoricalContextCandidate, ...], tuple[_HistoricalContextOverflow, ...]]:
+    changes_by_source: dict[str, _ContextSourceChanges] = {}
+    for index, document in enumerate(documents):
+        source_changes = changes_by_source.get(document.id)
+        if source_changes is None:
+            snapshot = (index, document)
+            changes_by_source[document.id] = _ContextSourceChanges(
+                baseline=snapshot,
+                recent=deque((snapshot,), maxlen=max_documents),
+            )
+            continue
+        if _context_document_value(source_changes.recent[-1][1]) != _context_document_value(document):
+            source_changes.recent.append((index, document))
+
+    source_changes = sorted(changes_by_source.values(), key=lambda changes: changes.recent[-1][0], reverse=True)
+    mandatory: list[tuple[int, SourceDocument, Literal["latest", "retention_baseline"]]] = []
     selected_indexes: set[int] = set()
 
-    def add(
+    def add_mandatory(
         snapshot: tuple[int, SourceDocument],
-        role: Literal["latest", "retention_baseline", "recent_change"],
+        role: Literal["latest", "retention_baseline"],
     ) -> None:
         if snapshot[0] not in selected_indexes:
-            prioritized.append((snapshot[0], _HistoricalContextCandidate(snapshot[1], role)))
+            mandatory.append((snapshot[0], snapshot[1], role))
             selected_indexes.add(snapshot[0])
 
     for changes in source_changes:
-        add(changes[-1], "latest")
+        add_mandatory(changes.recent[-1], "latest")
     for changes in source_changes:
-        add(changes[0], "retention_baseline")
+        add_mandatory(changes.baseline, "retention_baseline")
+
+    candidates = [
+        (index, _HistoricalContextCandidate(document, role)) for index, document, role in mandatory[:max_documents]
+    ]
+    omitted_mandatory = mandatory[max_documents:]
 
     depth = 2
-    while len(prioritized) < max_documents:
+    while len(candidates) < max_documents:
         added_change = False
         for changes in source_changes:
-            if len(changes) > depth:
-                add(changes[-depth], "recent_change")
-                added_change = True
-                if len(prioritized) == max_documents:
+            if len(changes.recent) > depth:
+                snapshot = changes.recent[-depth]
+                candidates.append((snapshot[0], _HistoricalContextCandidate(snapshot[1], "recent_change")))
+                selected_indexes.add(snapshot[0])
+                if len(candidates) == max_documents:
                     break
+                added_change = True
         if not added_change:
             break
         depth += 1
 
-    return tuple(candidate for _, candidate in prioritized[:max_documents])
+    return (
+        tuple(candidate for _, candidate in candidates),
+        tuple(
+            _HistoricalContextOverflow(
+                document.id,
+                role,
+                _context_overflow_fingerprint(_HistoricalContextCandidate(document, role)),
+            )
+            for _, document, role in omitted_mandatory
+        ),
+    )
 
 
-def _context_document_value(document: SourceDocument) -> tuple[str, str, str]:
-    return document.name, document.url, document.content
+def _context_document_value(document: SourceDocument) -> tuple[str, str, str, str | None]:
+    return document.name, document.url, document.content, document.history_summary
 
 
 def _required_advice_topics(

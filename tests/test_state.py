@@ -178,12 +178,38 @@ def test_context_snapshots_are_available_for_briefing_change_detection(tmp_path:
         "Weather API",
         "https://example.invalid/weather",
         "Rain expected at 10:00",
+        history_summary="Rain expected",
     )
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.save_context_documents((document,), now)
 
         assert state.recent_context_documents(now.add(hours=1), 2) == (document,)
         assert state.recent_context_documents(now.add(hours=3), 2) == ()
+
+
+def test_existing_context_snapshot_schema_adds_history_summary(tmp_path: Path) -> None:
+    database_path = tmp_path / "existing-state.db"
+    with closing(sqlite3.connect(database_path)) as connection:
+        connection.execute(
+            """CREATE TABLE context_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
+                name TEXT NOT NULL, url TEXT NOT NULL, content TEXT NOT NULL,
+                observed_at TEXT NOT NULL
+            )"""
+        )
+        connection.commit()
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    document = SourceDocument(
+        "weather:test",
+        "Weather API",
+        "https://example.invalid/weather",
+        "Full weather history",
+        history_summary="Weather summary",
+    )
+
+    with SQLiteStateStore(database_path) as state:
+        state.save_context_documents((document,), now)
+        assert state.recent_context_documents(now, 1) == (document,)
 
 
 def test_utc_timestamps_have_stable_lexical_order_with_microseconds(tmp_path: Path) -> None:

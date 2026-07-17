@@ -88,6 +88,7 @@ class SourceDocument:
     url: str
     content: str
     has_allergen_information: bool = False
+    history_summary: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

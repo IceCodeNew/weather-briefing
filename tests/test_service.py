@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -23,7 +24,13 @@ from weather_briefing.models import (
 )
 from weather_briefing.publishers import DeliveryProvider
 from weather_briefing.render import PlainTextRenderer
-from weather_briefing.service import BriefingService, _bounded_context_history, _context_history_candidates
+from weather_briefing.service import (
+    BriefingService,
+    _bounded_context_history,
+    _context_history_candidates,
+    _HistoricalContextOverflow,
+    _serialize_context_document,
+)
 from weather_briefing.state import SQLiteStateStore
 from weather_briefing.weather_context import WeatherContextError
 
@@ -215,12 +222,13 @@ def _location(
     )
 
 
-def _context_document(source_id: str, content: str) -> SourceDocument:
+def _context_document(source_id: str, content: str, *, history_summary: str | None = None) -> SourceDocument:
     return SourceDocument(
         id=source_id,
         name=f"Source {source_id}",
         url=f"https://example.invalid/{source_id}",
         content=content,
+        history_summary=history_summary,
     )
 
 
@@ -247,17 +255,31 @@ def test_context_history_keeps_latest_baselines_and_recent_changes() -> None:
     ]
 
 
+def test_context_history_keeps_summary_only_changes() -> None:
+    documents = (
+        _context_document("weather", "same content", history_summary="old summary"),
+        _context_document("weather", "same content", history_summary="new summary"),
+    )
+
+    selected = _context_history_candidates(documents, max_documents=2)
+
+    assert [(candidate.document.history_summary, candidate.role) for candidate in selected] == [
+        ("new summary", "latest"),
+        ("old summary", "retention_baseline"),
+    ]
+
+
 def test_context_history_enforces_document_and_serialized_character_limits() -> None:
-    oversized = _context_document("oversized", "private-history" * 20)
+    oversized = _context_document("oversized", "private-history" * 20_000)
     compact = _context_document("compact", "current")
-    compact_payload, compact_characters = _bounded_context_history(
+    compact_payload, compact_characters, compact_overflows = _bounded_context_history(
         (compact,),
         max_documents=1,
         max_characters=1_000,
     )
     character_limit = compact_characters
 
-    selected, serialized_characters = _bounded_context_history(
+    selected, serialized_characters, overflows = _bounded_context_history(
         (compact, oversized),
         max_documents=2,
         max_characters=character_limit,
@@ -268,6 +290,198 @@ def test_context_history_enforces_document_and_serialized_character_limits() -> 
     assert len(selected) <= 2
     assert serialized_characters == len(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
     assert serialized_characters <= character_limit
+    assert compact_overflows == ()
+    assert [(overflow.source_id, overflow.role) for overflow in overflows] == [("oversized", "latest")]
+    expected = hashlib.sha256()
+    for value in ("latest", oversized.content, ""):
+        encoded = value.encode()
+        expected.update(len(encoded).to_bytes(8, byteorder="big"))
+        expected.update(encoded)
+    assert overflows[0].fingerprint == expected.hexdigest()
+
+
+def test_context_history_overflow_fingerprint_has_unambiguous_field_boundaries() -> None:
+    first = _context_document("weather", "content\0summary", history_summary="tail")
+    second = _context_document("weather", "content", history_summary="summary\0tail")
+
+    _, _, first_overflows = _bounded_context_history((first,), max_documents=1, max_characters=len("[]"))
+    _, _, second_overflows = _bounded_context_history((second,), max_documents=1, max_characters=len("[]"))
+
+    assert first_overflows[0].fingerprint != second_overflows[0].fingerprint
+
+
+def test_context_history_uses_deterministic_summary_before_skipping_mandatory_document() -> None:
+    document = _context_document("weather", "full private history" * 100, history_summary="weather summary")
+    summary_entry = {
+        "source_id": "weather",
+        "name": "Source weather",
+        "url": "https://example.invalid/weather",
+        "content": "weather summary",
+        "history_role": "latest",
+        "content_compacted": True,
+        "original_content_characters": len(document.content),
+    }
+    character_limit = len(json.dumps([summary_entry], ensure_ascii=False, separators=(",", ":")))
+
+    selected, serialized_characters, overflows = _bounded_context_history(
+        (document,),
+        max_documents=1,
+        max_characters=character_limit,
+    )
+
+    assert selected == [summary_entry]
+    assert serialized_characters == character_limit
+    assert overflows == ()
+
+
+def test_context_history_repacks_selected_entries_before_skipping_mandatory_document() -> None:
+    later = _context_document("later", "later full history" * 100, history_summary="later summary")
+    earlier = _context_document("earlier", "earlier full history" * 100, history_summary="earlier summary")
+    expected = [
+        _serialize_context_document(earlier, history_role="latest", compact=True),
+        _serialize_context_document(later, history_role="latest", compact=True),
+    ]
+    earlier_full = _serialize_context_document(earlier, history_role="latest")
+    character_limit = len(json.dumps([earlier_full], ensure_ascii=False, separators=(",", ":")))
+
+    selected, serialized_characters, overflows = _bounded_context_history(
+        (later, earlier),
+        max_documents=2,
+        max_characters=character_limit,
+    )
+
+    assert selected == expected
+    assert serialized_characters == len(json.dumps(expected, ensure_ascii=False, separators=(",", ":")))
+    assert overflows == ()
+
+
+def test_context_history_repacks_multiple_entries_when_one_summary_is_insufficient() -> None:
+    third = _context_document("third", "z" * 1_000, history_summary="z" * 20)
+    second = _context_document("second", "y" * 500, history_summary="y" * 300)
+    first = _context_document("first", "x" * 500, history_summary="x" * 300)
+    first_full = _serialize_context_document(first, history_role="latest")
+    second_full = _serialize_context_document(second, history_role="latest")
+    character_limit = len(json.dumps([first_full, second_full], ensure_ascii=False, separators=(",", ":")))
+
+    selected, _, overflows = _bounded_context_history(
+        (third, second, first),
+        max_documents=3,
+        max_characters=character_limit,
+    )
+
+    assert [entry.get("content_compacted", False) for entry in selected] == [True, True, True]
+    assert overflows == ()
+
+
+def test_context_history_ignores_unhelpful_prior_summaries_when_repacking() -> None:
+    overflowing = _context_document("overflowing", "z" * 1_000)
+    unhelpful = _context_document("unhelpful", "short", history_summary="long summary" * 100)
+    plain = _context_document("plain", "plain")
+    plain_entry = _serialize_context_document(plain, history_role="latest")
+    unhelpful_entry = _serialize_context_document(unhelpful, history_role="latest")
+    character_limit = len(json.dumps([plain_entry, unhelpful_entry], ensure_ascii=False, separators=(",", ":")))
+
+    selected, _, overflows = _bounded_context_history(
+        (overflowing, unhelpful, plain),
+        max_documents=3,
+        max_characters=character_limit,
+    )
+
+    assert selected == [plain_entry, unhelpful_entry]
+    assert [(overflow.source_id, overflow.role) for overflow in overflows] == [("overflowing", "latest")]
+
+
+def test_context_history_reports_mandatory_documents_excluded_by_count_limit() -> None:
+    documents = (
+        _context_document("weather", "weather baseline"),
+        _context_document("air", "air baseline"),
+        _context_document("weather", "weather latest"),
+        _context_document("air", "air latest"),
+    )
+
+    selected, _, overflows = _bounded_context_history(
+        documents,
+        max_documents=3,
+        max_characters=10_000,
+    )
+
+    assert [(item["source_id"], item["history_role"]) for item in selected] == [
+        ("air", "latest"),
+        ("weather", "latest"),
+        ("air", "retention_baseline"),
+    ]
+    assert [(overflow.source_id, overflow.role) for overflow in overflows] == [("weather", "retention_baseline")]
+
+
+def test_context_history_reports_mandatory_overflow_but_silently_drops_recent_change() -> None:
+    documents = tuple(
+        _context_document("weather", content, history_summary="summary" * 100)
+        for content in ("baseline", "recent", "latest")
+    )
+
+    selected, serialized_characters, overflows = _bounded_context_history(
+        documents,
+        max_documents=3,
+        max_characters=len("[]"),
+    )
+
+    assert selected == []
+    assert serialized_characters == len("[]")
+    assert [overflow.role for overflow in overflows] == ["latest", "retention_baseline"]
+
+
+async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Path) -> None:
+    settings = _TestSettings(timezone=pendulum.timezone("Asia/Shanghai"))
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 9, tz=settings.timezone)
+    overflow = _HistoricalContextOverflow("private-source", "latest", "fingerprint")
+
+    with SQLiteStateStore(tmp_path / "context-budget.sqlite3") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            delivery,
+        )
+        await service._publish_context_budget_alert((overflow,), now)
+        await service._publish_context_budget_alert((overflow,), now.add(hours=1))
+        await service._publish_context_budget_alert((), now.add(hours=2))
+        await service._publish_context_budget_alert((overflow,), now.add(hours=3))
+
+    assert len(publisher.messages) == 2
+    assert all("private-source" in message.body for message, _, _ in publisher.messages)
+
+
+async def test_context_budget_alert_delivery_failure_is_retried(tmp_path: Path, caplog) -> None:
+    settings = _TestSettings(timezone=pendulum.timezone("Asia/Shanghai"))
+    publisher = FailOncePublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 9, tz=settings.timezone)
+    overflow = _HistoricalContextOverflow("private-source", "latest", "fingerprint")
+
+    with SQLiteStateStore(tmp_path / "context-budget-retry.sqlite3") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            delivery,
+        )
+        with caplog.at_level(logging.ERROR):
+            await service._publish_context_budget_alert((overflow,), now)
+        await service._publish_context_budget_alert((overflow,), now.add(hours=1))
+
+    assert publisher.attempts == 2
+    assert len(publisher.messages) == 1
+    assert "Failed to publish or record context budget alert" in caplog.text
 
 
 @pytest.mark.parametrize(
