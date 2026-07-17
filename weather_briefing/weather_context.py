@@ -19,7 +19,14 @@ import pendulum
 from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_document, health_guidance
 from .allergen import allergen_guidance, allergen_to_document, pollen_type_names
 from .api_client import api_call_extensions
-from .models import AirQualitySnapshot, AllergenLevel, AllergenSnapshot, SourceDocument, WeatherContextSnapshot
+from .models import (
+    AirQualitySnapshot,
+    AirQualityTimeKind,
+    AllergenLevel,
+    AllergenSnapshot,
+    SourceDocument,
+    WeatherContextSnapshot,
+)
 from .reference_data import ReferenceDataError, reference_string, reference_string_tuple
 from .time_utils import (
     datetime_timezone_specifier,
@@ -341,7 +348,8 @@ class QWeatherProvider:
             )
             response.raise_for_status()
             payload = response.json()
-            observed_at = None
+            effective_at = None
+            time_kind = AirQualityTimeKind.OBSERVATION
             if forecast_index is not None:
                 days = payload["days"]
                 if (
@@ -351,12 +359,13 @@ class QWeatherProvider:
                 ):
                     raise ValueError("daily air-quality forecast is unavailable")
                 payload = days[forecast_index]
-                observed_at = parse_datetime_with_default_timezone(
+                effective_at = parse_datetime_with_default_timezone(
                     str(payload["forecastStartTime"]),
                     "Asia/Shanghai",
                     context="QWeather air-quality forecast start time",
                 )
-            return _qweather_air_quality_snapshot(payload, source_url, observed_at)
+                time_kind = AirQualityTimeKind.FORECAST
+            return _qweather_air_quality_snapshot(payload, source_url, effective_at, time_kind)
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             _LOGGER.warning(
                 "Weather API optional call failed provider=qweather operation=air-quality reason=%s",
@@ -536,10 +545,15 @@ class OpenMeteoProvider:
                     "Weather API optional enrichment failed provider=open-meteo operation=allergen reason=%s",
                     type(exc).__name__,
                 )
-        return self._parse_air_quality(air_quality_values, payload), allergen
+        time_kind = AirQualityTimeKind.FORECAST if forecast_date is not None else AirQualityTimeKind.OBSERVATION
+        return self._parse_air_quality(air_quality_values, payload, time_kind), allergen
 
     @staticmethod
-    def _parse_air_quality(current: dict[str, Any], payload: dict[str, Any]) -> AirQualitySnapshot | None:
+    def _parse_air_quality(
+        current: dict[str, Any],
+        payload: dict[str, Any],
+        time_kind: AirQualityTimeKind,
+    ) -> AirQualitySnapshot | None:
         try:
             aqi = round(_float_value(current["us_aqi"]))
             category, guidance = health_guidance(aqi)
@@ -547,11 +561,12 @@ class OpenMeteoProvider:
                 source_id="air-quality:open-meteo",
                 source_name="Open-Meteo",
                 source_url="https://open-meteo.com/en/docs/air-quality-api",
-                observed_at=parse_datetime_with_default_timezone(
+                effective_at=parse_datetime_with_default_timezone(
                     str(current["time"]),
                     str(payload["timezone"]),
                     context="Open-Meteo air-quality update time",
                 ),
+                time_kind=time_kind,
                 aqi=aqi,
                 aqi_display=str(aqi),
                 aqi_standard="U.S. AQI",
@@ -761,7 +776,8 @@ def _first_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
 def _qweather_air_quality_snapshot(
     payload: dict[str, Any],
     source_url: str,
-    observed_at: pendulum.DateTime | None,
+    effective_at: pendulum.DateTime | None,
+    time_kind: AirQualityTimeKind,
 ) -> AirQualitySnapshot:
     index = _first_mapping(payload, "indexes")
     pm25 = _mapping_by_code(payload, "pollutants", "pm2p5")
@@ -773,7 +789,8 @@ def _qweather_air_quality_snapshot(
         source_id="air-quality:qweather",
         source_name="QWeather",
         source_url=source_url,
-        observed_at=observed_at,
+        effective_at=effective_at,
+        time_kind=time_kind,
         aqi=aqi,
         aqi_display=str(index.get("aqiDisplay", index["aqi"])),
         aqi_standard=_aqi_standard(index),

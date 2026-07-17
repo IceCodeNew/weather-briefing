@@ -99,14 +99,22 @@ class BriefingRecord:
     published_at: pendulum.DateTime
 
 
+class AirQualityTimeKind(StrEnum):
+    """Describe whether an air-quality timestamp is observed or forecast."""
+
+    OBSERVATION = "observation"
+    FORECAST = "forecast"
+
+
 @dataclass(frozen=True, slots=True)
 class AirQualitySnapshot:
-    """Represent provider-neutral air-quality observations and guidance."""
+    """Represent provider-neutral air-quality data and guidance."""
 
     source_id: str
     source_name: str
     source_url: str
-    observed_at: pendulum.DateTime | None
+    effective_at: pendulum.DateTime | None
+    time_kind: AirQualityTimeKind
     aqi: float
     aqi_display: str
     aqi_standard: str

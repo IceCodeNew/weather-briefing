@@ -6,7 +6,12 @@ import jwt
 import pendulum
 import pytest
 
-from weather_briefing.models import AirQualitySnapshot, AllergenSnapshot, WeatherContextSnapshot
+from weather_briefing.models import (
+    AirQualitySnapshot,
+    AirQualityTimeKind,
+    AllergenSnapshot,
+    WeatherContextSnapshot,
+)
 from weather_briefing.reference_data import ReferenceDataError
 from weather_briefing.time_utils import parse_aware_datetime
 from weather_briefing.weather_context import (
@@ -223,7 +228,8 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
     assert snapshot.air_quality.source_name == "QWeather"
     assert snapshot.air_quality.source_url == "https://www.qweather.com/weather/test.html"
     assert snapshot.air_quality.aqi_standard == "中国环境空气质量指数（cn-mee）"
-    assert snapshot.air_quality.observed_at is None
+    assert snapshot.air_quality.effective_at is None
+    assert snapshot.air_quality.time_kind is AirQualityTimeKind.OBSERVATION
     documents = snapshot_to_documents(snapshot)
     assert [item.id for item in documents] == [
         "weather:qweather",
@@ -285,8 +291,9 @@ async def test_qweather_provider_selects_requested_future_date() -> None:
     assert snapshot.lifestyle_advice == ("运动指数（较适宜）：后天适宜运动",)
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.aqi == 60
-    assert snapshot.air_quality.observed_at is not None
-    assert snapshot.air_quality.observed_at.to_iso8601_string() == "2026-07-14T16:00:00Z"
+    assert snapshot.air_quality.effective_at is not None
+    assert snapshot.air_quality.effective_at.to_iso8601_string() == "2026-07-14T16:00:00Z"
+    assert snapshot.air_quality.time_kind is AirQualityTimeKind.FORECAST
 
 
 async def test_qweather_provider_keeps_lifestyle_indices_for_first_forecast_date() -> None:
@@ -554,8 +561,9 @@ async def test_open_meteo_provider_requests_only_selected_future_date() -> None:
     assert snapshot.weather_forecast[0].startswith("2026-07-15：")
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.aqi == 90
-    assert snapshot.air_quality.observed_at is not None
-    assert snapshot.air_quality.observed_at.to_iso8601_string() == "2026-07-15T18:00:00+08:00"
+    assert snapshot.air_quality.effective_at is not None
+    assert snapshot.air_quality.effective_at.to_iso8601_string() == "2026-07-15T18:00:00+08:00"
+    assert snapshot.air_quality.time_kind is AirQualityTimeKind.FORECAST
     assert snapshot.allergen is not None
     assert all(level.concentration == 2.0 for level in snapshot.allergen.levels)
     assert snapshot.allergen.observed_at is None
@@ -853,7 +861,8 @@ async def test_aqicn_receives_explicit_offset_when_weather_time_has_no_timezone_
         source_id="air-quality:aqicn",
         source_name="AQICN",
         source_url="https://example.invalid/air",
-        observed_at=None,
+        effective_at=None,
+        time_kind=AirQualityTimeKind.OBSERVATION,
         aqi=42,
         aqi_display="42",
         aqi_standard="US EPA",
@@ -1096,7 +1105,8 @@ async def test_supplement_when_air_quality_present_skips_fallback() -> None:
         source_id="air-quality:test",
         source_name="Test",
         source_url="https://example.invalid",
-        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        effective_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+        time_kind=AirQualityTimeKind.OBSERVATION,
         aqi=42,
         aqi_display="42",
         aqi_standard="US EPA",
