@@ -324,6 +324,8 @@ class Settings:
     rss_failure_threshold: int
     warning_retention_hours: int
     history_hours: int
+    llm_history_max_documents: int
+    llm_history_max_characters: int
     briefing_max_characters: int
     greeting_hour: int
     greeting_minute: int
@@ -447,6 +449,13 @@ class Settings:
             rss_failure_threshold=_positive_integer("RSS_FAILURE_THRESHOLD", 3),
             warning_retention_hours=_positive_integer("WARNING_RETENTION_HOURS", 12),
             history_hours=_positive_integer("HISTORY_HOURS", 48),
+            llm_history_max_documents=_bounded_positive_integer("LLM_HISTORY_MAX_DOCUMENTS", 8, 256),
+            llm_history_max_characters=_bounded_integer(
+                "LLM_HISTORY_MAX_CHARACTERS",
+                16_000,
+                2,
+                1_000_000,
+            ),
             briefing_max_characters=briefing_max_characters,
             greeting_hour=daily_cron_hour,
             greeting_minute=daily_cron_minute,
