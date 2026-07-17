@@ -4,10 +4,15 @@ permissions: {}
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version number (X.Y.Z)"
+      bump:
+        description: "Version component to release"
         required: true
-        type: string
+        default: patch
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
 
 jobs:
   release:
@@ -24,34 +29,44 @@ jobs:
         with:
           version: "0.11.28"
           enable-cache: true
-      - name: Validate version
-        env:
-          WEATHER_BRIEFING_VERSION: ${{ github.event.inputs.version }}
-        run: |
-          if ! echo "${WEATHER_BRIEFING_VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Error: version must be in X.Y.Z format"
-            exit 1
-          fi
       - name: Create release and next development commits
         env:
-          WEATHER_BRIEFING_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_BUMP: ${{ inputs.bump }}
           RELEASE_GH_PAT: ${{ secrets.RELEASE_GH_PAT }}
         run: |
           set -euo pipefail
+
+          VERSIONS=$(python3 -c "
+          import os, pathlib, tomllib
+
+          bump = os.environ['RELEASE_BUMP']
+          current = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version']
+          base = current.removesuffix('-dev')
+          is_development = base != current
+          major, minor, patch = map(int, base.split('.'))
+
+          if bump == 'major':
+              release = (major + 1, 0, 0)
+          elif bump == 'minor':
+              release = (major, minor + 1, 0)
+          elif bump == 'patch':
+              release = (major, minor, patch if is_development else patch + 1)
+          else:
+              raise ValueError(f'unsupported version component: {bump}')
+
+          release_version = '.'.join(map(str, release))
+          next_development_version = f'{release[0]}.{release[1]}.{release[2] + 1}-dev'
+          print(release_version, next_development_version)
+          ")
+          read -r WEATHER_BRIEFING_VERSION NEXT_DEVELOPMENT_VERSION <<< "${VERSIONS}"
 
           if git rev-parse "refs/tags/${WEATHER_BRIEFING_VERSION}" >/dev/null 2>&1; then
             echo "Refusing to reuse existing release tag ${WEATHER_BRIEFING_VERSION}"
             exit 1
           fi
 
-          NEXT_DEVELOPMENT_VERSION=$(python3 -c "
-          version = '${WEATHER_BRIEFING_VERSION}'
-          major, minor, patch = version.split('.')
-          print(f'{major}.{minor}.{int(patch) + 1}-dev')
-          ")
-
           python3 -c "
-          import tomllib, pathlib
+          import pathlib, re, tomllib
 
           version = '${WEATHER_BRIEFING_VERSION}'
 
@@ -73,12 +88,12 @@ jobs:
           init_path.write_text(init_content.replace(version_assignment, f'__version__ = \"{version}\"', 1))
 
           readme_path = pathlib.Path('README.md')
-          readme_version = f'WEATHER_BRIEFING_VERSION=\"{prev}\"'
           readme_content = readme_path.read_text()
-          if readme_version not in readme_content:
-              raise RuntimeError(f'README.md does not contain {readme_version}')
+          readme_version = re.compile(r'WEATHER_BRIEFING_VERSION=\"[0-9]+\.[0-9]+\.[0-9]+\"')
+          if len(readme_version.findall(readme_content)) != 1:
+              raise RuntimeError('README.md must contain exactly one stable deployment version')
           readme_path.write_text(
-              readme_content.replace(readme_version, f'WEATHER_BRIEFING_VERSION=\"{version}\"', 1)
+              readme_version.sub(f'WEATHER_BRIEFING_VERSION=\"{version}\"', readme_content, count=1)
           )
           "
 
