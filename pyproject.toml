@@ -28,7 +28,6 @@ docker = [
 dev = [
   "any-llm-sdk[all]>=1.19,<2",
   "anyio>=4.11,<5",
-  "interrogate>=1.7,<2",
   "pytest>=9,<10",
   "pytest-cov>=7,<8",
   "ruff>=0.5,<1",
@@ -79,11 +78,3 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
-
-[tool.interrogate]
-style = "google"
-ignore-semiprivate = true
-ignore-private = true
-ignore-nested-functions = true
-fail-under = 100
-exclude = ["tests", "docs", "build", "dist", ".venv"]
