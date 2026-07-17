@@ -59,4 +59,4 @@
 
 ## 运行环境
 
-目标为自有服务器。应用支持 Python 3.11–3.14，以当前最新稳定 Python 作为首选开发和测试版本，并在 CI 中覆盖全部受支持版本；项目元数据不设置未经验证的未来 Python 版本上限。项目使用 uv 原生 `uv_build` 构建后端并提交 `uv.lock`，不引入 PDM 工具链。Distroless Debian 13 镜像使用其系统 Python。应用以内置调度器常驻运行，SQLite 位于外部持久目录或卷中。项目维护单一、非 root、由 `uv.lock` 锁定依赖的 OCI 镜像，不使用 Docker Compose；GitHub Actions 仅用于 CI 和独立镜像发布，不预设生产运行 secrets。
+目标为自有服务器。应用支持 Python 3.11–3.14，以当前最新稳定 Python 作为首选开发和测试版本，并在 CI 中覆盖全部受支持版本；项目元数据不设置未经验证的未来 Python 版本上限。项目使用 uv 原生 `uv_build` 构建后端并提交 `uv.lock`，不引入 PDM 工具链。Distroless Debian 13 镜像使用其系统 Python。应用以内置调度器常驻运行，SQLite 位于外部持久目录或卷中。项目维护单一、非 root、由 `uv.lock` 锁定依赖的 OCI 镜像，不使用 Docker Compose；GitHub Actions 仅用于 CI 和独立镜像发布，不预设生产运行 secrets。每次 `X.Y.Z` Git tag 构建更新同名 OCI 标签、`latest` 和 commit SHA 标签；`master` 构建更新 `edge` 和 commit SHA 标签，不修改 `latest` 或版本标签。

@@ -11,6 +11,7 @@ on:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -51,9 +52,6 @@ jobs:
           init_path = pathlib.Path('weather_briefing/__init__.py')
           init_path.write_text(init_path.read_text().replace(f'__version__ = \"{prev}\"', f'__version__ = \"{version}\"'))
 
-          image_path = pathlib.Path('.github/workflows/image.yml')
-          image_path.write_text(image_path.read_text().replace(f'WEATHER_BRIEFING_VERSION: \"{prev}\"', f'WEATHER_BRIEFING_VERSION: \"{version}\"'))
-
           readme_path = pathlib.Path('README.md')
           readme_version = f'WEATHER_BRIEFING_VERSION=\"{prev}\"'
           readme_content = readme_path.read_text()
@@ -70,7 +68,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${RELEASE_GH_PAT}@github.com/${GITHUB_REPOSITORY}.git"
 
-          git add pyproject.toml weather_briefing/__init__.py .github/workflows/image.yml README.md uv.lock
+          git add pyproject.toml weather_briefing/__init__.py README.md uv.lock
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
@@ -78,10 +76,9 @@ jobs:
           fi
 
           if git rev-parse "refs/tags/${WEATHER_BRIEFING_VERSION}" >/dev/null 2>&1; then
-            echo "Tag ${WEATHER_BRIEFING_VERSION} already exists, skipping"
-          else
-            git tag -a "${WEATHER_BRIEFING_VERSION}" -m "Release ${WEATHER_BRIEFING_VERSION}"
-            git push origin "${WEATHER_BRIEFING_VERSION}"
+            echo "Refusing to reuse existing release tag ${WEATHER_BRIEFING_VERSION}"
+            exit 1
           fi
 
-          git push origin HEAD:master
+          git tag -a "${WEATHER_BRIEFING_VERSION}" -m "Release ${WEATHER_BRIEFING_VERSION}"
+          git push --atomic origin HEAD:master "refs/tags/${WEATHER_BRIEFING_VERSION}"

@@ -5,18 +5,21 @@ on:
   push:
     branches:
       - "master"
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
     paths:
       - ".github/workflows/image.yml"
       - "weather_briefing/**"
       - "Dockerfile"
       - "pyproject.toml"
       - "uv.lock"
-  workflow_dispatch:
-  merge_group:
+
+concurrency:
+  group: weather-briefing-image-${{ github.ref_type == 'branch' && 'edge' || format('release-{0}', github.ref_name) }}
+  cancel-in-progress: true
 
 env:
   WEATHER_BRIEFING_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/weather-briefing
-  WEATHER_BRIEFING_VERSION: "1.0.0"
 
 jobs:
   weather-briefing:
@@ -95,20 +98,41 @@ jobs:
       - name: Create manifest list and push
         working-directory: /tmp/weather-briefing-digests/
         env:
+          COMMIT_TAG: sha-${{ github.sha }}
           REGISTRY_IMAGE: ${{ env.WEATHER_BRIEFING_IMAGE }}
-          WEATHER_BRIEFING_VERSION: ${{ env.WEATHER_BRIEFING_VERSION }}
+          RELEASE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          # shellcheck disable=SC2046
-          docker buildx imagetools create --tag "${REGISTRY_IMAGE}:latest" --tag "${REGISTRY_IMAGE}:${WEATHER_BRIEFING_VERSION}" \
-              $(printf "${REGISTRY_IMAGE}@sha256:%s " *)
+          set -euo pipefail
+          shopt -s nullglob
+          digest_files=(*)
+          if (( ${#digest_files[@]} == 0 )); then
+            echo "No platform digest artifacts were downloaded"
+            exit 1
+          fi
+          sources=()
+          for digest_file in "${digest_files[@]}"; do
+            if ! [[ "${digest_file}" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "Unexpected digest artifact filename: ${digest_file}"
+              exit 1
+            fi
+            sources+=("${REGISTRY_IMAGE}@sha256:${digest_file}")
+          done
+
+          tags=(--tag "${REGISTRY_IMAGE}:${COMMIT_TAG}")
+          if [[ -n "${RELEASE_VERSION}" ]]; then
+            tags+=(--tag "${REGISTRY_IMAGE}:${RELEASE_VERSION}" --tag "${REGISTRY_IMAGE}:latest")
+          else
+            tags+=(--tag "${REGISTRY_IMAGE}:edge")
+          fi
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
       - name: Inspect image
         env:
-          REGISTRY_IMAGE: ${{ env.WEATHER_BRIEFING_IMAGE }}:latest
+          REGISTRY_IMAGE: ${{ env.WEATHER_BRIEFING_IMAGE }}:sha-${{ github.sha }}
         run: |
           docker buildx imagetools inspect "${REGISTRY_IMAGE}" \
               | grep -Po '[^ \r\n\t\v]+@sha256:[a-z0-9]+' | xargs -r -t -n 1 docker buildx imagetools inspect --raw
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: "${{ env.WEATHER_BRIEFING_IMAGE }}:latest"
+          image-ref: "${{ env.WEATHER_BRIEFING_IMAGE }}:sha-${{ github.sha }}"
           format: "table"

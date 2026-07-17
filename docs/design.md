@@ -149,3 +149,5 @@ Docker `run --env-file` 接受的是 `KEY=value` 列表，不按 shell 语义解
 ## 镜像与构建上下文
 
 项目使用 uv 原生 `uv_build` 构建后端。Dockerfile 使用多阶段构建：先从官方 Distroless uv 镜像取得 uv/uvx，再复制到 Debian 13 Distroless Python nonroot 镜像，并直接以该镜像按 `uv.lock` 创建生产虚拟环境；最终阶段基于 digest 固定的 `gcr.io/distroless/python3-debian13`，从独立 assets 镜像加入 Bash 与 Toybox，并只复制运行环境和应用。builder 与 runtime 使用相同 Debian 版本及系统 Python，并通过镜像探针验证；最终进程以无特权用户运行。`.dockerignore` 不继承 `.gitignore`，因此使用独立白名单，只让 Dockerfile 实际需要的项目元数据、锁文件和包源码进入 BuildKit 上下文；`.env`、Git 历史、测试和文档不会发送给 builder。
+
+镜像工作流实现 [requirements.md](requirements.md#运行环境) 定义的标签通道，并用一次 manifest 创建命令同时更新当前事件对应的全部标签。
