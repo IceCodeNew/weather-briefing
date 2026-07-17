@@ -15,7 +15,7 @@ on:
       - "uv.lock"
 
 concurrency:
-  group: weather-briefing-image
+  group: weather-briefing-image-${{ github.workflow }}
   cancel-in-progress: false
 
 env:
