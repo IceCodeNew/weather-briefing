@@ -21,6 +21,11 @@ from .reference_data import ReferenceDataError, reference_string_tuple, referenc
 class GeocodingError(RuntimeError):
     """Raised when a configured place cannot be resolved safely."""
 
+    def __init__(self, message: str, *, cause_type: type[Exception] | None = None) -> None:
+        """Retain a safe exception class without preserving sensitive error text."""
+        super().__init__(message)
+        self.cause_type = cause_type
+
 
 class GeocodingProvider(Protocol):
     """Resolve a named location to coordinates and geographic metadata."""
@@ -103,7 +108,7 @@ class OpenMeteoGeocodingProvider:
             payload = response.json()
             results = payload.get("results", [])
             if not isinstance(results, list) or not results:
-                raise GeocodingError(f"No geocoding result for location: {location_name}")
+                raise GeocodingError(f"Open-Meteo geocoding returned no results for location: {location.id}")
             result = next(
                 (
                     item
@@ -113,7 +118,7 @@ class OpenMeteoGeocodingProvider:
                 None,
             )
             if result is None:
-                raise GeocodingError(f"No matching geocoding result for location: {location_name}")
+                raise GeocodingError(f"Open-Meteo geocoding returned no matching result for location: {location.id}")
             latitude = float(result["latitude"])
             longitude = float(result["longitude"])
             country_code = str(result.get("country_code", "")).upper() or None
@@ -122,7 +127,10 @@ class OpenMeteoGeocodingProvider:
         except GeocodingError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise GeocodingError(f"Geocoding request or response validation failed for: {location_name}") from exc
+            raise GeocodingError(
+                f"Open-Meteo geocoding failed for location: {location.id} ({type(exc).__name__})",
+                cause_type=type(exc),
+            ) from None
         return ResolvedLocation(
             id=location.id,
             name=location_name,
@@ -192,9 +200,12 @@ class NominatimGeocodingProvider:
                     if result is not None:
                         break
                 except httpx.HTTPError as exc:
-                    raise GeocodingError(f"Nominatim request failed for: {location_name}") from exc
+                    raise GeocodingError(
+                        f"Nominatim geocoding request failed for location: {location.id} ({type(exc).__name__})",
+                        cause_type=type(exc),
+                    ) from None
             if result is None:
-                raise GeocodingError(f"No Nominatim result for location: {location_name}")
+                raise GeocodingError(f"Nominatim geocoding returned no result for location: {location.id}")
             try:
                 address = result.get("address", {})
                 latitude = float(result["lat"])
@@ -202,7 +213,11 @@ class NominatimGeocodingProvider:
                 country_code = str(address.get("country_code", "")).upper() or None
                 administrative_area = str(address.get("state") or address.get("province") or "").strip() or None
             except (KeyError, TypeError, ValueError, AttributeError) as exc:
-                raise GeocodingError(f"Nominatim response validation failed for: {location_name}") from exc
+                raise GeocodingError(
+                    "Nominatim geocoding response validation failed "
+                    f"for location: {location.id} ({type(exc).__name__})",
+                    cause_type=type(exc),
+                ) from None
         return ResolvedLocation(
             id=location.id,
             name=location_name,
@@ -251,7 +266,10 @@ class NominatimGeocodingProvider:
                     str(address.get("state") or address.get("province") or address.get("region") or "").strip() or None
                 )
             except (httpx.HTTPError, TypeError, ValueError, AttributeError) as exc:
-                raise GeocodingError(f"Nominatim reverse geocoding failed for location: {location.id}") from exc
+                raise GeocodingError(
+                    f"Nominatim reverse geocoding failed for location: {location.id} ({type(exc).__name__})",
+                    cause_type=type(exc),
+                ) from None
         return ResolvedLocation(
             id=location.id,
             name=display_name,
@@ -276,14 +294,19 @@ class FallbackGeocodingProvider:
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
         """Resolve a location with the first successful provider."""
-        location_name = _required_location_name(location)
+        _required_location_name(location)
         errors: list[GeocodingError] = []
         for provider in self._providers:
             try:
                 return await provider.geocode(location)
             except GeocodingError as exc:
                 errors.append(exc)
-        raise GeocodingError(f"No geocoder could resolve location: {location_name}") from errors[-1]
+        last_cause_type = errors[-1].cause_type
+        detail = f" ({last_cause_type.__name__})" if last_cause_type is not None else ""
+        raise GeocodingError(
+            f"No geocoder could resolve location: {location.id}{detail}",
+            cause_type=last_cause_type,
+        ) from None
 
 
 class PrecisionReducingGeocodingProvider:
@@ -312,7 +335,11 @@ class PrecisionReducingGeocodingProvider:
                 name=location_name,
                 precision_reduced=True,
             )
-        raise GeocodingError(f"No geocoder could resolve location at a safe precision: {location_name}") from last_error
+        detail = f" ({last_error.cause_type.__name__})" if last_error.cause_type is not None else ""
+        raise GeocodingError(
+            f"No geocoder could resolve location at a safe precision: {location.id}{detail}",
+            cause_type=last_error.cause_type,
+        ) from None
 
 
 class CachedLocationResolver:
@@ -361,9 +388,12 @@ class CachedLocationResolver:
             try:
                 return LocationResolution(ResolvedLocation(**cached), from_cache=True)
             except TypeError as exc:
-                raise GeocodingError(f"Invalid cached geocoding record for location: {location_name}") from exc
+                raise GeocodingError(
+                    f"Invalid cached geocoding record for location: {location.id} ({type(exc).__name__})",
+                    cause_type=type(exc),
+                ) from None
         if cached is not None:
-            raise GeocodingError(f"Invalid cached geocoding record for location: {location_name}")
+            raise GeocodingError(f"Invalid cached geocoding record for location: {location.id}")
         resolved = await self._provider.geocode(location)
         cache[cache_key] = asdict(resolved)
         self._write_cache(cache)
@@ -384,7 +414,10 @@ class CachedLocationResolver:
             try:
                 return LocationResolution(ResolvedLocation(**cached), from_cache=True)
             except TypeError as exc:
-                raise GeocodingError(f"Invalid cached reverse geocoding record for location: {location.id}") from exc
+                raise GeocodingError(
+                    f"Invalid cached reverse geocoding record for location: {location.id} ({type(exc).__name__})",
+                    cause_type=type(exc),
+                ) from None
         if cached is not None:
             raise GeocodingError(f"Invalid cached reverse geocoding record for location: {location.id}")
         resolved = await self._reverse_provider.reverse_geocode(location)

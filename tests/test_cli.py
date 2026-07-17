@@ -661,7 +661,8 @@ async def test_run_skips_and_logs_when_enforce_window_outside_schedule(monkeypat
         logging.root.setLevel(original_root_level)
 
 
-async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("debug", (False, True))
+async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatch, capsys, debug: bool) -> None:
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -671,7 +672,7 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
     now = pendulum.datetime(2026, 7, 14, 8, tz=tz)
     location = ResolvedLocation("test", "Test City", 39.9, 116.3, "CN", "Beijing", tz.name, True)
     settings = _make_fake_settings(
-        debug=False,
+        debug=debug,
         publisher="stdout",
         locations=(LocationSpec(id="test", name="Test City"),),
     )
@@ -727,7 +728,8 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
         assert "Starting briefing run" in stderr
         assert "Runtime diagnostics unavailable; continuing without sensitive rendered text logging" in stderr
         assert "Resolving 1 location(s)" in stderr
-        assert "Processing location test (Test City)" in stderr
+        assert "Processing location test" in stderr
+        assert ("Location test display name: Test City" in stderr) is debug
         assert "briefing published (14 characters)" in stderr
     finally:
         _LOGGER.handlers.clear()

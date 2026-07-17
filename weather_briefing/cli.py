@@ -253,7 +253,8 @@ async def run(
                 )
         locations = tuple(resolution.location for resolution in resolutions)
         for location in locations:
-            _LOGGER.info("Processing location %s (%s)", location.id, location.name)
+            _LOGGER.info("Processing location %s", location.id)
+            _LOGGER.debug("Location %s display name: %s", location.id, location.name)
             with SQLiteStateStore(_location_state_path(settings.state_path, location, len(locations))) as state:
                 briefing_sent_today = _briefing_sent_today(kind, now, settings, state, run_now=run_now)
                 force_publish, silent = _briefing_delivery_policy(

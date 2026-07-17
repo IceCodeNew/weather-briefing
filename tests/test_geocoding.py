@@ -1,3 +1,4 @@
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -493,6 +494,18 @@ async def test_fallback_geocoding_raises_when_all_providers_fail() -> None:
         await FallbackGeocodingProvider(FailingProvider()).geocode(LocationSpec("test", "Test"))
 
 
+async def test_fallback_geocoding_preserves_only_safe_cause_type() -> None:
+    class FailingProvider:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            raise GeocodingError("failure for Private Home Address", cause_type=httpx.ConnectError)
+
+    with pytest.raises(GeocodingError) as caught:
+        await FallbackGeocodingProvider(FailingProvider()).geocode(LocationSpec("home", "Private Home Address"))
+
+    assert str(caught.value) == "No geocoder could resolve location: home (ConnectError)"
+    assert caught.value.cause_type is httpx.ConnectError
+
+
 async def test_cached_resolver_handles_broken_cache_file(tmp_path: Path) -> None:
     cache_path = tmp_path / "geocoding.json"
     cache_path.write_text("not-json", encoding="utf-8")
@@ -574,7 +587,7 @@ async def test_open_meteo_handles_empty_results() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": []}))
     ) as client:
-        with pytest.raises(GeocodingError, match="No geocoding result"):
+        with pytest.raises(GeocodingError, match="returned no results"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
 
 
@@ -582,7 +595,7 @@ async def test_open_meteo_handles_results_not_a_list() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": "not-a-list"}))
     ) as client:
-        with pytest.raises(GeocodingError, match="No geocoding result"):
+        with pytest.raises(GeocodingError, match="returned no results"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
 
 
@@ -604,13 +617,13 @@ async def test_open_meteo_handles_no_matching_result() -> None:
             )
         )
     ) as client:
-        with pytest.raises(GeocodingError, match="No matching geocoding result"):
+        with pytest.raises(GeocodingError, match="returned no matching result"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test City"))
 
 
 async def test_open_meteo_handles_http_error() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
-        with pytest.raises(GeocodingError, match="Geocoding request or response validation failed"):
+        with pytest.raises(GeocodingError, match="Open-Meteo geocoding failed"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
 
 
@@ -657,14 +670,30 @@ async def test_nominatim_handles_results_not_a_list() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json="not-a-list"))
     ) as client:
-        with pytest.raises(GeocodingError, match="No Nominatim result"):
+        with pytest.raises(GeocodingError, match="returned no result"):
             await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
 
 
 async def test_nominatim_handles_http_error() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
-        with pytest.raises(GeocodingError, match="Nominatim request failed"):
+        with pytest.raises(GeocodingError, match="geocoding request failed"):
             await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
+
+
+async def test_forward_geocoding_failure_traceback_omits_private_location_name() -> None:
+    private_name = "Private Home Address"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"connection failed for {private_name}", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(GeocodingError) as caught:
+            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("home", private_name))
+
+    rendered_traceback = "".join(traceback.format_exception(caught.value))
+    assert private_name not in rendered_traceback
+    assert "location: home" in rendered_traceback
+    assert "ConnectError" in rendered_traceback
 
 
 async def test_nominatim_handles_no_matching_results() -> None:
@@ -683,7 +712,7 @@ async def test_nominatim_handles_no_matching_results() -> None:
             )
         )
     ) as client:
-        with pytest.raises(GeocodingError, match="No Nominatim result"):
+        with pytest.raises(GeocodingError, match="returned no result"):
             await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
 
 
@@ -741,6 +770,20 @@ async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
         )
 
     assert calls == ["中国北京市西城区中南海1号", "中国北京市西城区中南海"]
+
+
+async def test_precision_reducing_provider_preserves_only_safe_cause_type() -> None:
+    class FailingGeocoder:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            raise GeocodingError("failure for Private Home Address", cause_type=httpx.ConnectError)
+
+    with pytest.raises(GeocodingError) as caught:
+        await PrecisionReducingGeocodingProvider(FailingGeocoder()).geocode(
+            LocationSpec("home", "Private Home Address")
+        )
+
+    assert str(caught.value) == "No geocoder could resolve location at a safe precision: home (ConnectError)"
+    assert caught.value.cause_type is httpx.ConnectError
 
 
 async def test_precision_reducing_provider_continues_after_geocoding_error() -> None:
