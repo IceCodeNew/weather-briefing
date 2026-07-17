@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
+from inspect import isawaitable
 from typing import Annotated, Any, Literal, Protocol, TypeAlias
 
-import httpx
 import pendulum
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError
-from any_llm.providers.openai.base import BaseOpenAIProvider
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from .api_client import api_call_context
@@ -22,7 +21,11 @@ _LOGGER = logging.getLogger("weather_briefing.llm")
 
 
 class LLMError(RuntimeError):
-    """Raised when the model response is unavailable or violates its contract."""
+    """Raised when the model output violates its contract."""
+
+
+class LLMRequestError(LLMError):
+    """Raised when an LLM request fails independently of the output contract."""
 
 
 class LLMProvider(Protocol):
@@ -121,16 +124,16 @@ def _decode_structured_response(response: object) -> LLMStructuredOutput:
     """Decode the normalized any-llm response without masking programming errors."""
     choices = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:
-        raise LLMError("LLM returned no completion choices")
+        raise LLMRequestError("LLM returned no completion choices")
     message = getattr(choices[0], "message", None)
     if message is None:
-        raise LLMError("LLM completion choice is missing a message")
+        raise LLMRequestError("LLM completion choice is missing a message")
     parsed = getattr(message, "parsed", None)
     if isinstance(parsed, LLMStructuredOutput):
         return parsed
     content = getattr(message, "content", None)
-    if not isinstance(content, str) or not content:
-        raise LLMError("LLM returned empty JSON content")
+    if not isinstance(content, str) or not content.strip():
+        raise LLMRequestError("LLM returned empty JSON content")
     try:
         return LLMStructuredOutput.model_validate_json(content)
     except ValidationError as exc:
@@ -149,6 +152,7 @@ class AnyLLMStructuredProvider:
         model: str,
         max_output_tokens: int,
         diagnostics: SensitiveLLMDiagnostics | None = None,
+        owns_client: bool = False,
     ) -> None:
         """Configure a reusable any-llm client and output limit."""
         self._client = client
@@ -156,6 +160,7 @@ class AnyLLMStructuredProvider:
         self._model = model
         self._max_output_tokens = max_output_tokens
         self._diagnostics = diagnostics
+        self._owns_client = owns_client
 
     @property
     def provider(self) -> str:
@@ -186,7 +191,7 @@ class AnyLLMStructuredProvider:
                     max_tokens=self._max_output_tokens,
                 )
         except AnyLLMError as exc:
-            raise LLMError("LLM request failed") from exc
+            raise LLMRequestError("LLM request failed") from exc
         result = _decode_structured_response(response)
         result_payload = result.model_dump(mode="json")
         if log_sensitive:
@@ -197,6 +202,47 @@ class AnyLLMStructuredProvider:
                 result_payload,
             )
         return result_payload
+
+    async def aclose(self) -> None:
+        """Close transports owned by an any-llm client created by this adapter."""
+        if not self._owns_client:
+            return
+        if await _close_llm_resource(self._client):
+            return
+        client_attributes = getattr(self._client, "__dict__", None)
+        if not isinstance(client_attributes, dict):
+            _LOGGER.debug(
+                "LLM SDK resource has no discoverable nested resources type=%s",
+                type(self._client).__name__,
+            )
+            return
+        seen = {id(self._client)}
+        for resource in client_attributes.values():
+            if id(resource) in seen:
+                continue
+            seen.add(id(resource))
+            await _close_llm_resource(resource)
+
+
+async def _close_llm_resource(resource: object) -> bool:
+    """Close one SDK resource without replacing a task failure during cleanup."""
+    close = getattr(resource, "aclose", None)
+    if not callable(close):
+        close = getattr(resource, "close", None)
+    if not callable(close):
+        return False
+    try:
+        result = close()
+        if isawaitable(result):
+            await result
+    except Exception as exc:
+        _LOGGER.warning(
+            "Failed to close LLM SDK resource type=%s error_type=%s",
+            type(resource).__name__,
+            type(exc).__name__,
+        )
+        return False
+    return True
 
 
 def _sensitive_llm_diagnostics_enabled(diagnostics: SensitiveLLMDiagnostics | None) -> bool:
@@ -214,7 +260,6 @@ def create_any_llm_provider(
     provider: str,
     model: str,
     max_output_tokens: int,
-    http_client: httpx.AsyncClient,
     *,
     api_key: str | None = None,
     api_base: str | None = None,
@@ -224,16 +269,14 @@ def create_any_llm_provider(
     provider_class = AnyLLM.get_provider_class(provider)
     if not provider_class.SUPPORTS_COMPLETION:
         raise ValueError(f"any-llm provider does not support completion: {provider}")
-    client_options: dict[str, object] = {}
-    if issubclass(provider_class, BaseOpenAIProvider):
-        client_options.update(http_client=http_client, max_retries=0)
-    sdk_client = AnyLLM.create(provider, api_key=api_key, api_base=api_base, **client_options)
+    sdk_client = AnyLLM.create(provider, api_key=api_key, api_base=api_base)
     return AnyLLMStructuredProvider(
         sdk_client,
         provider=provider,
         model=model,
         max_output_tokens=max_output_tokens,
         diagnostics=diagnostics,
+        owns_client=True,
     )
 
 

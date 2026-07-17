@@ -47,6 +47,7 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert [feed.id for feed in settings.feeds] == ["authority-weather"]
     assert settings.llm_provider == "deepseek"
     assert settings.llm_base_url is None
+    assert settings.llm_max_attempts == 3
     assert settings.qweather_index_types == ("1", "3", "6", "7", "8", "15")
     assert settings.qweather_jwt_lifetime_seconds == 900
     assert settings.llm_history_max_documents == 8

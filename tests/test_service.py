@@ -9,7 +9,7 @@ from typing import TypeGuard
 import pendulum
 import pytest
 
-from weather_briefing.llm import LLMError
+from weather_briefing.llm import LLMError, LLMRequestError
 from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
@@ -1526,7 +1526,7 @@ class FailingOnceLLM:
         self.attempts += 1
         if self.attempts == 1:
             if self._fail_before_response:
-                raise LLMError("request failed before a response was available")
+                raise LLMError("contract validation failed before a response was available")
             invalid_result = {
                 "headline": "Briefing",
                 "headline_source_ids": ["invented"],
@@ -1602,6 +1602,58 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_respo
 
     assert body is not None
     assert llm.attempts == 2
+
+
+async def test_llm_request_failure_does_not_enter_contract_repair(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+    article = Article(
+        id="article-id",
+        source_id="feed",
+        source_name="Feed",
+        title="Article",
+        url="https://example.invalid/a",
+        published_at=now,
+        content="content",
+    )
+    settings = _TestSettings(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        context_sources=(),
+        rss_stale_hours=24,
+        rss_failure_threshold=3,
+        warning_retention_hours=12,
+        history_hours=48,
+        briefing_max_characters=3500,
+        llm_max_attempts=3,
+    )
+
+    class RequestFailingLLM:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            self.attempts += 1
+            raise LLMRequestError("request failed")
+
+    llm = RequestFailingLLM()
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+
+    with SQLiteStateStore(tmp_path / "request-failure.sqlite3") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            StaticRSSSource(article),
+            EmptyContextSource(),
+            llm,
+            delivery,
+            delivery,
+        )
+        with pytest.raises(LLMRequestError, match="request failed"):
+            await service.run("briefing", now)
+
+    assert llm.attempts == 1
 
 
 async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) -> None:

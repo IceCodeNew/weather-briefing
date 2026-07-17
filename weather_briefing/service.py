@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 
 import pendulum
 
-from .llm import LLMError, LLMProvider, parse_result
+from .llm import LLMError, LLMProvider, LLMRequestError, parse_result
 from .models import (
     AdviceTopic,
     Article,
@@ -535,6 +535,8 @@ class BriefingService:
                     "LLM summarization successful on attempt %d/%d", attempt + 1, self._settings.llm_max_attempts
                 )
                 return result
+            except LLMRequestError:
+                raise
             except LLMError as exc:
                 last_error = exc
                 _LOGGER.debug(

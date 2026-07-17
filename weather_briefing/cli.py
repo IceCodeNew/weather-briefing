@@ -33,10 +33,7 @@ from .geocoding import (
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
 )
-from .llm import (
-    LLMProvider,
-    create_any_llm_provider,
-)
+from .llm import AnyLLMStructuredProvider, create_any_llm_provider
 from .models import ResolvedLocation
 from .publishers import DeliveryProvider, RenderedTextDiagnostics, StdoutPublisher, TelegramPublisher
 from .registries import PublisherName, WeatherProviderName
@@ -226,7 +223,8 @@ async def run(
             LoggedAsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
         )
         delivery = _delivery_provider(settings, client, diagnostics)
-        llm_provider = _llm_provider(settings, client, diagnostics)
+        llm_provider = _llm_provider(settings, diagnostics)
+        stack.push_async_callback(llm_provider.aclose)
         nominatim_provider = NominatimGeocodingProvider(
             client,
             base_url=settings.nominatim_base_url,
@@ -299,14 +297,12 @@ async def run(
 
 def _llm_provider(
     settings: Settings,
-    client: httpx.AsyncClient,
     diagnostics: RenderedTextDiagnostics | None = None,
-) -> LLMProvider:
+) -> AnyLLMStructuredProvider:
     return create_any_llm_provider(
         settings.llm_provider,
         settings.llm_model,
         settings.llm_max_output_tokens,
-        client,
         api_key=settings.api_key,
         api_base=settings.llm_base_url,
         diagnostics=diagnostics,
