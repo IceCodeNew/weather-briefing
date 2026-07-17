@@ -111,15 +111,27 @@ def _display_version() -> str:
     if not __version__.endswith("-dev"):
         return __version__
 
+    repository_root = Path(__file__).resolve().parents[1]
     try:
-        revision = subprocess.run(
-            ("git", "rev-parse", "--short=7", "HEAD"),
+        git_metadata = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repository_root),
+                "rev-parse",
+                "--show-toplevel",
+                "--short=7",
+                "HEAD",
+            ),
             check=True,
             capture_output=True,
             text=True,
-        ).stdout.strip()
+        ).stdout.splitlines()
+        if len(git_metadata) != 2 or Path(git_metadata[0]).resolve() != repository_root:
+            return __version__
+        revision = git_metadata[1]
         status = subprocess.run(
-            ("git", "status", "--porcelain"),
+            ("git", "-C", str(repository_root), "status", "--porcelain"),
             check=True,
             capture_output=True,
             text=True,

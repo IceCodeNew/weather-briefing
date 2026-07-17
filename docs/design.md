@@ -157,3 +157,5 @@ Docker `run --env-file` 接受的是 `KEY=value` 列表，不按 shell 语义解
 release workflow 的手动输入是 GitHub Actions `choice`，只允许 major、minor 或 patch 三选一。工作流从 `pyproject.toml` 读取当前版本，在正式版上递增选中的组件；当前版本为 `-dev` 且选择 patch 时，去掉后缀后直接发布已声明的目标版本。major 始终把 minor、patch 归零，minor 始终把 patch 归零。
 
 工作流先同步 `pyproject.toml`、包内版本、`uv.lock` 和 README 的稳定部署版本，生成正式版 commit 并让同名 tag 指向该 commit；再只把代码与锁文件推进到下一 patch 的 `-dev` commit。最后 atomic push `master` 与 tag，使远端不会只接收其中一部分。
+
+开发版 `--version` 以包源码位置的父目录作为预期仓库根，并要求 Git `--show-toplevel` 返回同一目录后才附加 commit SHA 和 dirty 状态。因此从其他 Git 仓库启动 CLI，或把普通安装放在其他仓库的虚拟环境中，都不会误报外部仓库信息。

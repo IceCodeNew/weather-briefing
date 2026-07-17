@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import httpx
 import pendulum
@@ -295,16 +295,56 @@ def test_development_version_does_not_probe_git_for_other_commands(monkeypatch) 
 
 @pytest.mark.parametrize(("status", "expected"), (("", "1.1.1-g1234567"), (" M file.py\n", "1.1.1-dirty-g1234567")))
 def test_development_version_includes_git_revision(monkeypatch, capsys, status: str, expected: str) -> None:
+    repository_root = Path(cli_module.__file__).resolve().parents[1]
     results = iter(
-        (subprocess.CompletedProcess((), 0, "1234567\n", ""), subprocess.CompletedProcess((), 0, status, ""))
+        (
+            subprocess.CompletedProcess((), 0, f"{repository_root}\n1234567\n", ""),
+            subprocess.CompletedProcess((), 0, status, ""),
+        )
     )
     monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
-    monkeypatch.setattr(cli_module.subprocess, "run", lambda *args, **kwargs: next(results))
+    git = Mock(side_effect=lambda *args, **kwargs: next(results))
+    monkeypatch.setattr(cli_module.subprocess, "run", git)
 
     with pytest.raises(SystemExit):
         build_parser().parse_args(["--version"])
 
     assert capsys.readouterr().out == f"pytest {expected}\n"
+    assert git.call_args_list == [
+        call(
+            (
+                "git",
+                "-C",
+                str(repository_root),
+                "rev-parse",
+                "--show-toplevel",
+                "--short=7",
+                "HEAD",
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        ),
+        call(
+            ("git", "-C", str(repository_root), "status", "--porcelain"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("metadata", ("/unrelated/repository\n1234567\n", "unexpected\n"))
+def test_development_version_rejects_unrelated_git_metadata(monkeypatch, capsys, metadata: str) -> None:
+    monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
+    git = Mock(return_value=subprocess.CompletedProcess((), 0, metadata, ""))
+    monkeypatch.setattr(cli_module.subprocess, "run", git)
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--version"])
+
+    assert capsys.readouterr().out == "pytest 1.1.1-dev\n"
+    git.assert_called_once()
 
 
 @pytest.mark.parametrize(
