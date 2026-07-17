@@ -2,15 +2,18 @@ import base64
 import io
 import logging
 import sqlite3
+import subprocess
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, call
 
 import httpx
 import pendulum
 import pytest
 
+import weather_briefing.cli as cli_module
 from weather_briefing.cli import (
     _LOGGER,
     _SENSITIVE_SDK_LOGGERS,
@@ -268,10 +271,98 @@ class TestInSchedule:
         assert not _in_schedule("briefing", now_out, settings)
 
 
-def test_version_flag() -> None:
+def test_version_flag_uses_embedded_release_version(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli_module, "__version__", "1.1.0")
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--version"])
+
+    assert capsys.readouterr().out == "pytest 1.1.0\n"
+
+
+def test_development_version_does_not_probe_git_for_other_commands(monkeypatch) -> None:
+    monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
+    monkeypatch.setattr(
+        cli_module.subprocess,
+        "run",
+        Mock(side_effect=AssertionError("Git must only be inspected for --version")),
+    )
+
+    args = build_parser().parse_args(["run", "forecast"])
+
+    assert args.command == "run"
+
+
+@pytest.mark.parametrize(("status", "expected"), (("", "1.1.1-g1234567"), (" M file.py\n", "1.1.1-dirty-g1234567")))
+def test_development_version_includes_git_revision(monkeypatch, capsys, status: str, expected: str) -> None:
+    repository_root = Path(cli_module.__file__).resolve().parents[1]
+    results = iter(
+        (
+            subprocess.CompletedProcess((), 0, f"{repository_root}\n1234567\n", ""),
+            subprocess.CompletedProcess((), 0, status, ""),
+        )
+    )
+    monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
+    git = Mock(side_effect=lambda *args, **kwargs: next(results))
+    monkeypatch.setattr(cli_module.subprocess, "run", git)
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--version"])
+
+    assert capsys.readouterr().out == f"pytest {expected}\n"
+    assert git.call_args_list == [
+        call(
+            (
+                "git",
+                "-C",
+                str(repository_root),
+                "rev-parse",
+                "--show-toplevel",
+                "--short=7",
+                "HEAD",
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+        ),
+        call(
+            ("git", "-C", str(repository_root), "status", "--porcelain"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("metadata", ("/unrelated/repository\n1234567\n", "unexpected\n"))
+def test_development_version_rejects_unrelated_git_metadata(monkeypatch, capsys, metadata: str) -> None:
+    monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
+    git = Mock(return_value=subprocess.CompletedProcess((), 0, metadata, ""))
+    monkeypatch.setattr(cli_module.subprocess, "run", git)
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--version"])
+
+    assert capsys.readouterr().out == "pytest 1.1.1-dev\n"
+    git.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "error",
+    (FileNotFoundError(), subprocess.CalledProcessError(128, ("git", "rev-parse"))),
+)
+def test_development_version_falls_back_outside_git(monkeypatch, capsys, error: Exception) -> None:
+    monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fail)
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--version"])
+
+    assert capsys.readouterr().out == "pytest 1.1.1-dev\n"
 
 
 def test_rendered_text_diagnostics_parser_accepts_bounded_duration() -> None:

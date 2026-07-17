@@ -151,3 +151,11 @@ Docker `run --env-file` 接受的是 `KEY=value` 列表，不按 shell 语义解
 项目使用 uv 原生 `uv_build` 构建后端。Dockerfile 使用多阶段构建：先从官方 Distroless uv 镜像取得 uv/uvx，再复制到 Debian 13 Distroless Python nonroot 镜像，并直接以该镜像按 `uv.lock` 创建生产虚拟环境。锁文件中的 `docker` dependency group 只为官方镜像预装 any-llm 的 `deepseek`、`openai` 和 `openrouter` extras，不扩大 Python 包本身的基础运行依赖。最终阶段基于 digest 固定的 `gcr.io/distroless/python3-debian13`，从独立 assets 镜像加入 Bash 与 Toybox，并只复制运行环境和应用。builder 与 runtime 使用相同 Debian 版本及系统 Python，并通过镜像探针验证；最终进程以无特权用户运行。`.dockerignore` 不继承 `.gitignore`，因此使用独立白名单，只让 Dockerfile 实际需要的项目元数据、锁文件和包源码进入 BuildKit 上下文；`.env`、Git 历史、测试和文档不会发送给 builder。
 
 镜像工作流实现 [requirements.md](requirements.md#运行环境) 定义的标签通道，并用一次 manifest 创建命令同时更新当前事件对应的全部标签。
+
+## 版本与发布
+
+release workflow 的手动输入是 GitHub Actions `choice`，只允许 major、minor 或 patch 三选一。工作流从 `pyproject.toml` 读取当前版本，在正式版上递增选中的组件；当前版本为 `-dev` 且选择 patch 时，去掉后缀后直接发布已声明的目标版本。major 始终把 minor、patch 归零，minor 始终把 patch 归零。
+
+工作流先同步 `pyproject.toml`、包内版本、`uv.lock` 和 README 的稳定部署版本，生成正式版 commit 并让同名 tag 指向该 commit；再只把代码与锁文件推进到下一 patch 的 `-dev` commit。最后 atomic push `master` 与 tag，使远端不会只接收其中一部分。
+
+开发版 `--version` 以包源码位置的父目录作为预期仓库根，并要求 Git `--show-toplevel` 返回同一目录后才附加 commit SHA 和 dirty 状态。因此从其他 Git 仓库启动 CLI，或把普通安装放在其他仓库的虚拟环境中，都不会误报外部仓库信息。
