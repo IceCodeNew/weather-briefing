@@ -15,8 +15,8 @@ on:
       - "uv.lock"
 
 concurrency:
-  group: weather-briefing-image-${{ github.ref_type == 'branch' && 'edge' || format('release-{0}', github.ref_name) }}
-  cancel-in-progress: true
+  group: weather-briefing-image
+  cancel-in-progress: false
 
 env:
   WEATHER_BRIEFING_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/weather-briefing
