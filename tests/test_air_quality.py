@@ -1,7 +1,9 @@
 import httpx
+import pendulum
 import pytest
 
 from weather_briefing.air_quality import AirQualityError, AQICNProvider, air_quality_to_document, health_guidance
+from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind
 from weather_briefing.reference_data import ReferenceDataError
 
 
@@ -33,8 +35,9 @@ async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> N
 
     assert snapshot.aqi == 120
     assert snapshot.aqi_standard == "US EPA"
-    assert snapshot.observed_at is not None
-    assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
+    assert snapshot.effective_at is not None
+    assert snapshot.effective_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
+    assert snapshot.time_kind is AirQualityTimeKind.OBSERVATION
     assert snapshot.pm25_aqi == 100
     assert snapshot.pm25_concentration is None
     document = air_quality_to_document(snapshot)
@@ -70,8 +73,8 @@ async def test_aqicn_keeps_valid_aqi_when_official_time_has_no_offset() -> None:
         ).fetch(39.911389, 116.380556, "Asia/Shanghai")
 
     assert snapshot.aqi == 42
-    assert snapshot.observed_at is not None
-    assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
+    assert snapshot.effective_at is not None
+    assert snapshot.effective_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
 
 
 async def test_aqicn_response_timezone_overrides_queried_location_timezone() -> None:
@@ -99,8 +102,8 @@ async def test_aqicn_response_timezone_overrides_queried_location_timezone() -> 
             base_url="https://api.example.invalid",
         ).fetch(35.0, 139.0, "Asia/Tokyo")
 
-    assert snapshot.observed_at is not None
-    assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T09:00:00+09:00"
+    assert snapshot.effective_at is not None
+    assert snapshot.effective_at.to_iso8601_string() == "2026-07-13T09:00:00+09:00"
 
 
 async def test_aqicn_rejects_non_ok_status() -> None:
@@ -163,7 +166,7 @@ async def test_aqicn_observed_at_returns_none_for_non_dict_time() -> None:
             base_url="https://api.example.invalid",
         ).fetch(0, 0, "UTC")
 
-    assert snapshot.observed_at is None
+    assert snapshot.effective_at is None
 
 
 async def test_aqicn_observed_at_returns_none_for_empty_time_string() -> None:
@@ -192,7 +195,30 @@ async def test_aqicn_observed_at_returns_none_for_empty_time_string() -> None:
             base_url="https://api.example.invalid",
         ).fetch(0, 0, "UTC")
 
-    assert snapshot.observed_at is None
+    assert snapshot.effective_at is None
+
+
+def test_air_quality_document_labels_forecast_time() -> None:
+    snapshot = AirQualitySnapshot(
+        source_id="air-quality:test",
+        source_name="Test",
+        source_url="https://example.invalid/air-quality",
+        effective_at=pendulum.datetime(2026, 7, 15, 18, tz="Asia/Shanghai"),
+        time_kind=AirQualityTimeKind.FORECAST,
+        aqi=90,
+        aqi_display="90",
+        aqi_standard="U.S. AQI",
+        pm25_aqi=70,
+        pm25_concentration=28,
+        pm25_unit="μg/m³",
+        category="良",
+        health_guidance="正常活动。",
+    )
+
+    document = air_quality_to_document(snapshot)
+
+    assert "预报时段：2026-07-15T18:00:00+08:00" in document.content
+    assert "观测时间" not in document.content
 
 
 def test_health_guidance_unbounded_band_required(monkeypatch) -> None:

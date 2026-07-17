@@ -9,7 +9,7 @@ import httpx
 import pendulum
 
 from .api_client import api_call_extensions
-from .models import AirQualitySnapshot, SourceDocument
+from .models import AirQualitySnapshot, AirQualityTimeKind, SourceDocument
 from .reference_data import ReferenceDataError, reference_value
 from .time_utils import parse_datetime_with_default_timezone
 
@@ -78,7 +78,8 @@ class AQICNProvider:
             source_id="air-quality:aqicn",
             source_name=str(city.get("name", "AQICN")),
             source_url=str(city["url"]),
-            observed_at=observed_at,
+            effective_at=observed_at,
+            time_kind=AirQualityTimeKind.OBSERVATION,
             aqi=aqi,
             aqi_display=str(aqi),
             aqi_standard="US EPA",
@@ -92,7 +93,8 @@ class AQICNProvider:
 
 def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
     """Convert an air-quality snapshot into a citable source document."""
-    observed_at = snapshot.observed_at.to_iso8601_string() if snapshot.observed_at is not None else "不可用"
+    effective_at = snapshot.effective_at.to_iso8601_string() if snapshot.effective_at is not None else "不可用"
+    time_label = "预报时段" if snapshot.time_kind is AirQualityTimeKind.FORECAST else "观测时间"
     concentration = "不可用"
     if snapshot.pm25_concentration is not None and snapshot.pm25_unit:
         concentration = f"{snapshot.pm25_concentration:g} {snapshot.pm25_unit}"
@@ -102,7 +104,7 @@ def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
         name=snapshot.source_name,
         url=snapshot.source_url,
         content=(
-            f"观测时间：{observed_at}\n"
+            f"{time_label}：{effective_at}\n"
             f"AQI：{snapshot.aqi_display}（标准：{snapshot.aqi_standard}；"
             f"类别：{snapshot.category}）\n"
             f"PM2.5 单项 AQI：{pm25_aqi}（标准：{snapshot.aqi_standard}）\n"

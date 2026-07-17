@@ -11,6 +11,7 @@ import pytest
 from weather_briefing.llm import LLMError
 from weather_briefing.models import (
     AirQualitySnapshot,
+    AirQualityTimeKind,
     Article,
     ContextSourceConfig,
     FeedConfig,
@@ -108,7 +109,8 @@ class StaticWeatherContextProvider:
                 source_id="air-quality:test",
                 source_name="Test air quality",
                 source_url="https://example.invalid/air-quality",
-                observed_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+                effective_at=pendulum.datetime(2026, 7, 13, 8, tz="UTC"),
+                time_kind=AirQualityTimeKind.OBSERVATION,
                 aqi=42,
                 aqi_display="42",
                 aqi_standard="test-standard",
