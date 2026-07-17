@@ -1545,7 +1545,7 @@ async def test_rss_failure_alert_is_sent_after_threshold(
         # Second failure: alert should trigger
         await service.run("briefing", now.add(hours=1))
         assert len(ops_publisher.messages) == 1
-        assert "持续获取失败" in ops_publisher.messages[0][0].body
+        assert "已连续至少 2 个调度轮次获取失败" in ops_publisher.messages[0][0].body
 
         # Third failure: no new alert (already alerted)
         await service.run("briefing", now.add(hours=2))
