@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import replace
+from math import isfinite
 from typing import Any, Protocol, TypeGuard, runtime_checkable
 
 import httpx
@@ -540,7 +541,7 @@ class OpenMeteoProvider:
     @staticmethod
     def _parse_air_quality(current: dict[str, Any], payload: dict[str, Any]) -> AirQualitySnapshot | None:
         try:
-            aqi = round(float(current["us_aqi"]))
+            aqi = round(_float_value(current["us_aqi"]))
             category, guidance = health_guidance(aqi)
             return AirQualitySnapshot(
                 source_id="air-quality:open-meteo",
@@ -554,8 +555,8 @@ class OpenMeteoProvider:
                 aqi=aqi,
                 aqi_display=str(aqi),
                 aqi_standard="U.S. AQI",
-                pm25_aqi=round(float(current["us_aqi_pm2_5"])),
-                pm25_concentration=float(current["pm2_5"]),
+                pm25_aqi=round(_float_value(current["us_aqi_pm2_5"])),
+                pm25_concentration=_float_value(current["pm2_5"]),
                 pm25_unit="μg/m³",
                 category=category,
                 health_guidance=guidance,
@@ -579,7 +580,7 @@ class OpenMeteoProvider:
             if raw is None:
                 continue
             try:
-                concentration = float(raw)
+                concentration = _float_value(raw)
             except (TypeError, ValueError):
                 continue
             try:
@@ -915,9 +916,12 @@ def _open_meteo_daily_peak_values(
 
 
 def _float_value(value: object) -> float:
-    if not isinstance(value, str | int | float):
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
         raise TypeError("value must be numeric")
-    return float(value)
+    number = float(value)
+    if not isfinite(number):
+        raise ValueError("value must be finite")
+    return number
 
 
 def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:

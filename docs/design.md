@@ -56,7 +56,7 @@ service 将最终解析得到的完整地点名作为 `location_scope.full_name`
 
 `AirQualitySupplementingWeatherProvider` 在最终天气快照缺少空气质量时调用可选 `AQICNProvider`。AQICN 只返回空气质量，不会被当成天气来源；它保留美国 EPA AQI 和 PM2.5 单项 AQI，不反向折算 PM2.5 浓度。天气来源与 AQICN 都无法提供空气质量时抛出可操作错误。
 
-天气快照可选包含花粉过敏原信息。QWeather 生活指数请求过敏指数（类型 7），并将目标日期的供应商指数说明直接放入 `lifestyle_advice`。`OpenMeteoProvider` 在同一次空气质量 API 请求中额外请求花粉变量：常规预报使用当前值，显式目标日期使用服务商支持范围内该日逐小时预报的各类型峰值，再按浓度分级（参考数据 `allergen_guidance.json`）转换为独立 `AllergenSnapshot`，供对应日期生活建议参考。Open-Meteo 花粉数据仅在欧洲花粉季可用，来自 CAMS European Air Quality forecast 的 ENSEMBLE 数据；引用该上下文时，渲染层使用文档名称确定性展示 Open-Meteo 与 CAMS ENSEMBLE 署名。缺失或字段无效时不影响天气与空气质量结果。当前实现不把综合过敏指数解释为具体花粉种类，也不推断独立的杨絮、柳絮等飞絮信息。
+天气快照可选包含花粉过敏原信息。QWeather 生活指数请求过敏指数（类型 7），并将目标日期的供应商指数说明直接放入 `lifestyle_advice`。`OpenMeteoProvider` 在同一次空气质量 API 请求中额外请求花粉变量：常规预报使用当前值，显式目标日期使用服务商支持范围内该日逐小时预报的各类型峰值，再按浓度分级（参考数据 `allergen_guidance.json`）转换为独立 `AllergenSnapshot`，供对应日期生活建议参考。Open-Meteo 花粉数据仅在欧洲花粉季可用，来自 CAMS European Air Quality forecast 的 ENSEMBLE 数据；引用该上下文时，渲染层使用文档名称确定性展示 Open-Meteo 与 CAMS ENSEMBLE 署名。数值边界拒绝布尔值、NaN 和正负无穷等非有限输入；缺失或字段无效时不影响天气与空气质量结果。当前实现不把综合过敏指数解释为具体花粉种类，也不推断独立的杨絮、柳絮等飞絮信息。
 
 QWeather 认证由独立的 `QWeatherJWTAuthenticator` 负责。它从运行环境读取 Base64 编码的 Ed25519 PKCS#8 私钥 PEM，解码后通过 EdDSA 签发 JWT：Header 只加入凭据 ID `kid`，Payload 只加入项目 ID `sub`、提前 30 秒的 `iat` 和可配置的短期 `exp`。provider 只依赖认证协议生成 Bearer header，不接触私钥字段，也不支持把长期 API KEY 混入同一请求。
 

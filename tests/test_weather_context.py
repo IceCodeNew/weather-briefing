@@ -582,12 +582,12 @@ async def test_open_meteo_future_enrichment_rejects_non_object_hourly_payload() 
 
 def test_open_meteo_daily_peaks_skip_invalid_hourly_values() -> None:
     hourly: dict[str, object] = {
-        "time": ["2026-07-15T09:00", "2026-07-15T18:00"],
-        "us_aqi": [None, "invalid"],
-        "us_aqi_pm2_5": [None, "invalid"],
-        "pm2_5": [None, "invalid"],
-        "grass_pollen": [None, 4.0],
-        "birch_pollen": [None, None],
+        "time": ["2026-07-15T06:00", "2026-07-15T09:00", "2026-07-15T18:00"],
+        "us_aqi": ["inf", True, "invalid"],
+        "us_aqi_pm2_5": [70, None, "invalid"],
+        "pm2_5": [28, None, "invalid"],
+        "grass_pollen": ["nan", None, 4.0],
+        "birch_pollen": ["-inf", None, None],
     }
 
     air_quality, allergen = _open_meteo_daily_peak_values(
@@ -599,6 +599,50 @@ def test_open_meteo_daily_peaks_skip_invalid_hourly_values() -> None:
     assert air_quality == {}
     assert allergen == {"grass_pollen": 4.0}
     assert no_allergen == {}
+
+
+def test_open_meteo_daily_peaks_ignore_non_finite_values_in_favor_of_finite_data() -> None:
+    air_quality, allergen = _open_meteo_daily_peak_values(
+        {
+            "time": ["2026-07-15T09:00", "2026-07-15T12:00", "2026-07-15T18:00"],
+            "us_aqi": ["nan", "inf", 90],
+            "us_aqi_pm2_5": [30, 70, 65],
+            "pm2_5": [8, 28, 24],
+            "grass_pollen": ["-inf", "nan", 3],
+        },
+        (("grass", "禾本科"),),
+    )
+
+    assert air_quality == {
+        "time": "2026-07-15T18:00",
+        "us_aqi": 90.0,
+        "us_aqi_pm2_5": 65.0,
+        "pm2_5": 24.0,
+    }
+    assert allergen == {"grass_pollen": 3.0}
+
+
+async def test_open_meteo_current_air_quality_rejects_non_finite_values() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Asia/Shanghai",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": "inf",
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(0.0, 0.0)
+
+    assert snapshot.air_quality is None
 
 
 def test_open_meteo_daily_peaks_keep_air_quality_when_pollen_is_missing() -> None:
