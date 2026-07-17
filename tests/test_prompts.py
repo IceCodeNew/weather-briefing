@@ -14,6 +14,8 @@ def test_prompt_uses_actionable_publication_threshold() -> None:
     assert "约一小时后影响当前地区的降雨" in SYSTEM_PROMPT
     assert "降雨概率和雨量" in SYSTEM_PROMPT
     assert "普通天气复述" in SYSTEM_PROMPT
+    assert "content_compacted=true" in SYSTEM_PROMPT
+    assert "不得补全被省略的细节" in SYSTEM_PROMPT
 
 
 def test_prompt_separates_advice_and_avoids_repetition() -> None:

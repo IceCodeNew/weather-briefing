@@ -746,6 +746,7 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
     """Convert a weather snapshot into citable LLM source documents."""
     weather = "\n".join(f"- {item}" for item in snapshot.weather_forecast)
     lifestyle = "\n".join(f"- {item}" for item in snapshot.lifestyle_advice) or "不可用"
+    weather_summary = snapshot.weather_forecast[0] if snapshot.weather_forecast else "不可用"
     documents = [
         SourceDocument(
             id=snapshot.source_id,
@@ -756,6 +757,11 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
                 f"更新时间：{snapshot.observed_at.to_iso8601_string()}\n"
                 f"今明天气预报：\n{weather}\n"
                 f"生活与出行指数：\n{lifestyle}"
+            ),
+            history_summary=(
+                f"更新时间：{snapshot.observed_at.to_iso8601_string()}\n"
+                f"天气概览：{weather_summary}\n"
+                f"生活与出行指数项数：{len(snapshot.lifestyle_advice)}"
             ),
         )
     ]

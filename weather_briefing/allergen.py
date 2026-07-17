@@ -37,6 +37,9 @@ def allergen_to_document(snapshot: AllergenSnapshot) -> SourceDocument:
             f"总体等级：{snapshot.overall_category}\n"
             f"健康提示：{snapshot.health_guidance}"
         ),
+        history_summary=(
+            f"观测时间：{observed_at}\n花粉类型数：{len(snapshot.levels)}\n总体等级：{snapshot.overall_category}"
+        ),
     )
 
 

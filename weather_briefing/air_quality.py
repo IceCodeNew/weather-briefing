@@ -111,6 +111,11 @@ def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
             f"PM2.5 {concentration}\n"
             f"健康提示：{snapshot.health_guidance}"
         ),
+        history_summary=(
+            f"{time_label}：{effective_at}\n"
+            f"AQI：{snapshot.aqi_display}（{snapshot.category}）\n"
+            f"PM2.5 单项 AQI：{pm25_aqi}；浓度：{concentration}"
+        ),
     )
 
 
