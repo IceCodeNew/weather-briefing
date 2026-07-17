@@ -139,9 +139,11 @@ class RSSSource:
         return tuple(articles)
 
     async def _fetch_with_retry(self, config: FeedConfig) -> str:
+        attempts_made = 0
         for attempt in range(1, self._max_attempts + 1):
             retry_after: float | None = None
             try:
+                attempts_made += 1
                 response = await self._client.get(
                     config.url,
                     extensions=api_call_extensions("rss", "fetch"),
@@ -159,7 +161,8 @@ class RSSSource:
             if attempt < self._max_attempts:
                 delay = random.uniform(self._retry_min_seconds, self._retry_max_seconds)
                 await asyncio.sleep(max(delay, retry_after or 0.0))
-        raise SourceFetchError(f"RSS source {config.id} failed after {self._max_attempts} attempts") from None
+        attempt_label = "attempt" if attempts_made == 1 else "attempts"
+        raise SourceFetchError(f"RSS source {config.id} failed after {attempts_made} {attempt_label}") from None
 
 
 class HTTPContextSource:

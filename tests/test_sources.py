@@ -123,6 +123,7 @@ async def test_rss_source_retries_with_three_to_five_second_delay(monkeypatch) -
     assert attempts == 3
     assert sleep.await_count == 2
     sleep.assert_awaited_with(4.0)
+    assert "failed after 3 attempts" in str(caught.value)
     assert "private.example.invalid" not in str(caught.value)
     assert caught.value.__cause__ is None
 
@@ -133,7 +134,7 @@ async def test_rss_source_does_not_retry_permanent_http_status(monkeypatch) -> N
     monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(SourceFetchError):
+        with pytest.raises(SourceFetchError, match="failed after 1 attempt"):
             await RSSSource(client, max_attempts=3).fetch(
                 FeedConfig("source", "Source", "https://private.example.invalid")
             )
@@ -153,7 +154,7 @@ async def test_rss_source_does_not_retry_other_http_errors(monkeypatch) -> None:
 
     monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(SourceFetchError):
+        with pytest.raises(SourceFetchError, match="failed after 1 attempt"):
             await RSSSource(client, max_attempts=3).fetch(
                 FeedConfig("source", "Source", "https://private.example.invalid")
             )
@@ -180,6 +181,26 @@ async def test_rss_source_retries_transport_errors(monkeypatch) -> None:
         )
 
     assert articles == ()
+    assert attempts == 2
+    assert sleep.await_count == 1
+
+
+async def test_rss_source_reports_exhausted_transport_attempts(monkeypatch) -> None:
+    attempts = 0
+    sleep = AsyncMock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ConnectError("connection failed", request=request)
+
+    monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SourceFetchError, match="failed after 2 attempts"):
+            await RSSSource(client, max_attempts=2).fetch(
+                FeedConfig("source", "Source", "https://private.example.invalid")
+            )
+
     assert attempts == 2
     assert sleep.await_count == 1
 
