@@ -158,6 +158,7 @@ def _briefing_sent_today(
 
 
 _LOGGER = logging.getLogger("weather_briefing")
+_SENSITIVE_SDK_LOGGERS = ("any_llm", "openai", "httpx", "httpcore")
 
 
 @contextmanager
@@ -191,9 +192,11 @@ def _configure_logging(*, debug: bool) -> None:
         root_handler = logging.StreamHandler(sys.stderr)
         root_handler.setFormatter(_fmt)
         logging.root.addHandler(root_handler)
-    logging.root.setLevel(level)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.root.setLevel(logging.WARNING)
+    for handler in logging.root.handlers:
+        handler.setLevel(logging.WARNING)
+    for logger_name in _SENSITIVE_SDK_LOGGERS:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 async def run(
@@ -223,7 +226,7 @@ async def run(
             LoggedAsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
         )
         delivery = _delivery_provider(settings, client, diagnostics)
-        llm_provider = _llm_provider(settings, client)
+        llm_provider = _llm_provider(settings, client, diagnostics)
         nominatim_provider = NominatimGeocodingProvider(
             client,
             base_url=settings.nominatim_base_url,
@@ -294,7 +297,11 @@ async def run(
                     _LOGGER.info("Location %s %s skipped (no content)", location.id, kind)
 
 
-def _llm_provider(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
+def _llm_provider(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    diagnostics: RenderedTextDiagnostics | None = None,
+) -> LLMProvider:
     return create_any_llm_provider(
         settings.llm_provider,
         settings.llm_model,
@@ -302,6 +309,7 @@ def _llm_provider(settings: Settings, client: httpx.AsyncClient) -> LLMProvider:
         client,
         api_key=settings.api_key,
         api_base=settings.llm_base_url,
+        diagnostics=diagnostics,
     )
 
 

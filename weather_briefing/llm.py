@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, Protocol, TypeAlias
 
@@ -16,6 +17,8 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationErr
 from .api_client import api_call_context
 from .models import Advice, AdviceTopic, BriefingResult, Conclusion, Warning
 from .time_utils import require_aware_datetime
+
+_LOGGER = logging.getLogger("weather_briefing.llm")
 
 
 class LLMError(RuntimeError):
@@ -43,6 +46,14 @@ class LLMCompletionClient(Protocol):
         max_tokens: int,
     ) -> object:
         """Request one asynchronous structured completion."""
+        ...
+
+
+class SensitiveLLMDiagnostics(Protocol):
+    """Expose the runtime switch for application-owned sensitive LLM diagnostics."""
+
+    def rendered_text_logging_enabled(self) -> bool:
+        """Return whether temporary sensitive diagnostics are enabled."""
         ...
 
 
@@ -137,12 +148,14 @@ class AnyLLMStructuredProvider:
         provider: str,
         model: str,
         max_output_tokens: int,
+        diagnostics: SensitiveLLMDiagnostics | None = None,
     ) -> None:
         """Configure a reusable any-llm client and output limit."""
         self._client = client
         self._provider = provider
         self._model = model
         self._max_output_tokens = max_output_tokens
+        self._diagnostics = diagnostics
 
     @property
     def provider(self) -> str:
@@ -151,6 +164,15 @@ class AnyLLMStructuredProvider:
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         """Request and decode one structured JSON response."""
+        log_sensitive = _sensitive_llm_diagnostics_enabled(self._diagnostics)
+        if log_sensitive:
+            _LOGGER.debug(
+                "Sensitive LLM request diagnostic: provider=%s model=%s system_prompt=%r payload=%r",
+                self._provider,
+                self._model,
+                system_prompt,
+                payload,
+            )
         try:
             with api_call_context(self._provider, "chat-completions"):
                 response = await self._client.acompletion(
@@ -166,7 +188,26 @@ class AnyLLMStructuredProvider:
         except AnyLLMError as exc:
             raise LLMError("LLM request failed") from exc
         result = _decode_structured_response(response)
-        return result.model_dump(mode="json")
+        result_payload = result.model_dump(mode="json")
+        if log_sensitive:
+            _LOGGER.debug(
+                "Sensitive LLM response diagnostic: provider=%s model=%s payload=%r",
+                self._provider,
+                self._model,
+                result_payload,
+            )
+        return result_payload
+
+
+def _sensitive_llm_diagnostics_enabled(diagnostics: SensitiveLLMDiagnostics | None) -> bool:
+    """Check the runtime switch without letting diagnostic failures affect requests."""
+    if diagnostics is None or not _LOGGER.isEnabledFor(logging.DEBUG):
+        return False
+    try:
+        return diagnostics.rendered_text_logging_enabled()
+    except Exception:
+        _LOGGER.warning("Sensitive LLM diagnostic state check failed", exc_info=True)
+        return False
 
 
 def create_any_llm_provider(
@@ -177,6 +218,7 @@ def create_any_llm_provider(
     *,
     api_key: str | None = None,
     api_base: str | None = None,
+    diagnostics: SensitiveLLMDiagnostics | None = None,
 ) -> AnyLLMStructuredProvider:
     """Create an application adapter for any supported any-llm completion provider."""
     provider_class = AnyLLM.get_provider_class(provider)
@@ -191,6 +233,7 @@ def create_any_llm_provider(
         provider=provider,
         model=model,
         max_output_tokens=max_output_tokens,
+        diagnostics=diagnostics,
     )
 
 

@@ -53,7 +53,7 @@ weather-briefing diagnostics rendered-text status
 weather-briefing diagnostics rendered-text disable
 ```
 
-容器部署通过同一运行实例执行，例如 `docker exec weather-briefing weather-briefing diagnostics rendered-text enable --for 15m`。该开关最长启用 24 小时并自动过期，状态保存在 `BRIEFING_STATE_PATH`。只有同时启用 `DEBUG` 和临时开关时才记录正文；日志包含简报、告警、权威预报以及 Telegram 分片的完整文本，可能暴露来源内容、来源 URL、坐标和其他位置上下文，排障后应立即关闭并妥善保护日志。token、chat ID 和请求 endpoint 不会写入这些诊断日志。
+容器部署通过同一运行实例执行，例如 `docker exec weather-briefing weather-briefing diagnostics rendered-text enable --for 15m`。该开关最长启用 24 小时并自动过期，状态保存在 `BRIEFING_STATE_PATH`。只有同时启用 `DEBUG` 和临时开关时才记录正文；日志包含应用提交给 LLM 的提示与结构化上下文、LLM 结构化结果、简报、告警、权威预报以及 Telegram 分片的完整文本，可能暴露来源内容、来源 URL、坐标和其他位置上下文，排障后应立即关闭并妥善保护日志。第三方 SDK 原始 DEBUG 日志仍被抑制；token、chat ID 和请求 endpoint 不会写入这些诊断日志。
 
 定位层把名称或坐标补全为统一地点信息。Open-Meteo 负责城市/邮编正向查询，空结果时由 OpenStreetMap Nominatim 解析详细地名；只有坐标时由 Nominatim 反向查询规范地点名、国家和行政区。名称与坐标齐全时不请求定位服务，并使用中国大陆服务范围四至宽松包围盒作快速可能性判断；所有查询结果都会持久缓存。省略 `WEATHER_PROVIDERS` 时，中国大陆地点使用 QWeather、Open-Meteo，其他地点只使用 Open-Meteo；显式配置时首项是主要来源，后续项依次作为备用。
 
