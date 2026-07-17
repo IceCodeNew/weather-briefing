@@ -4,30 +4,6 @@
 
 ## 审查时应保留的显式边界
 
-### 镜像构建与发布串行边界
-
-release tag 工作流构建的镜像会复用同一套镜像构建流程产出 `edge`。`.github/workflows/image.yml` 使用
-按 workflow 与 ref 分组的并发控制（`${{ github.workflow }}-${{ github.ref }}`），避免 tag 构建与 master 分支构建
-互相排队或互相取消。
-
-`weather_briefing/__init__.py` 与 `pyproject.toml` 的版本更新逻辑在 release 流程中引入了 commit trailer
-`Weather-Briefing-Skip-Edge-Image: true` 的提交，用于让“先打 release tag，再立即切到 `-dev`
-并推送新提交”时跳过一轮与其冲突的 master edge 构建。这样可以减少一次镜像构建，并且确保最终 `edge`
-与本次 release tag 对应的制品一致。
-
-该机制的边界：
-
-- `edge` 是最近一次“可运行”构建产生的游标标签；`latest` 与 `vX.Y.Z` 才是不可变发布语义。
-- commit trailer 仅影响 job 级是否执行；同一 ref 的历史运行若被手动重跑，仍可能再次更新 `edge`（可能回退），
-  这是可观察但可接受的行为。
-- 若未来需要“新 ref 一定持有 edge 最新副本”的严格保证，需要额外引入发布协调机制，而不仅依赖并发组与 trailer。
-
-该机制的补充边界：
-
-- 只在 release 工作流的 commit message 中显式设置该 trailer 的提交才会跳过 edge 构建。
-- 若未来需要同时对 `edge` 与别的分支/场景并发发布或允许多路覆盖策略发生变化，需要同步更新
-  `.github/workflows/image.yml` 的并发策略与这段决策说明。
-
 ### 配置与启动边界
 
 DeepSeek 是唯一保留旧环境变量别名的 LLM provider：`DEEPSEEK_MODEL` 后备到 `LLM_MODEL`，`DEEPSEEK_BASE_URL` 后备到 any-llm 使用的 `DEEPSEEK_API_BASE`。这是已投入部署的输入兼容，不是厂商映射；新增 provider 应直接使用 any-llm 的 provider ID 和环境变量，不得把这一分支扩展成通用 provider 配置注册表。
