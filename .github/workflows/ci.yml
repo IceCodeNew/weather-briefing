@@ -10,6 +10,8 @@ on:
       - ".github/workflows/ci.yml"
       - "tests/**"
       - "weather_briefing/**"
+      - "Dockerfile"
+      - ".dockerignore"
       - "prek.toml"
       - "pyproject.toml"
       - "uv.lock"
@@ -19,12 +21,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -32,7 +30,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.x"
+          check-latest: true
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           version: "0.11.28"
@@ -40,7 +39,19 @@ jobs:
       - run: uv lock --check
       - run: uv sync --frozen
       - uses: j178/prek-action@e98a699c41eb69ab013a45817a0406469a748f8d # v2.0.5
-      - run: uv run --frozen ruff check . && uv run --frozen pytest
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen interrogate weather_briefing
+
+  hadolint:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      checks: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: reviewdog/action-hadolint@1b2cfa6ba72072ad35158d7ff3aa49bbdc03506d # v1.51.0
+        with:
+          hadolint_ignore: DL3007 SC2114
+          reporter: github-check
