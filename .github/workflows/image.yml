@@ -15,14 +15,17 @@ on:
       - "uv.lock"
 
 concurrency:
-  group: weather-briefing-image-${{ github.ref_type == 'branch' && 'edge' || format('release-{0}', github.ref_name) }}
-  cancel-in-progress: true
+  group: weather-briefing-image
+  cancel-in-progress: false
 
 env:
   WEATHER_BRIEFING_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/weather-briefing
 
 jobs:
   weather-briefing:
+    if: >-
+      github.ref_type == 'tag' ||
+      !contains(github.event.head_commit.message, 'Weather-Briefing-Skip-Edge-Image: true')
     runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
@@ -120,7 +123,11 @@ jobs:
 
           tags=(--tag "${REGISTRY_IMAGE}:${COMMIT_TAG}")
           if [[ -n "${RELEASE_VERSION}" ]]; then
-            tags+=(--tag "${REGISTRY_IMAGE}:${RELEASE_VERSION}" --tag "${REGISTRY_IMAGE}:latest")
+            tags+=(
+              --tag "${REGISTRY_IMAGE}:${RELEASE_VERSION}"
+              --tag "${REGISTRY_IMAGE}:latest"
+              --tag "${REGISTRY_IMAGE}:edge"
+            )
           else
             tags+=(--tag "${REGISTRY_IMAGE}:edge")
           fi

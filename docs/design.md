@@ -158,4 +158,6 @@ release workflow 的手动输入是 GitHub Actions `choice`，只允许 major、
 
 工作流先同步 `pyproject.toml`、包内版本、`uv.lock` 和 README 的稳定部署版本，生成正式版 commit 并让同名 tag 指向该 commit；再只把代码与锁文件推进到下一 patch 的 `-dev` commit。最后 atomic push `master` 与 tag，使远端不会只接收其中一部分。
 
+GitHub 会分别为同一次 atomic push 中的 `master` 和 tag 更新触发 push workflow。自动生成的 `-dev` commit 因此带有专用 commit trailer，使镜像流水线跳过该次 `master` 构建；tag 流水线只构建正式版 commit 一次，并让版本号、`latest` 与 `edge` 标签共同指向该镜像。后续普通 `master` 提交仍照常更新 `edge`。
+
 开发版 `--version` 以包源码位置的父目录作为预期仓库根，并要求 Git `--show-toplevel` 返回同一目录后才附加 commit SHA 和 dirty 状态。因此从其他 Git 仓库启动 CLI，或把普通安装放在其他仓库的虚拟环境中，都不会误报外部仓库信息。
