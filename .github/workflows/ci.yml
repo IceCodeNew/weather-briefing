@@ -40,6 +40,7 @@ jobs:
       - run: uv sync --frozen
       - uses: j178/prek-action@e98a699c41eb69ab013a45817a0406469a748f8d # v2.0.5
       - run: uv run --frozen ruff check .
+      - run: uv run --frozen interrogate weather_briefing
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
