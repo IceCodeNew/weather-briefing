@@ -22,9 +22,9 @@ ENV UV_COMPILE_BYTECODE=1 \
 FROM uv AS build
 WORKDIR /home/nonroot/app/
 COPY --link --chown=65532:65532 pyproject.toml uv.lock README.md ./
-RUN uv --no-progress sync --frozen --no-dev --no-install-project
+RUN uv --no-progress sync --frozen --no-dev --group docker --no-install-project
 COPY --link --chown=65532:65532 weather_briefing ./weather_briefing
-RUN uv --no-progress sync --frozen --no-dev --no-editable
+RUN uv --no-progress sync --frozen --no-dev --group docker --no-editable
 
 
 FROM py-runtime AS final

@@ -3363,6 +3363,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
+docker = [
+    { name = "any-llm-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3385,6 +3388,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=7,<8" },
     { name = "ruff", specifier = ">=0.5,<1" },
 ]
+docker = [{ name = "any-llm-sdk", extras = ["deepseek", "openai", "openrouter"], specifier = ">=1.19,<2" }]
 
 [[package]]
 name = "websockets"

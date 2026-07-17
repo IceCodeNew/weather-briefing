@@ -43,7 +43,7 @@ uv run --frozen weather-briefing run briefing
 
 `env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id`，并在 `name` 与成对的 `latitude`、`longitude` 之间至少提供一项：只有名称时程序正向解析并支持降精度回退，只有坐标时通过 Nominatim 反查规范地点名和行政信息，两者都有时不发起定位请求。解析结果缓存到 `state/`。
 
-LLM 调用由 any-llm SDK 承担。`LLM_PROVIDER` 使用 any-llm 的 provider ID，`LLM_MODEL` 是该 provider 接受的模型 ID；凭据、API Base 和其他认证配置直接使用 any-llm 为对应 provider 定义的环境变量。开发环境安装 `any-llm-sdk[all]` 以验证全部 provider，应用的基础运行依赖只安装 SDK 核心包；生产安装可按实际选择合并 extras，例如 `uv pip install 'weather-briefing' 'any-llm-sdk[deepseek,openai]>=1.19,<2'`。为兼容已有 DeepSeek 部署，`DEEPSEEK_MODEL` 可作为 `LLM_MODEL` 的后备，`DEEPSEEK_BASE_URL` 可作为 `DEEPSEEK_API_BASE` 的后备。
+LLM 调用由 any-llm SDK 承担。`LLM_PROVIDER` 使用 any-llm 的 provider ID，`LLM_MODEL` 是该 provider 接受的模型 ID；凭据、API Base 和其他认证配置直接使用 any-llm 为对应 provider 定义的环境变量。开发环境安装 `any-llm-sdk[all]` 以验证全部 provider，应用的基础运行依赖只安装 SDK 核心包；官方 OCI 镜像预装 `deepseek`、`openai` 和 `openrouter` provider extras，其他生产安装可按实际选择合并 extras，例如 `uv pip install 'weather-briefing' 'any-llm-sdk[deepseek,openai]>=1.19,<2'`。为兼容已有 DeepSeek 部署，`DEEPSEEK_MODEL` 可作为 `LLM_MODEL` 的后备，`DEEPSEEK_BASE_URL` 可作为 `DEEPSEEK_API_BASE` 的后备。
 
 应用将带时间、级别和 logger 名称的运行日志写入标准错误；INFO 日志记录每个地点的天气 provider 顺序和逻辑降级过程，并为天气、空气质量、地理编码、LLM、RSS、辅助上下文及 Telegram 的每个实际 HTTP 请求记录 provider、operation、方法、成功或失败、耗时和 HTTP 状态或异常类型，因此可从容器日志还原外部 API 调用历史。RSS 重试与 Telegram 分片分别按实际请求次数记录。常规 INFO 日志及仅由 `DEBUG=true` 启用的非敏感诊断不记录坐标、标题、正文、URL、token、chat ID、请求 endpoint 或异常消息；DEBUG 元数据覆盖从 RSS 清洗、权威预报转发和平台渲染到 Telegram 分片接受状态的链路。若仍需排查平台渲染或分片内容，可在不重启 daemon 的情况下临时记录完整渲染正文：
 
