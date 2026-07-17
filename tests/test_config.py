@@ -106,18 +106,18 @@ def test_rss_source_requires_public_display_name(monkeypatch, tmp_path: Path) ->
     )
     monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
 
-    with pytest.raises(ConfigurationError, match="public display name"):
+    with pytest.raises(ConfigurationError, match=r"rss-sources\.json\[0\]\.name must be a non-empty string"):
         Settings.from_env()
 
 
 @pytest.mark.parametrize(
     ("source", "message"),
     (
-        ('{"name":"Test","url":"https://example.invalid/feed"}', "must have an id"),
-        ('{"id":null,"name":"Test","url":"https://example.invalid/feed"}', "must have an id"),
-        ('{"id":"test","name":null,"url":"https://example.invalid/feed"}', "public display name"),
-        ('{"id":"test","name":"Test"}', "must have a URL"),
-        ('{"id":"test","name":"Test","url":null}', "must have a URL"),
+        ('{"name":"Test","url":"https://example.invalid/feed"}', "id"),
+        ('{"id":null,"name":"Test","url":"https://example.invalid/feed"}', "id"),
+        ('{"id":"test","name":null,"url":"https://example.invalid/feed"}', "name"),
+        ('{"id":"test","name":"Test"}', "url"),
+        ('{"id":"test","name":"Test","url":null}', "url"),
     ),
 )
 def test_rss_source_rejects_missing_or_null_required_fields(
@@ -131,7 +131,32 @@ def test_rss_source_rejects_missing_or_null_required_fields(
     source_file.write_text(f"[{source}]", encoding="utf-8")
     monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
 
-    with pytest.raises(ConfigurationError, match=message):
+    with pytest.raises(
+        ConfigurationError,
+        match=rf"rss-sources\.json\[0\]\.{message} must be a non-empty string",
+    ):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("field", ("id", "name", "url"))
+@pytest.mark.parametrize("value", (1, ["value"], {"value": "nested"}))
+def test_rss_source_required_fields_reject_non_strings(
+    monkeypatch,
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    _required_environment(monkeypatch)
+    source = {"id": "test", "name": "Test", "url": "https://example.invalid/feed"}
+    source[field] = value
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text(json.dumps([source]), encoding="utf-8")
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(source_file))
+
+    with pytest.raises(
+        ConfigurationError,
+        match=rf"rss-sources\.json\[0\]\.{field} must be a non-empty string",
+    ):
         Settings.from_env()
 
 
@@ -284,6 +309,29 @@ def test_location_file_supports_name_coordinates_or_both(monkeypatch, tmp_path: 
     assert settings.locations[0].latitude is None
     assert settings.locations[1].longitude == 116.380556
     assert settings.locations[2].name is None
+
+
+@pytest.mark.parametrize("field", ("id", "name"))
+@pytest.mark.parametrize("value", (1, ["value"], {"value": "nested"}))
+def test_location_string_fields_reject_non_strings(
+    monkeypatch,
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    _required_environment(monkeypatch)
+    location = {"id": "test", "name": "Test"}
+    location[field] = value
+    location_file = tmp_path / "locations.json"
+    location_file.write_text(json.dumps([location]), encoding="utf-8")
+    monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(location_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
+
+    with pytest.raises(
+        ConfigurationError,
+        match=rf"locations\.json\[0\]\.{field} must be a non-empty string",
+    ):
+        Settings.from_env()
 
 
 def test_rss_source_location_ids_must_reference_configured_locations(monkeypatch, tmp_path: Path) -> None:
@@ -718,6 +766,23 @@ class TestConfigErrorPaths:
         monkeypatch.setenv("WEATHER_PROVIDERS", ",")
 
         with pytest.raises(ConfigurationError, match="WEATHER_PROVIDERS cannot be empty"):
+            Settings.from_env()
+
+    def test_unsupported_weather_providers_raise_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("WEATHER_PROVIDERS", "qweather,typo,unknown")
+
+        with pytest.raises(
+            ConfigurationError,
+            match="WEATHER_PROVIDERS contains unsupported providers: typo, unknown",
+        ):
+            Settings.from_env()
+
+    def test_unsupported_publisher_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "telegrm")
+
+        with pytest.raises(ConfigurationError, match="PUBLISHER must be one of: stdout, telegram"):
             Settings.from_env()
 
     def test_invalid_json_in_rss_sources_file_raises_error(self, monkeypatch, tmp_path: Path) -> None:
