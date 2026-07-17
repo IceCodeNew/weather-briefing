@@ -6,10 +6,9 @@
 
 ### 镜像构建与发布串行边界
 
-release tag 工作流构建的镜像会复用同一套镜像构建流程产出 `edge`。为了避免在 master 与
-release tag 两类触发并发时互相覆盖可变 tag（`edge`），`.github/workflows/image.yml` 统一使用单一
-`weather-briefing-image` 并发组，并且不主动取消进行中的同组任务，这样 tag 构建与 master 边构建会按序
-完成，最终 `edge` 只会被最后完成（而不是并发竞争）的一次更新覆盖。
+release tag 工作流构建的镜像会复用同一套镜像构建流程产出 `edge`。`.github/workflows/image.yml` 使用
+按 workflow 与 ref 分组的并发控制（`${{ github.workflow }}-${{ github.ref }}`），避免 tag 构建与 master 分支构建
+互相排队或互相取消。
 
 `weather_briefing/__init__.py` 与 `pyproject.toml` 的版本更新逻辑在 release 流程中引入了 commit trailer
 `Weather-Briefing-Skip-Edge-Image: true` 的提交，用于让“先打 release tag，再立即切到 `-dev`
@@ -18,8 +17,14 @@ release tag 两类触发并发时互相覆盖可变 tag（`edge`），`.github/w
 
 该机制的边界：
 
+- `edge` 是最近一次“可运行”构建产生的游标标签；`latest` 与 `vX.Y.Z` 才是不可变发布语义。
+- commit trailer 仅影响 job 级是否执行；同一 ref 的历史运行若被手动重跑，仍可能再次更新 `edge`（可能回退），
+  这是可观察但可接受的行为。
+- 若未来需要“新 ref 一定持有 edge 最新副本”的严格保证，需要额外引入发布协调机制，而不仅依赖并发组与 trailer。
+
+该机制的补充边界：
+
 - 只在 release 工作流的 commit message 中显式设置该 trailer 的提交才会跳过 edge 构建。
-- `edge` 继续作为“最近一次可运行制品”的游标标签；`latest` 与 `vX.Y.Z` 标签依然各自表示完整发布语义。
 - 若未来需要同时对 `edge` 与别的分支/场景并发发布或允许多路覆盖策略发生变化，需要同步更新
   `.github/workflows/image.yml` 的并发策略与这段决策说明。
 
