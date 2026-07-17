@@ -9,7 +9,13 @@ import pytest
 from any_llm.exceptions import ProviderError
 from pydantic import BaseModel
 
-from weather_briefing.llm import AnyLLMStructuredProvider, LLMError, LLMStructuredOutput, parse_result
+from weather_briefing.llm import (
+    AnyLLMStructuredProvider,
+    LLMError,
+    LLMRequestError,
+    LLMStructuredOutput,
+    parse_result,
+)
 
 
 class _CompletionClientStub:
@@ -321,8 +327,9 @@ async def test_provider_accepts_typed_parsed_response() -> None:
     assert await provider.summarize("prompt", {}) == _valid_payload()
 
 
-async def test_provider_rejects_empty_json_content() -> None:
-    client = _CompletionClientStub(SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))]))
+@pytest.mark.parametrize("content", [None, "", "   "])
+async def test_provider_rejects_empty_json_content_as_request_failure(content: object) -> None:
+    client = _CompletionClientStub(SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))]))
     provider = AnyLLMStructuredProvider(
         client,
         provider="openai",
@@ -330,13 +337,14 @@ async def test_provider_rejects_empty_json_content() -> None:
         max_output_tokens=1024,
     )
 
-    with pytest.raises(LLMError, match="empty JSON"):
+    with pytest.raises(LLMRequestError, match="empty JSON"):
         await provider.summarize("prompt", {})
 
 
 @pytest.mark.parametrize(
     ("response", "message"),
     (
+        (SimpleNamespace(), "no completion choices"),
         (SimpleNamespace(choices=[]), "no completion choices"),
         (SimpleNamespace(choices=[SimpleNamespace()]), "missing a message"),
     ),
@@ -350,7 +358,7 @@ async def test_provider_rejects_malformed_completion_response(response: object, 
         max_output_tokens=1024,
     )
 
-    with pytest.raises(LLMError, match=message):
+    with pytest.raises(LLMRequestError, match=message):
         await provider.summarize("prompt", {})
 
 
@@ -378,7 +386,7 @@ async def test_provider_wraps_sdk_error() -> None:
         max_output_tokens=1024,
     )
 
-    with pytest.raises(LLMError, match="LLM request"):
+    with pytest.raises(LLMRequestError, match="LLM request"):
         await provider.summarize("prompt", {})
 
 

@@ -47,6 +47,14 @@ from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 _REQUIRED_SENSITIVE_SDK_LOGGERS = frozenset({"any_llm", "openai", "httpx", "httpcore"})
 
 
+class _ClosableLLMProviderStub:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 def test_configure_logging_is_idempotent_and_updates_level() -> None:
     original_handlers = _LOGGER.handlers[:]
     original_level = _LOGGER.level
@@ -732,7 +740,8 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
         assert diagnostics is None
 
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", delivery_without_diagnostics)
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c, d: None)
+    llm_provider = _ClosableLLMProviderStub()
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: llm_provider)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
     class FakeResolver:
@@ -779,6 +788,7 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
         assert "Processing location test" in stderr
         assert ("Location test display name: Test City" in stderr) is debug
         assert "briefing published (14 characters)" in stderr
+        assert llm_provider.closed
     finally:
         _LOGGER.handlers.clear()
         _LOGGER.handlers.extend(original_handlers)
@@ -822,7 +832,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: AlertDelivery())
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c, d: None)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: _ClosableLLMProviderStub())
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
     class FakeResolver:
@@ -887,7 +897,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: None)
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, c, d: None)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: _ClosableLLMProviderStub())
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
 
     class FakeResolver:
@@ -938,7 +948,6 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
 class TestLLMProvider:
     async def test_deepseek_with_custom_base_url(
         self,
-        async_client: httpx.AsyncClient,
         monkeypatch,
         tmp_path: Path,
     ) -> None:
@@ -952,13 +961,12 @@ class TestLLMProvider:
             llm_provider="deepseek",
             llm_base_url="https://custom.example.invalid",
         )
-
         with SQLiteRuntimeDiagnostics(tmp_path / "diagnostics.db") as diagnostics:
-            provider = _llm_provider(settings, async_client, diagnostics)
+            provider = _llm_provider(settings, diagnostics)
             assert provider is sdk_client
             assert calls == [
                 (
-                    ("deepseek", "m", 8192, async_client),
+                    ("deepseek", "m", 8192),
                     {
                         "api_key": "k",
                         "api_base": "https://custom.example.invalid",
@@ -967,29 +975,33 @@ class TestLLMProvider:
                 )
             ]
 
-    async def test_deepseek_without_base_url(self, async_client: httpx.AsyncClient, monkeypatch) -> None:
+    async def test_deepseek_without_base_url(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
             "weather_briefing.cli.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
-        provider = _llm_provider(settings, async_client)
+        provider = _llm_provider(settings)
         assert provider is not None
         assert calls[0][0][:3] == ("deepseek", "m", 8192)
         assert calls[0][1]["api_base"] is None
 
-    async def test_arbitrary_any_llm_provider_is_forwarded(self, async_client: httpx.AsyncClient, monkeypatch) -> None:
+    async def test_arbitrary_any_llm_provider_is_forwarded(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
             "weather_briefing.cli.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = replace(_make_fake_settings(llm_provider="mistral"), api_key=None, llm_base_url=None)
-        provider = _llm_provider(settings, async_client)
+        provider = _llm_provider(settings)
         assert provider is not None
         assert calls[0][0][:3] == ("mistral", "m", 8192)
-        assert calls[0][1] == {"api_key": None, "api_base": None, "diagnostics": None}
+        assert calls[0][1] == {
+            "api_key": None,
+            "api_base": None,
+            "diagnostics": None,
+        }
 
 
 class TestDeliveryProvider:

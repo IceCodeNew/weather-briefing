@@ -1,6 +1,7 @@
 import json
 import logging
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -87,22 +88,142 @@ async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) ->
         return _CompletionClientStub(SimpleNamespace())
 
     monkeypatch.setattr(AnyLLM, "create", fake_create)
-    async with httpx.AsyncClient() as http_client:
-        completion_providers = [
-            provider
-            for provider in AnyLLM.get_supported_providers()
-            if AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION
-        ]
-        adapters = [create_any_llm_provider(provider, "model", 1024, http_client) for provider in completion_providers]
+    completion_providers = [
+        provider
+        for provider in AnyLLM.get_supported_providers()
+        if AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION
+    ]
+    adapters = [create_any_llm_provider(provider, "model", 1024) for provider in completion_providers]
 
     assert [adapter.provider for adapter in adapters] == completion_providers
     assert [provider for provider, _ in created] == completion_providers
+    assert all("http_client" not in options and "max_retries" not in options for _, options in created)
+
+
+async def test_factory_owned_provider_closes_underlying_sdk_clients(monkeypatch) -> None:
+    closed: list[str] = []
+
+    class AsyncSDKClient:
+        async def aclose(self) -> None:
+            closed.append("async")
+
+    class SyncSDKClient:
+        def close(self) -> None:
+            closed.append("sync")
+
+    class SDKProvider(_CompletionClientStub):
+        def __init__(self) -> None:
+            super().__init__(SimpleNamespace())
+            self.client = AsyncSDKClient()
+            self.duplicate_client = self.client
+            self.responses_client = SyncSDKClient()
+
+    sdk_provider = SDKProvider()
+    monkeypatch.setattr(AnyLLM, "create", lambda *args, **kwargs: sdk_provider)
+
+    provider = create_any_llm_provider("deepseek", "model", 1024)
+    await provider.aclose()
+
+    assert closed == ["async", "sync"]
+
+
+async def test_owned_llm_client_cleanup_failure_continues_with_nested_resources(caplog) -> None:
+    closed: list[str] = []
+
+    class NestedClient:
+        def close(self) -> None:
+            closed.append("nested")
+
+    class FailingClient(_CompletionClientStub):
+        def __init__(self) -> None:
+            super().__init__(SimpleNamespace())
+            self.client = NestedClient()
+
+        async def aclose(self) -> None:
+            raise RuntimeError("cleanup failed")
+
+    provider = AnyLLMStructuredProvider(
+        FailingClient(),
+        provider="deepseek",
+        model="model",
+        max_output_tokens=1024,
+        owns_client=True,
+    )
+
+    await provider.aclose()
+
+    assert closed == ["nested"]
+    assert "Failed to close LLM SDK resource type=FailingClient" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+    assert "cleanup failed" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+async def test_owned_llm_client_without_attribute_storage_is_safe(caplog) -> None:
+    class SlottedClient:
+        __slots__ = ("acompletion",)
+        acompletion: AsyncMock
+
+        def __init__(self) -> None:
+            self.acompletion = AsyncMock()
+
+    provider = AnyLLMStructuredProvider(
+        SlottedClient(),
+        provider="deepseek",
+        model="model",
+        max_output_tokens=1024,
+        owns_client=True,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="weather_briefing.llm"):
+        await provider.aclose()
+
+    assert "LLM SDK resource has no discoverable nested resources type=SlottedClient" in caplog.text
+
+
+async def test_owned_llm_client_with_top_level_close_stops_nested_discovery() -> None:
+    closed = False
+
+    class CloseableClient(_CompletionClientStub):
+        async def aclose(self) -> None:
+            nonlocal closed
+            closed = True
+
+    provider = AnyLLMStructuredProvider(
+        CloseableClient(SimpleNamespace()),
+        provider="deepseek",
+        model="model",
+        max_output_tokens=1024,
+        owns_client=True,
+    )
+
+    await provider.aclose()
+
+    assert closed
+
+
+async def test_borrowed_llm_client_is_not_closed() -> None:
+    class BorrowedClient(_CompletionClientStub):
+        def __init__(self) -> None:
+            super().__init__(SimpleNamespace())
+            self.aclose = AsyncMock()
+
+    client = BorrowedClient()
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="deepseek",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    await provider.aclose()
+
+    client.aclose.assert_not_awaited()
 
 
 async def test_factory_rejects_provider_without_completion() -> None:
-    async with httpx.AsyncClient() as http_client:
-        with pytest.raises(ValueError, match="does not support completion"):
-            create_any_llm_provider("voyage", "model", 1024, http_client)
+    with pytest.raises(ValueError, match="does not support completion"):
+        create_any_llm_provider("voyage", "model", 1024)
 
 
 async def test_any_llm_deepseek_uses_injected_logged_http_client(caplog) -> None:
