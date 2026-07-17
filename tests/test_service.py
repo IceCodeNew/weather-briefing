@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeGuard
@@ -20,7 +22,7 @@ from weather_briefing.models import (
 )
 from weather_briefing.publishers import DeliveryProvider
 from weather_briefing.render import PlainTextRenderer
-from weather_briefing.service import BriefingService
+from weather_briefing.service import BriefingService, _bounded_context_history, _context_history_candidates
 from weather_briefing.state import SQLiteStateStore
 from weather_briefing.weather_context import WeatherContextError
 
@@ -34,6 +36,8 @@ class _TestSettings:
     rss_failure_threshold: int = 3
     warning_retention_hours: int = 12
     history_hours: int = 48
+    llm_history_max_documents: int = 8
+    llm_history_max_characters: int = 16_000
     briefing_max_characters: int = 3500
     llm_max_attempts: int = 3
 
@@ -207,6 +211,61 @@ def _location(
         timezone="Asia/Shanghai",
         is_mainland_china=True,
     )
+
+
+def _context_document(source_id: str, content: str) -> SourceDocument:
+    return SourceDocument(
+        id=source_id,
+        name=f"Source {source_id}",
+        url=f"https://example.invalid/{source_id}",
+        content=content,
+    )
+
+
+def test_context_history_keeps_latest_baselines_and_recent_changes() -> None:
+    documents = (
+        _context_document("weather", "weather baseline"),
+        _context_document("weather", "weather baseline"),
+        _context_document("weather", "weather changed"),
+        _context_document("air", "air baseline"),
+        _context_document("air", "air changed"),
+        _context_document("weather", "weather latest"),
+        _context_document("air", "air latest"),
+    )
+
+    selected = _context_history_candidates(documents, max_documents=6)
+
+    assert [(candidate.document.id, candidate.document.content, candidate.role) for candidate in selected] == [
+        ("air", "air latest", "latest"),
+        ("weather", "weather latest", "latest"),
+        ("air", "air baseline", "retention_baseline"),
+        ("weather", "weather baseline", "retention_baseline"),
+        ("air", "air changed", "recent_change"),
+        ("weather", "weather changed", "recent_change"),
+    ]
+
+
+def test_context_history_enforces_document_and_serialized_character_limits() -> None:
+    oversized = _context_document("oversized", "private-history" * 20)
+    compact = _context_document("compact", "current")
+    compact_payload, compact_characters = _bounded_context_history(
+        (compact,),
+        max_documents=1,
+        max_characters=1_000,
+    )
+    character_limit = compact_characters
+
+    selected, serialized_characters = _bounded_context_history(
+        (compact, oversized),
+        max_documents=2,
+        max_characters=character_limit,
+    )
+
+    assert [item["source_id"] for item in selected] == ["compact"]
+    assert selected[0]["history_role"] == "latest"
+    assert len(selected) <= 2
+    assert serialized_characters == len(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
+    assert serialized_characters <= character_limit
 
 
 @pytest.mark.parametrize(
@@ -551,6 +610,7 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
 
 async def test_briefing_api_only_update_can_be_remembered_without_delivery(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     settings = _TestSettings(
@@ -571,6 +631,10 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        state.save_context_documents(
+            (_context_document("weather:test", "sensitive historical body"),),
+            now.subtract(hours=1),
+        )
         service = BriefingService(
             settings,
             _location(),
@@ -582,13 +646,17 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
             delivery,
             weather_context,
         )
-        result = await service.run("briefing", now)
+        with caplog.at_level(logging.DEBUG, logger="weather_briefing.service"):
+            result = await service.run("briefing", now)
         remembered = state.recent_context_documents(now, 1)
 
     assert result is None
     assert llm.payload is not None
     assert llm.payload["mode"] == "briefing"
     assert publisher.messages == []
+    assert "input_documents=1 selected_documents=1 serialized_characters=" in caplog.text
+    assert "LLM payload prepared: serialized_characters=" in caplog.text
+    assert "sensitive historical body" not in caplog.text
     assert {document.id for document in remembered} == {
         "weather:test",
         "air-quality:test",

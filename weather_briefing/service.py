@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Literal, Protocol
 
 import pendulum
 
@@ -28,6 +30,12 @@ from .time_utils import require_aware_datetime
 from .weather_context import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
 
 _LOGGER = logging.getLogger("weather_briefing.service")
+
+
+@dataclass(frozen=True, slots=True)
+class _HistoricalContextCandidate:
+    document: SourceDocument
+    role: Literal["latest", "retention_baseline", "recent_change"]
 
 
 def _serialize_article(article: Article) -> dict[str, object]:
@@ -78,6 +86,16 @@ class BriefingSettings(Protocol):
     @property
     def history_hours(self) -> int:
         """Return the retained briefing context window in hours."""
+        ...
+
+    @property
+    def llm_history_max_documents(self) -> int:
+        """Return the maximum historical context snapshots sent to the LLM."""
+        ...
+
+    @property
+    def llm_history_max_characters(self) -> int:
+        """Return the serialized character budget for historical context."""
         ...
 
     @property
@@ -257,6 +275,17 @@ class BriefingService:
             context_items.extend(snapshot_to_documents(weather_context))
         context = tuple(context_items)
         historical_context = self._state.recent_context_documents(now, self._settings.history_hours)
+        historical_context_payload, historical_context_characters = _bounded_context_history(
+            historical_context,
+            max_documents=self._settings.llm_history_max_documents,
+            max_characters=self._settings.llm_history_max_characters,
+        )
+        _LOGGER.debug(
+            "Historical context bounded: input_documents=%d selected_documents=%d serialized_characters=%d",
+            len(historical_context),
+            len(historical_context_payload),
+            historical_context_characters,
+        )
         reference_context = _unique_documents((*historical_context, *context))
         active_warnings = self._state.active_warnings(now, self._settings.warning_retention_hours)
         if not unpublished_articles and not context and not active_warnings:
@@ -283,13 +312,18 @@ class BriefingService:
             deferred_articles,
             historical_articles,
             context,
-            historical_context,
+            historical_context_payload,
             active_warnings,
         )
         briefing_limit = self._delivery.briefing_limit(self._settings.briefing_max_characters)
         payload["output_constraints"] = {"briefing_max_characters": briefing_limit}
         required_advice_topics = _required_advice_topics(kind, context)
         payload["required_advice_topics"] = [topic.value for topic in required_advice_topics]
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "LLM payload prepared: serialized_characters=%d",
+                len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"))),
+            )
         allergen_source_ids = {document.id for document in context if document.has_allergen_information}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
         active_warning_ids = {warning.id for warning in active_warnings}
@@ -460,7 +494,7 @@ class BriefingService:
         deferred_articles: tuple[Article, ...],
         historical_articles: tuple[Article, ...],
         context: tuple[SourceDocument, ...],
-        historical_context: tuple[SourceDocument, ...],
+        historical_context: list[dict[str, object]],
         active_warnings: tuple[Warning, ...],
     ) -> dict[str, object]:
         location_scope = {"full_name": self._location.name}
@@ -484,15 +518,7 @@ class BriefingService:
             "context_documents": [
                 {"source_id": item.id, "name": item.name, "url": item.url, "content": item.content} for item in context
             ],
-            "recent_context_documents": [
-                {
-                    "source_id": item.id,
-                    "name": item.name,
-                    "url": item.url,
-                    "content": item.content,
-                }
-                for item in historical_context
-            ],
+            "recent_context_documents": historical_context,
             "recent_briefings": [
                 {
                     "mode": briefing.kind,
@@ -517,6 +543,87 @@ class BriefingService:
 
 def _unique_articles(articles: tuple[Article, ...]) -> tuple[Article, ...]:
     return tuple({article.id: article for article in articles}.values())
+
+
+def _serialize_context_document(
+    document: SourceDocument,
+    *,
+    history_role: Literal["latest", "retention_baseline", "recent_change"],
+) -> dict[str, object]:
+    return {
+        "source_id": document.id,
+        "name": document.name,
+        "url": document.url,
+        "content": document.content,
+        "history_role": history_role,
+    }
+
+
+def _bounded_context_history(
+    documents: tuple[SourceDocument, ...],
+    *,
+    max_documents: int,
+    max_characters: int,
+) -> tuple[list[dict[str, object]], int]:
+    candidates = _context_history_candidates(documents, max_documents)
+    selected: list[dict[str, object]] = []
+    serialized_characters = len("[]")
+    for candidate in candidates:
+        entry = _serialize_context_document(candidate.document, history_role=candidate.role)
+        candidate_payload = [*selected, entry]
+        candidate_characters = len(json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":")))
+        if candidate_characters <= max_characters:
+            selected = candidate_payload
+            serialized_characters = candidate_characters
+    return selected, serialized_characters
+
+
+def _context_history_candidates(
+    documents: tuple[SourceDocument, ...],
+    max_documents: int,
+) -> tuple[_HistoricalContextCandidate, ...]:
+    changes_by_source: dict[str, list[tuple[int, SourceDocument]]] = {}
+    for index, document in enumerate(documents):
+        source_changes = changes_by_source.setdefault(document.id, [])
+        previous_document = source_changes[-1][1] if source_changes else None
+        if previous_document is None or _context_document_value(previous_document) != _context_document_value(document):
+            source_changes.append((index, document))
+
+    source_changes = sorted(changes_by_source.values(), key=lambda changes: changes[-1][0], reverse=True)
+    prioritized: list[tuple[int, _HistoricalContextCandidate]] = []
+    selected_indexes: set[int] = set()
+
+    def add(
+        snapshot: tuple[int, SourceDocument],
+        role: Literal["latest", "retention_baseline", "recent_change"],
+    ) -> None:
+        if snapshot[0] not in selected_indexes:
+            prioritized.append((snapshot[0], _HistoricalContextCandidate(snapshot[1], role)))
+            selected_indexes.add(snapshot[0])
+
+    for changes in source_changes:
+        add(changes[-1], "latest")
+    for changes in source_changes:
+        add(changes[0], "retention_baseline")
+
+    depth = 2
+    while len(prioritized) < max_documents:
+        added_change = False
+        for changes in source_changes:
+            if len(changes) > depth:
+                add(changes[-depth], "recent_change")
+                added_change = True
+                if len(prioritized) == max_documents:
+                    break
+        if not added_change:
+            break
+        depth += 1
+
+    return tuple(candidate for _, candidate in prioritized[:max_documents])
+
+
+def _context_document_value(document: SourceDocument) -> tuple[str, str, str]:
+    return document.name, document.url, document.content
 
 
 def _required_advice_topics(

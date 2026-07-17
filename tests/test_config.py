@@ -49,6 +49,37 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert settings.llm_base_url is None
     assert settings.qweather_index_types == ("1", "3", "6", "7", "8", "15")
     assert settings.qweather_jwt_lifetime_seconds == 900
+    assert settings.llm_history_max_documents == 8
+    assert settings.llm_history_max_characters == 16_000
+
+
+def test_llm_history_limits_can_be_configured(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_HISTORY_MAX_DOCUMENTS", "6")
+    monkeypatch.setenv("LLM_HISTORY_MAX_CHARACTERS", "8000")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_history_max_documents == 6
+    assert settings.llm_history_max_characters == 8_000
+
+
+@pytest.mark.parametrize("value", ("0", "257"))
+def test_llm_history_document_limit_rejects_unsafe_values(monkeypatch, value: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_HISTORY_MAX_DOCUMENTS", value)
+
+    with pytest.raises(ConfigurationError, match="LLM_HISTORY_MAX_DOCUMENTS"):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize("value", ("0", "1", "1000001"))
+def test_llm_history_character_limit_rejects_unsafe_values(monkeypatch, value: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_HISTORY_MAX_CHARACTERS", value)
+
+    with pytest.raises(ConfigurationError, match="LLM_HISTORY_MAX_CHARACTERS"):
+        Settings.from_env()
 
 
 def test_environment_example_preserves_default_qweather_indices() -> None:
