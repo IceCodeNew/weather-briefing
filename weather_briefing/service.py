@@ -139,17 +139,22 @@ class BriefingService:
                 silent=silent,
             )
         except Exception as exc:
-            self._state.record_failure()
             exc.add_note("Briefing run failed")
             try:
-                if self._state.task_failure_requires_alert():
-                    await self._ops_delivery.publish_alert(
-                        "天气简报任务执行失败",
-                        "任务执行失败，请检查运行日志、天气 API 及私密源配置。",
-                    )
-                    self._state.mark_task_failure_alerted(current_time)
-            except Exception:
-                _LOGGER.exception("Failed to publish or record briefing failure alert")
+                self._state.record_failure()
+            except Exception as record_error:
+                exc.add_note("Failure state could not be recorded")
+                _LOGGER.error("Failed to record briefing failure: %s", type(record_error).__name__)
+            else:
+                try:
+                    if self._state.task_failure_requires_alert():
+                        await self._ops_delivery.publish_alert(
+                            "天气简报任务执行失败",
+                            "任务执行失败，请检查运行日志、天气 API 及私密源配置。",
+                        )
+                        self._state.mark_task_failure_alerted(current_time)
+                except Exception:
+                    _LOGGER.exception("Failed to publish or record briefing failure alert")
             raise
         self._state.record_success(
             current_time,
