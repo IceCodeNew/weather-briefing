@@ -246,6 +246,7 @@ class BriefingService:
         force_publish: bool,
         silent: bool,
     ) -> str | None:
+        await self._deliver_pending_verbatim()
         feeds = tuple(
             feed for feed in self._settings.feeds if not feed.location_ids or self._location.id in feed.location_ids
         )
@@ -439,25 +440,12 @@ class BriefingService:
                 context,
                 result,
                 body=None,
+                verbatim_silent=False,
             )
             return None
 
         publish_silently = silent and kind == "briefing" and not result.should_publish
         await self._delivery.publish_rendered(message, single_message=True, silent=publish_silently)
-        for article in unpublished_articles:
-            if article.is_verbatim:
-                _LOGGER.debug(
-                    "Publishing verbatim article: source=%s published_at=%s content_characters=%d",
-                    article.source_id,
-                    article.published_at.isoformat(),
-                    len(article.content),
-                )
-                await self._delivery.publish_verbatim(article, silent=publish_silently)
-                _LOGGER.info(
-                    "Verbatim article published: source=%s published_at=%s",
-                    article.source_id,
-                    article.published_at.isoformat(),
-                )
         self._save_result_state(
             kind,
             now,
@@ -465,8 +453,27 @@ class BriefingService:
             context,
             result,
             body=message.body,
+            verbatim_silent=publish_silently,
         )
+        await self._deliver_pending_verbatim()
         return message.body
+
+    async def _deliver_pending_verbatim(self) -> None:
+        for delivery in self._state.pending_verbatim_deliveries():
+            article = delivery.article
+            _LOGGER.debug(
+                "Publishing verbatim article: source=%s published_at=%s content_characters=%d",
+                article.source_id,
+                article.published_at.isoformat(),
+                len(article.content),
+            )
+            await self._delivery.publish_verbatim(article, silent=delivery.silent)
+            self._state.acknowledge_verbatim_delivery(article.id)
+            _LOGGER.info(
+                "Verbatim article published: source=%s published_at=%s",
+                article.source_id,
+                article.published_at.isoformat(),
+            )
 
     async def _publish_rss_health_alert(
         self,
@@ -510,20 +517,17 @@ class BriefingService:
         result: BriefingResult,
         *,
         body: str | None,
+        verbatim_silent: bool,
     ) -> None:
-        if body is None:
-            self._state.save_pending_articles(unpublished_articles, now)
-        else:
-            self._state.mark_articles_processed(unpublished_articles, now)
-        self._state.save_context_documents(context, now)
-        if body is not None:
-            self._state.save_briefing(kind, body, now)
-        current_source_ids = {article.id for article in unpublished_articles} | {document.id for document in context}
-        self._state.update_warnings(
-            result.active_warnings,
-            result.resolved_warning_ids,
-            now,
-            current_source_ids,
+        self._state.commit_result(
+            kind=kind,
+            body=body,
+            articles=unpublished_articles,
+            context_documents=context,
+            active_warnings=result.active_warnings,
+            resolved_warning_ids=result.resolved_warning_ids,
+            recorded_at=now,
+            verbatim_silent=verbatim_silent,
         )
 
     async def _summarize(

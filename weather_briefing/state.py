@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 import pendulum
@@ -17,6 +18,14 @@ _STORAGE_TIME_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{
 _RENDERED_TEXT_DIAGNOSTIC = "rendered_text"
 _RUNTIME_DIAGNOSTIC_BUSY_TIMEOUT_SECONDS = 0.1
 _LOGGER = logging.getLogger("weather_briefing.state")
+
+
+@dataclass(frozen=True, slots=True)
+class VerbatimDelivery:
+    """A durable verbatim delivery awaiting platform acceptance."""
+
+    article: Article
+    silent: bool
 
 
 class SQLiteRuntimeDiagnostics:
@@ -109,6 +118,7 @@ class SQLiteStateStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(path)
         self._connection.row_factory = sqlite3.Row
+        self._connection.execute("PRAGMA foreign_keys = ON")
         self._initialize()
 
     def close(self) -> None:
@@ -139,6 +149,12 @@ class SQLiteStateStore:
             CREATE TABLE IF NOT EXISTS briefings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
                 body TEXT NOT NULL, published_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS verbatim_delivery_queue (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id TEXT NOT NULL UNIQUE REFERENCES articles(id),
+                silent INTEGER NOT NULL CHECK (silent IN (0, 1)),
+                queued_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS warnings (
                 id TEXT PRIMARY KEY, payload TEXT NOT NULL, last_confirmed_at TEXT NOT NULL
@@ -216,6 +232,10 @@ class SQLiteStateStore:
 
     def save_pending_articles(self, articles: tuple[Article, ...], first_seen_at: pendulum.DateTime) -> None:
         """Persist articles awaiting successful briefing delivery."""
+        self._insert_pending_articles(articles, first_seen_at)
+        self._connection.commit()
+
+    def _insert_pending_articles(self, articles: tuple[Article, ...], first_seen_at: pendulum.DateTime) -> None:
         self._connection.executemany(
             """INSERT OR IGNORE INTO pending_articles
             (id, source_id, source_name, title, url, published_at, content, is_verbatim, first_seen_at)
@@ -235,7 +255,6 @@ class SQLiteStateStore:
                 for article in articles
             ],
         )
-        self._connection.commit()
 
     def pending_articles(self) -> tuple[Article, ...]:
         """Return pending articles in stable processing order."""
@@ -249,15 +268,17 @@ class SQLiteStateStore:
     ) -> None:
         """Move delivered articles from pending to processed state."""
         self._insert_articles(articles, processed_at)
+        self._delete_pending_articles(articles)
+        self._connection.commit()
+
+    def _delete_pending_articles(self, articles: tuple[Article, ...]) -> None:
         if not articles:
-            self._connection.commit()
             return
         placeholders = ",".join("?" for _ in articles)
         self._connection.execute(
             f"DELETE FROM pending_articles WHERE id IN ({placeholders})",  # noqa: S608
             tuple(article.id for article in articles),
         )
-        self._connection.commit()
 
     def record_source_check(
         self,
@@ -388,14 +409,25 @@ class SQLiteStateStore:
 
     def save_briefing(self, kind: str, body: str, published_at: pendulum.DateTime) -> None:
         """Persist a successfully published briefing."""
+        self._insert_briefing(kind, body, published_at)
+        self._connection.commit()
+
+    def _insert_briefing(self, kind: str, body: str, published_at: pendulum.DateTime) -> None:
         self._connection.execute(
             "INSERT INTO briefings(kind, body, published_at) VALUES (?, ?, ?)",
             (kind, body, _storage_time(published_at)),
         )
-        self._connection.commit()
 
     def save_context_documents(self, documents: tuple[SourceDocument, ...], observed_at: pendulum.DateTime) -> None:
         """Persist context documents observed during a successful run."""
+        self._insert_context_documents(documents, observed_at)
+        self._connection.commit()
+
+    def _insert_context_documents(
+        self,
+        documents: tuple[SourceDocument, ...],
+        observed_at: pendulum.DateTime,
+    ) -> None:
         self._connection.executemany(
             """INSERT INTO context_snapshots(
                 source_id, name, url, content, history_summary, history_value, observed_at
@@ -413,7 +445,6 @@ class SQLiteStateStore:
                 for document in documents
             ],
         )
-        self._connection.commit()
 
     def recent_context_documents(self, now: pendulum.DateTime, history_hours: int) -> tuple[SourceDocument, ...]:
         """Return context documents inside the configured history window."""
@@ -503,6 +534,16 @@ class SQLiteStateStore:
         confirmed_source_ids: set[str] | None = None,
     ) -> None:
         """Apply active and resolved warning updates atomically."""
+        self._update_warnings(warnings, resolved_warning_ids, now, confirmed_source_ids)
+        self._connection.commit()
+
+    def _update_warnings(
+        self,
+        warnings: tuple[Warning, ...],
+        resolved_warning_ids: tuple[str, ...],
+        now: pendulum.DateTime,
+        confirmed_source_ids: set[str] | None = None,
+    ) -> None:
         confirmed_source_ids = confirmed_source_ids or set()
         if resolved_warning_ids:
             placeholders = ",".join("?" for _ in resolved_warning_ids)
@@ -532,7 +573,67 @@ class SQLiteStateStore:
                 last_confirmed_at = excluded.last_confirmed_at""",
                 (warning.id, payload, _storage_time(confirmed_at)),
             )
-        self._connection.commit()
+
+    def commit_result(
+        self,
+        *,
+        kind: str,
+        body: str | None,
+        articles: tuple[Article, ...],
+        context_documents: tuple[SourceDocument, ...],
+        active_warnings: tuple[Warning, ...],
+        resolved_warning_ids: tuple[str, ...],
+        recorded_at: pendulum.DateTime,
+        verbatim_silent: bool,
+    ) -> None:
+        """Atomically persist one summarized result and its delivery queue."""
+        confirmed_source_ids = {article.id for article in articles} | {document.id for document in context_documents}
+        with self._connection:
+            if body is None:
+                self._insert_pending_articles(articles, recorded_at)
+            else:
+                self._insert_articles(articles, recorded_at)
+                self._delete_pending_articles(articles)
+            self._insert_context_documents(context_documents, recorded_at)
+            if body is not None:
+                self._insert_briefing(kind, body, recorded_at)
+                self._enqueue_verbatim_deliveries(articles, verbatim_silent, recorded_at)
+            self._update_warnings(
+                active_warnings,
+                resolved_warning_ids,
+                recorded_at,
+                confirmed_source_ids,
+            )
+
+    def _enqueue_verbatim_deliveries(
+        self,
+        articles: tuple[Article, ...],
+        silent: bool,
+        queued_at: pendulum.DateTime,
+    ) -> None:
+        self._connection.executemany(
+            """INSERT OR IGNORE INTO verbatim_delivery_queue(article_id, silent, queued_at)
+            VALUES (?, ?, ?)""",
+            [(article.id, silent, _storage_time(queued_at)) for article in articles if article.is_verbatim],
+        )
+
+    def pending_verbatim_deliveries(self) -> tuple[VerbatimDelivery, ...]:
+        """Return queued verbatim deliveries in stable insertion order."""
+        rows = self._connection.execute(
+            """SELECT articles.*, verbatim_delivery_queue.silent
+            FROM verbatim_delivery_queue
+            JOIN articles ON articles.id = verbatim_delivery_queue.article_id
+            ORDER BY verbatim_delivery_queue.sequence"""
+        )
+        return tuple(VerbatimDelivery(article=_article_from_row(row), silent=bool(row["silent"])) for row in rows)
+
+    def acknowledge_verbatim_delivery(self, article_id: str) -> None:
+        """Remove one verbatim item after successful platform delivery."""
+        with self._connection:
+            self._connection.execute(
+                "DELETE FROM verbatim_delivery_queue WHERE article_id = ?",
+                (article_id,),
+            )
 
     def record_success(
         self,
@@ -544,7 +645,12 @@ class SQLiteStateStore:
         """Record task success and prune expired history in one transaction."""
         history_threshold = _storage_time(now.subtract(hours=history_hours))
         warning_threshold = _storage_time(now.subtract(hours=warning_retention_hours))
-        self._connection.execute("DELETE FROM articles WHERE processed_at < ?", (history_threshold,))
+        self._connection.execute(
+            """DELETE FROM articles
+            WHERE processed_at < ?
+                AND id NOT IN (SELECT article_id FROM verbatim_delivery_queue)""",
+            (history_threshold,),
+        )
         self._connection.execute("DELETE FROM briefings WHERE published_at < ?", (history_threshold,))
         self._connection.execute("DELETE FROM context_snapshots WHERE observed_at < ?", (history_threshold,))
         self._connection.execute("DELETE FROM warnings WHERE last_confirmed_at < ?", (warning_threshold,))

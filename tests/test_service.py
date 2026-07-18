@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 import json
 import logging
+import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeGuard
@@ -62,11 +64,11 @@ class EmptyRSSSource:
 
 
 class StaticRSSSource:
-    def __init__(self, article: Article) -> None:
-        self._article = article
+    def __init__(self, *articles: Article) -> None:
+        self._articles = articles
 
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
-        return (self._article,)
+        return self._articles
 
 
 class FailingRSSSource:
@@ -202,6 +204,26 @@ class FailOncePublisher(RecordingPublisher):
         self.attempts += 1
         if self.attempts == 1:
             raise RuntimeError("delivery unavailable")
+        await super().publish(message, single_message=single_message, silent=silent)
+
+
+class FailingVerbatimPublisher(RecordingPublisher):
+    def __init__(self, failed_attempts: set[int]) -> None:
+        super().__init__()
+        self._failed_attempts = failed_attempts
+        self.verbatim_attempts: list[str] = []
+
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
+        if not single_message:
+            self.verbatim_attempts.append(message.body)
+            if len(self.verbatim_attempts) in self._failed_attempts:
+                raise RuntimeError("verbatim delivery unavailable")
         await super().publish(message, single_message=single_message, silent=silent)
 
 
@@ -1539,10 +1561,231 @@ async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> N
     assert publisher.messages[1][0].body == "Forecast bulletin\n\nRaw forecast"
     assert publisher.messages[1][1] is False
     assert (
-        "Publishing verbatim article: source=feed published_at=2026-07-13T08:00:00+08:00 content_characters=12"
+        "Publishing verbatim article: source=feed published_at=2026-07-13T00:00:00+00:00 content_characters=12"
     ) in caplog.text
     assert "Rendered verbatim message: visible_characters=31 payload_characters=31" in caplog.text
-    assert "Verbatim article published: source=feed published_at=2026-07-13T08:00:00+08:00" in caplog.text
+    assert "Verbatim article published: source=feed published_at=2026-07-13T00:00:00+00:00" in caplog.text
+
+
+async def test_failed_first_verbatim_is_retried_without_republishing_briefing(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
+    verbatim = Article(
+        "verbatim",
+        "feed",
+        "Feed",
+        "Forecast bulletin",
+        "https://example.invalid/verbatim",
+        now,
+        "Raw forecast",
+        is_verbatim=True,
+    )
+    settings = _TestSettings(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        llm_max_attempts=1,
+    )
+    publisher = FailingVerbatimPublisher({1})
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            StaticRSSSource(verbatim),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            ops_delivery,
+        )
+
+        with pytest.raises(RuntimeError, match="verbatim delivery unavailable"):
+            await service.run("forecast", now)
+
+        assert len(state.recent_briefings(now, 1)) == 1
+        assert tuple(item.article for item in state.pending_verbatim_deliveries()) == (verbatim,)
+
+        assert await service.run("forecast", now.add(hours=1)) is None
+
+        assert state.pending_verbatim_deliveries() == ()
+        assert len(state.recent_briefings(now.add(hours=1), 2)) == 1
+
+    assert publisher.verbatim_attempts == ["Forecast bulletin\n\nRaw forecast"] * 2
+    assert sum(single_message for _, single_message, _ in publisher.messages) == 1
+
+
+async def test_failed_later_verbatim_retries_only_unacknowledged_item(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
+    first = Article(
+        "first",
+        "feed",
+        "Feed",
+        "First bulletin",
+        "https://example.invalid/first",
+        now,
+        "First body",
+        is_verbatim=True,
+    )
+    second = Article(
+        "second",
+        "feed",
+        "Feed",
+        "Second bulletin",
+        "https://example.invalid/second",
+        now.add(minutes=1),
+        "Second body",
+        is_verbatim=True,
+    )
+    settings = _TestSettings(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        llm_max_attempts=1,
+    )
+    publisher = FailingVerbatimPublisher({2})
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            StaticRSSSource(first, second),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            ops_delivery,
+        )
+
+        with pytest.raises(RuntimeError, match="verbatim delivery unavailable"):
+            await service.run("forecast", now)
+
+        assert tuple(item.article for item in state.pending_verbatim_deliveries()) == (second,)
+
+        assert await service.run("forecast", now.add(hours=1)) is None
+
+        assert state.pending_verbatim_deliveries() == ()
+
+    assert publisher.verbatim_attempts == [
+        "First bulletin\n\nFirst body",
+        "Second bulletin\n\nSecond body",
+        "Second bulletin\n\nSecond body",
+    ]
+    assert sum(single_message for _, single_message, _ in publisher.messages) == 1
+
+
+async def test_verbatim_acknowledgement_failure_keeps_at_least_once_retry(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
+    verbatim = Article(
+        "verbatim",
+        "feed",
+        "Feed",
+        "Forecast bulletin",
+        "https://example.invalid/verbatim",
+        now,
+        "Raw forecast",
+        is_verbatim=True,
+    )
+    settings = _TestSettings(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        llm_max_attempts=1,
+    )
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_verbatim_ack BEFORE DELETE ON verbatim_delivery_queue
+                BEGIN SELECT RAISE(ABORT, 'acknowledgement unavailable'); END;"""
+            )
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            StaticRSSSource(verbatim),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            ops_delivery,
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="acknowledgement unavailable"):
+            await service.run("forecast", now)
+
+        assert tuple(item.article for item in state.pending_verbatim_deliveries()) == (verbatim,)
+
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.execute("DROP TRIGGER abort_verbatim_ack")
+            connection.commit()
+        assert await service.run("forecast", now.add(hours=1)) is None
+
+        assert state.pending_verbatim_deliveries() == ()
+
+    assert sum(single_message for _, single_message, _ in publisher.messages) == 1
+    assert sum(not single_message for _, single_message, _ in publisher.messages) == 2
+
+
+async def test_failed_main_checkpoint_leaves_no_partial_result_state(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
+    article = Article(
+        "article",
+        "feed",
+        "Feed",
+        "Forecast bulletin",
+        "https://example.invalid/article",
+        now,
+        "Raw forecast",
+        is_verbatim=True,
+    )
+    settings = _TestSettings(
+        timezone=timezone,
+        feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
+        llm_max_attempts=1,
+    )
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    ops_delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+    state_path = tmp_path / "state.db"
+
+    with SQLiteStateStore(state_path) as state:
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_briefing_insert BEFORE INSERT ON briefings
+                BEGIN SELECT RAISE(ABORT, 'briefing insert failed'); END;"""
+            )
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            StaticRSSSource(article),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            ops_delivery,
+            StaticWeatherContextProvider(),
+        )
+
+        with pytest.raises(sqlite3.IntegrityError, match="briefing insert failed"):
+            await service.run("forecast", now)
+
+        assert state.known_article_ids((article.id,)) == set()
+        assert state.pending_articles() == ()
+        assert state.recent_briefings(now, 1) == ()
+        assert state.recent_context_documents(now, 1) == ()
+        assert state.pending_verbatim_deliveries() == ()
+
+    assert len(publisher.messages) == 1
+    assert publisher.messages[0][1] is True
 
 
 async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) -> None:
