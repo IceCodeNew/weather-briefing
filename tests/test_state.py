@@ -179,6 +179,7 @@ def test_context_snapshots_are_available_for_briefing_change_detection(tmp_path:
         "https://example.invalid/weather",
         "Rain expected at 10:00",
         history_summary="Rain expected",
+        history_value="Rain expected",
     )
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.save_context_documents((document,), now)
@@ -187,7 +188,7 @@ def test_context_snapshots_are_available_for_briefing_change_detection(tmp_path:
         assert state.recent_context_documents(now.add(hours=3), 2) == ()
 
 
-def test_existing_context_snapshot_schema_adds_history_summary(tmp_path: Path) -> None:
+def test_existing_context_snapshot_schema_adds_history_fields(tmp_path: Path) -> None:
     database_path = tmp_path / "existing-state.db"
     with closing(sqlite3.connect(database_path)) as connection:
         connection.execute(
@@ -205,6 +206,7 @@ def test_existing_context_snapshot_schema_adds_history_summary(tmp_path: Path) -
         "https://example.invalid/weather",
         "Full weather history",
         history_summary="Weather summary",
+        history_value="Weather value",
     )
 
     with SQLiteStateStore(database_path) as state:

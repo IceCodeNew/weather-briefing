@@ -747,6 +747,7 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
     weather = "\n".join(f"- {item}" for item in snapshot.weather_forecast)
     lifestyle = "\n".join(f"- {item}" for item in snapshot.lifestyle_advice) or "不可用"
     weather_summary = snapshot.weather_forecast[0] if snapshot.weather_forecast else "不可用"
+    history_value = f"今明天气预报：\n{weather}\n生活与出行指数：\n{lifestyle}"
     documents = [
         SourceDocument(
             id=snapshot.source_id,
@@ -763,6 +764,7 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
                 f"天气概览：{weather_summary}\n"
                 f"生活与出行指数项数：{len(snapshot.lifestyle_advice)}"
             ),
+            history_value=history_value,
         )
     ]
     if snapshot.air_quality is not None:

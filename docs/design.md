@@ -78,7 +78,7 @@ SQLite 保存：
 
 每次任务成功结束时，状态存储在重置任务失败计数的同一事务中清理历史数据。已处理文章、已发布简报和上下文快照保留 `HISTORY_HOURS`，预警按独立的 `WARNING_RETENTION_HOURS` 保留；恰好位于阈值时刻的记录仍属于当前窗口。尚未成功发布的待处理文章和使用 upsert 维护的健康状态不参与历史清理。失败任务不清理历史，以免在恢复前丢失诊断与待处理上下文。
 
-历史上下文快照在进入 LLM 前按 source 折叠连续相同值，并依次保留各 source 的最新值、窗口基线和最近变化节点；每条记录通过 `history_role` 明确标记这三种角色。`LLM_HISTORY_MAX_DOCUMENTS` 限制快照总数，`LLM_HISTORY_MAX_CHARACTERS` 限制 `recent_context_documents` JSON 数组的完整序列化字符数。完整记录放不下时，内置 source adapter 可提供确定性 `history_summary`；入选摘要以 `content_compacted` 和 `original_content_characters` 标记，不截断出语义不完整的正文。最新值或窗口基线在摘要后仍放不下时，任务继续但通过持久化的内容指纹发出一次运维告警；内容改变或恢复容纳后才重新开放告警。最近变化节点因预算丢弃只属于预期降级。最近成功发布的简报仍随 payload 提供，模型因此可以用有界的基线、最新值及变化节点判断相对上次成功发布的累计变化。DEBUG 诊断只记录候选数、入选数和序列化字符数，不记录来源名称、URL 或正文。
+历史上下文快照在进入 LLM 前按 source 折叠连续相同值，并依次保留各 source 的最新值、窗口基线和最近变化节点；内置 source adapter 通过不含观测时间等易变元数据的 `history_value` 定义语义相同，每条入选记录通过 `history_role` 明确标记这三种角色。`LLM_HISTORY_MAX_DOCUMENTS` 限制快照总数，`LLM_HISTORY_MAX_CHARACTERS` 限制 `recent_context_documents` JSON 数组按实际请求格式序列化后的完整字符数。完整记录放不下时，内置 source adapter 可提供确定性 `history_summary`；入选摘要以 `content_compacted` 和 `original_content_characters` 标记，不截断出语义不完整的正文。最新值或窗口基线在摘要后仍放不下时，任务继续但通过持久化的内容指纹发出一次运维告警；内容改变或恢复容纳后才重新开放告警。最近变化节点因预算丢弃只属于预期降级。引用校验和 renderer 只接受实际进入有界 payload 的历史 source ID。最近成功发布的简报仍随 payload 提供，模型因此可以用有界的基线、最新值及变化节点判断相对上次成功发布的累计变化。DEBUG 诊断只记录候选数、入选数和序列化字符数，不记录来源名称、URL 或正文。
 
 ## 时间模型
 

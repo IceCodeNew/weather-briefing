@@ -26,6 +26,9 @@ def allergen_to_document(snapshot: AllergenSnapshot) -> SourceDocument:
         "\n".join(f"- {level.name}：{level.concentration:g} 粒/m³（{level.category}）" for level in snapshot.levels)
         or "不可用"
     )
+    history_value = (
+        f"花粉过敏原：\n{levels}\n总体等级：{snapshot.overall_category}\n健康提示：{snapshot.health_guidance}"
+    )
     return SourceDocument(
         id=snapshot.source_id,
         name=snapshot.source_name,
@@ -40,6 +43,7 @@ def allergen_to_document(snapshot: AllergenSnapshot) -> SourceDocument:
         history_summary=(
             f"观测时间：{observed_at}\n花粉类型数：{len(snapshot.levels)}\n总体等级：{snapshot.overall_category}"
         ),
+        history_value=history_value,
     )
 
 

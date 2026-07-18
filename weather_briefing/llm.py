@@ -36,6 +36,11 @@ class LLMProvider(Protocol):
         ...
 
 
+def serialize_llm_payload(payload: object) -> str:
+    """Serialize an LLM payload consistently for budgeting and transport."""
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
 class LLMCompletionClient(Protocol):
     """Expose the any-llm completion operation used by the application adapter."""
 
@@ -184,7 +189,7 @@ class AnyLLMStructuredProvider:
                     model=self._model,
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                        {"role": "user", "content": serialize_llm_payload(payload)},
                     ],
                     response_format=LLMStructuredOutput,
                     temperature=0.2,

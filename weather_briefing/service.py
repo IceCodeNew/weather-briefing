@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 from collections import deque
 from collections.abc import Callable
@@ -13,7 +12,7 @@ from typing import Literal, Protocol
 
 import pendulum
 
-from .llm import LLMError, LLMProvider, LLMRequestError, parse_result
+from .llm import LLMError, LLMProvider, LLMRequestError, parse_result, serialize_llm_payload
 from .models import (
     AdviceTopic,
     Article,
@@ -49,6 +48,14 @@ class _HistoricalContextOverflow:
     fingerprint: str
 
 
+@dataclass(frozen=True, slots=True)
+class _BoundedContextHistory:
+    payload: list[dict[str, object]]
+    documents: tuple[SourceDocument, ...]
+    serialized_characters: int
+    overflows: tuple[_HistoricalContextOverflow, ...]
+
+
 @dataclass(slots=True)
 class _ContextSourceChanges:
     baseline: tuple[int, SourceDocument]
@@ -82,9 +89,8 @@ def _update_framed_text_digest(digest: _Digest, value: str) -> None:
 
 def _context_overflow_fingerprint(candidate: _HistoricalContextCandidate) -> str:
     digest = hashlib.sha256()
-    _update_framed_text_digest(digest, candidate.role)
-    _update_framed_text_digest(digest, candidate.document.content)
-    _update_framed_text_digest(digest, candidate.document.history_summary or "")
+    for value in (candidate.role, *_context_document_value(candidate.document)):
+        _update_framed_text_digest(digest, value or "")
     return digest.hexdigest()
 
 
@@ -331,21 +337,19 @@ class BriefingService:
             context_items.extend(snapshot_to_documents(weather_context))
         context = tuple(context_items)
         historical_context = self._state.recent_context_documents(now, self._settings.history_hours)
-        historical_context_payload, historical_context_characters, historical_context_overflows = (
-            _bounded_context_history(
-                historical_context,
-                max_documents=self._settings.llm_history_max_documents,
-                max_characters=self._settings.llm_history_max_characters,
-            )
+        bounded_history = _bounded_context_history(
+            historical_context,
+            max_documents=self._settings.llm_history_max_documents,
+            max_characters=self._settings.llm_history_max_characters,
         )
         _LOGGER.debug(
             "Historical context bounded: input_documents=%d selected_documents=%d serialized_characters=%d",
             len(historical_context),
-            len(historical_context_payload),
-            historical_context_characters,
+            len(bounded_history.payload),
+            bounded_history.serialized_characters,
         )
-        await self._publish_context_budget_alert(historical_context_overflows, now)
-        reference_context = _unique_documents((*historical_context, *context))
+        await self._publish_context_budget_alert(bounded_history.overflows, now)
+        reference_context = _unique_documents((*bounded_history.documents, *context))
         active_warnings = self._state.active_warnings(now, self._settings.warning_retention_hours)
         if not unpublished_articles and not context and not active_warnings:
             _LOGGER.info("Skipping briefing: no new articles, context, or warnings")
@@ -371,7 +375,7 @@ class BriefingService:
             deferred_articles,
             historical_articles,
             context,
-            historical_context_payload,
+            bounded_history.payload,
             active_warnings,
         )
         active_warning_ids = {warning.id for warning in active_warnings}
@@ -383,7 +387,7 @@ class BriefingService:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "LLM payload prepared: serialized_characters=%d",
-                len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"))),
+                len(serialize_llm_payload(payload)),
             )
         allergen_source_ids = {document.id for document in context if document.has_allergen_information}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
@@ -660,7 +664,7 @@ def _bounded_context_history(
     *,
     max_documents: int,
     max_characters: int,
-) -> tuple[list[dict[str, object]], int, tuple[_HistoricalContextOverflow, ...]]:
+) -> _BoundedContextHistory:
     candidates, omitted_overflows = _context_history_selection(documents, max_documents)
     selected: list[tuple[_HistoricalContextCandidate, dict[str, object]]] = []
     overflows = list(omitted_overflows)
@@ -668,7 +672,7 @@ def _bounded_context_history(
     for candidate in candidates:
         entry = _serialize_context_document(candidate.document, history_role=candidate.role)
         candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
-        candidate_characters = len(json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":")))
+        candidate_characters = len(serialize_llm_payload(candidate_payload))
         if candidate_characters <= max_characters:
             selected.append((candidate, entry))
             serialized_characters = candidate_characters
@@ -680,7 +684,7 @@ def _bounded_context_history(
                 compact=True,
             )
             candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
-            candidate_characters = len(json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":")))
+            candidate_characters = len(serialize_llm_payload(candidate_payload))
             if candidate_characters <= max_characters:
                 selected.append((candidate, entry))
                 serialized_characters = candidate_characters
@@ -694,17 +698,17 @@ def _bounded_context_history(
                         history_role=selected_candidate.role,
                         compact=True,
                     )
-                    full_characters = len(json.dumps(selected_entry, ensure_ascii=False, separators=(",", ":")))
-                    compact_characters = len(json.dumps(compact_entry, ensure_ascii=False, separators=(",", ":")))
+                    full_characters = len(serialize_llm_payload(selected_entry))
+                    compact_characters = len(serialize_llm_payload(compact_entry))
                     if compact_characters < full_characters:
                         compactable.append((full_characters - compact_characters, index, compact_entry))
             compactable.sort(key=lambda item: item[0], reverse=True)
             for _, index, compact_entry in compactable:
                 selected[index] = (selected[index][0], compact_entry)
                 selected_payload = [selected_entry for _, selected_entry in selected]
-                serialized_characters = len(json.dumps(selected_payload, ensure_ascii=False, separators=(",", ":")))
+                serialized_characters = len(serialize_llm_payload(selected_payload))
                 candidate_payload = [*selected_payload, entry]
-                candidate_characters = len(json.dumps(candidate_payload, ensure_ascii=False, separators=(",", ":")))
+                candidate_characters = len(serialize_llm_payload(candidate_payload))
                 if candidate_characters <= max_characters:
                     selected.append((candidate, entry))
                     serialized_characters = candidate_characters
@@ -714,7 +718,15 @@ def _bounded_context_history(
                 overflows.append(_HistoricalContextOverflow(candidate.document.id, candidate.role, fingerprint))
                 continue
             continue
-    return [entry for _, entry in selected], serialized_characters, tuple(overflows)
+    selected_documents: dict[str, SourceDocument] = {}
+    for candidate, _ in selected:
+        selected_documents.setdefault(candidate.document.id, candidate.document)
+    return _BoundedContextHistory(
+        payload=[entry for _, entry in selected],
+        documents=tuple(selected_documents.values()),
+        serialized_characters=serialized_characters,
+        overflows=tuple(overflows),
+    )
 
 
 def _context_budget_fingerprints(overflows: tuple[_HistoricalContextOverflow, ...]) -> dict[str, str]:
@@ -804,6 +816,8 @@ def _context_history_selection(
 
 
 def _context_document_value(document: SourceDocument) -> tuple[str, str, str, str | None]:
+    if document.history_value is not None:
+        return document.name, document.url, document.history_value, None
     return document.name, document.url, document.content, document.history_summary
 
 

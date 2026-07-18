@@ -219,6 +219,9 @@ def test_air_quality_document_labels_forecast_time() -> None:
 
     assert "预报时段：2026-07-15T18:00:00+08:00" in document.content
     assert "观测时间" not in document.content
+    assert document.history_value is not None
+    assert document.history_value.startswith("时间类型：forecast\n")
+    assert "2026-07-15T18:00:00+08:00" not in document.history_value
 
 
 def test_health_guidance_unbounded_band_required(monkeypatch) -> None:
