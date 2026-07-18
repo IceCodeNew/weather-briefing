@@ -103,6 +103,197 @@ def test_pending_articles_remain_until_marked_processed(tmp_path: Path) -> None:
         assert state.known_article_ids((article.id,)) == {article.id}
 
 
+def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    regular = Article("regular", "source", "Source", "Regular", "https://example.invalid/r", now, "regular")
+    verbatim = Article(
+        "verbatim",
+        "source",
+        "Source",
+        "Verbatim",
+        "https://example.invalid/v",
+        now,
+        "verbatim",
+        is_verbatim=True,
+    )
+    document = SourceDocument("context", "Context", "https://example.invalid/c", "context")
+    warning = Warning("warning", "Warning", "active", "detail", (regular.id,), now)
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.save_pending_articles((regular, verbatim), now.subtract(hours=1))
+        state.commit_result(
+            kind="briefing",
+            body="Published briefing",
+            articles=(regular, verbatim),
+            context_documents=(document,),
+            active_warnings=(warning,),
+            resolved_warning_ids=(),
+            recorded_at=now,
+            verbatim_silent=True,
+        )
+
+        assert state.pending_articles() == ()
+        assert state.known_article_ids((regular.id, verbatim.id)) == {regular.id, verbatim.id}
+        assert tuple(record.body for record in state.recent_briefings(now, 1)) == ("Published briefing",)
+        assert state.recent_context_documents(now, 1) == (document,)
+        assert state.active_warnings(now, 1) == (warning,)
+        queued = state.pending_verbatim_deliveries()
+        assert tuple(delivery.article for delivery in queued) == (verbatim,)
+        assert tuple(delivery.silent for delivery in queued) == (True,)
+
+
+def test_unpublished_result_commits_pending_state_without_delivery_queue(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    article = Article(
+        "verbatim",
+        "source",
+        "Source",
+        "Verbatim",
+        "https://example.invalid/v",
+        now,
+        "verbatim",
+        is_verbatim=True,
+    )
+    document = SourceDocument("context", "Context", "https://example.invalid/c", "context")
+    warning = Warning("warning", "Warning", "active", "detail", (article.id,), now)
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.commit_result(
+            kind="briefing",
+            body=None,
+            articles=(article,),
+            context_documents=(document,),
+            active_warnings=(warning,),
+            resolved_warning_ids=(),
+            recorded_at=now,
+            verbatim_silent=False,
+        )
+
+        assert state.pending_articles() == (article,)
+        assert state.known_article_ids((article.id,)) == set()
+        assert state.recent_briefings(now, 1) == ()
+        assert state.recent_context_documents(now, 1) == (document,)
+        assert state.active_warnings(now, 1) == (warning,)
+        assert state.pending_verbatim_deliveries() == ()
+
+
+def test_verbatim_queue_preserves_order_and_acknowledges_one_item(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    articles = tuple(
+        Article(
+            identifier,
+            "source",
+            "Source",
+            identifier,
+            f"https://example.invalid/{identifier}",
+            now,
+            identifier,
+            is_verbatim=True,
+        )
+        for identifier in ("second-by-id", "first-by-id")
+    )
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.commit_result(
+            kind="briefing",
+            body="Published briefing",
+            articles=articles,
+            context_documents=(),
+            active_warnings=(),
+            resolved_warning_ids=(),
+            recorded_at=now,
+            verbatim_silent=False,
+        )
+
+        queued = state.pending_verbatim_deliveries()
+        assert tuple(delivery.article for delivery in queued) == articles
+        assert tuple(delivery.silent for delivery in queued) == (False, False)
+
+        state.acknowledge_verbatim_delivery(articles[0].id)
+
+        assert tuple(delivery.article for delivery in state.pending_verbatim_deliveries()) == (articles[1],)
+
+
+def test_verbatim_queue_rejects_missing_article_reference(tmp_path: Path) -> None:
+    with (
+        SQLiteStateStore(tmp_path / "state.db") as state,
+        pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"),
+    ):
+        state._connection.execute(
+            """INSERT INTO verbatim_delivery_queue(article_id, silent, queued_at)
+            VALUES (?, ?, ?)""",
+            ("missing", False, "2026-07-13T01:00:00.000000Z"),
+        )
+
+
+def test_result_checkpoint_rolls_back_all_state_and_can_be_retried(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    state_path = tmp_path / "state.db"
+    article = Article(
+        "verbatim",
+        "source",
+        "Source",
+        "Verbatim",
+        "https://example.invalid/v",
+        now,
+        "verbatim",
+        is_verbatim=True,
+    )
+    document = SourceDocument("context", "Context", "https://example.invalid/c", "context")
+    old_warning = Warning("old-warning", "Old", "active", "old", (article.id,), now.subtract(hours=1))
+    new_warning = Warning("new-warning", "New", "active", "new", (article.id,), now)
+
+    with SQLiteStateStore(state_path) as state:
+        state.save_pending_articles((article,), now.subtract(hours=1))
+        state.update_warnings((old_warning,), (), now.subtract(hours=1), {article.id})
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_warning_insert BEFORE INSERT ON warnings
+                BEGIN SELECT RAISE(ABORT, 'warning insert failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="warning insert failed"):
+            state.commit_result(
+                kind="briefing",
+                body="Published briefing",
+                articles=(article,),
+                context_documents=(document,),
+                active_warnings=(new_warning,),
+                resolved_warning_ids=(old_warning.id,),
+                recorded_at=now,
+                verbatim_silent=True,
+            )
+
+        assert state.pending_articles() == (article,)
+        assert state.known_article_ids((article.id,)) == set()
+        assert state.recent_briefings(now, 1) == ()
+        assert state.recent_context_documents(now, 1) == ()
+        assert state.active_warnings(now, 2) == (old_warning,)
+        assert state.pending_verbatim_deliveries() == ()
+
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.execute("DROP TRIGGER abort_warning_insert")
+            connection.commit()
+
+        state.commit_result(
+            kind="briefing",
+            body="Published briefing",
+            articles=(article,),
+            context_documents=(document,),
+            active_warnings=(new_warning,),
+            resolved_warning_ids=(old_warning.id,),
+            recorded_at=now,
+            verbatim_silent=True,
+        )
+
+        assert state.pending_articles() == ()
+        assert state.known_article_ids((article.id,)) == {article.id}
+        assert tuple(record.body for record in state.recent_briefings(now, 1)) == ("Published briefing",)
+        assert state.recent_context_documents(now, 1) == (document,)
+        assert state.active_warnings(now, 1) == (new_warning,)
+        assert tuple(delivery.article for delivery in state.pending_verbatim_deliveries()) == (article,)
+
+
 def test_source_becomes_stale_after_threshold(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     with SQLiteStateStore(tmp_path / "state.db") as state:
@@ -367,6 +558,44 @@ def test_record_success_prunes_expired_history_and_preserves_boundaries(tmp_path
             ("boundary-context",)
         ]
         assert connection.execute("SELECT id FROM warnings ORDER BY id").fetchall() == [("boundary-warning",)]
+
+
+def test_record_success_retains_articles_referenced_by_verbatim_queue(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    processed_at = now.subtract(hours=49)
+    article = Article(
+        "queued",
+        "source",
+        "Source",
+        "Queued",
+        "https://example.invalid/queued",
+        processed_at,
+        "queued body",
+        is_verbatim=True,
+    )
+    state_path = tmp_path / "state.db"
+
+    with SQLiteStateStore(state_path) as state:
+        state.commit_result(
+            kind="briefing",
+            body="Published briefing",
+            articles=(article,),
+            context_documents=(),
+            active_warnings=(),
+            resolved_warning_ids=(),
+            recorded_at=processed_at,
+            verbatim_silent=False,
+        )
+
+        state.record_success(now, history_hours=48, warning_retention_hours=12)
+
+        assert tuple(delivery.article for delivery in state.pending_verbatim_deliveries()) == (article,)
+
+        state.acknowledge_verbatim_delivery(article.id)
+        state.record_success(now, history_hours=48, warning_retention_hours=12)
+
+    with closing(sqlite3.connect(state_path)) as connection:
+        assert connection.execute("SELECT id FROM articles").fetchall() == []
 
 
 def test_parse_time_rejects_invalid_format() -> None:
