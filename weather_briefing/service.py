@@ -8,7 +8,7 @@ import json
 import logging
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 
 import pendulum
@@ -374,6 +374,8 @@ class BriefingService:
             historical_context_payload,
             active_warnings,
         )
+        active_warning_ids = {warning.id for warning in active_warnings}
+        payload["allowed_resolved_warning_ids"] = sorted(active_warning_ids)
         briefing_limit = self._delivery.briefing_limit(self._settings.briefing_max_characters)
         payload["output_constraints"] = {"briefing_max_characters": briefing_limit}
         required_advice_topics = _required_advice_topics(kind, context)
@@ -385,14 +387,8 @@ class BriefingService:
             )
         allergen_source_ids = {document.id for document in context if document.has_allergen_information}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
-        active_warning_ids = {warning.id for warning in active_warnings}
 
         def validate_result(candidate: BriefingResult) -> None:
-            unknown_resolved_warning_ids = set(candidate.resolved_warning_ids) - active_warning_ids
-            if unknown_resolved_warning_ids:
-                raise LLMError(
-                    f"resolved_warning_ids contains unknown warning IDs: {sorted(unknown_resolved_warning_ids)}"
-                )
             candidate_message = self._delivery.render_briefing(candidate, source_articles, reference_context)
             if kind == "briefing" and candidate.advice:
                 raise LLMError("briefing must not repeat lifestyle advice")
@@ -413,6 +409,18 @@ class BriefingService:
                 )
 
         result = await self._summarize(payload, now, valid_source_ids, validator=validate_result)
+        unknown_resolved_warning_ids = set(result.resolved_warning_ids) - active_warning_ids
+        if unknown_resolved_warning_ids:
+            _LOGGER.warning(
+                "Ignoring %d distinct resolved warning ID(s) that are not currently active",
+                len(unknown_resolved_warning_ids),
+            )
+            result = replace(
+                result,
+                resolved_warning_ids=tuple(
+                    warning_id for warning_id in result.resolved_warning_ids if warning_id in active_warning_ids
+                ),
+            )
         message = self._delivery.render_briefing(
             result,
             source_articles,
@@ -547,6 +555,7 @@ class BriefingService:
                     repair_payload: dict[str, object] = {
                         "original_input": payload,
                         "allowed_source_ids": sorted(valid_source_ids),
+                        "allowed_resolved_warning_ids": payload["allowed_resolved_warning_ids"],
                     }
                     if raw_result is not None:
                         repair_payload["previous_invalid_response"] = raw_result
