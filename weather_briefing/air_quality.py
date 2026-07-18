@@ -99,6 +99,13 @@ def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
     if snapshot.pm25_concentration is not None and snapshot.pm25_unit:
         concentration = f"{snapshot.pm25_concentration:g} {snapshot.pm25_unit}"
     pm25_aqi = "不可用" if snapshot.pm25_aqi is None else f"{snapshot.pm25_aqi:g}"
+    history_value = (
+        f"时间类型：{snapshot.time_kind.value}\n"
+        f"AQI：{snapshot.aqi_display}（标准：{snapshot.aqi_standard}；类别：{snapshot.category}）\n"
+        f"PM2.5 单项 AQI：{pm25_aqi}（标准：{snapshot.aqi_standard}）\n"
+        f"PM2.5 {concentration}\n"
+        f"健康提示：{snapshot.health_guidance}"
+    )
     return SourceDocument(
         id=snapshot.source_id,
         name=snapshot.source_name,
@@ -116,6 +123,7 @@ def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
             f"AQI：{snapshot.aqi_display}（{snapshot.category}）\n"
             f"PM2.5 单项 AQI：{pm25_aqi}；浓度：{concentration}"
         ),
+        history_value=history_value,
     )
 
 

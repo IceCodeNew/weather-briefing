@@ -70,7 +70,7 @@ async def test_any_llm_provider_uses_structured_chat_completion() -> None:
             "model": "requested-model",
             "messages": [
                 {"role": "system", "content": "Return JSON"},
-                {"role": "user", "content": '{"input": "数据"}'},
+                {"role": "user", "content": '{"input":"数据"}'},
             ],
             "response_format": LLMStructuredOutput,
             "temperature": 0.2,

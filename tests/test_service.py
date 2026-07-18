@@ -222,13 +222,20 @@ def _location(
     )
 
 
-def _context_document(source_id: str, content: str, *, history_summary: str | None = None) -> SourceDocument:
+def _context_document(
+    source_id: str,
+    content: str,
+    *,
+    history_summary: str | None = None,
+    history_value: str | None = None,
+) -> SourceDocument:
     return SourceDocument(
         id=source_id,
         name=f"Source {source_id}",
         url=f"https://example.invalid/{source_id}",
         content=content,
         history_summary=history_summary,
+        history_value=history_value,
     )
 
 
@@ -269,45 +276,80 @@ def test_context_history_keeps_summary_only_changes() -> None:
     ]
 
 
+def test_context_history_collapses_volatile_rendering_with_same_semantic_value() -> None:
+    documents = (
+        _context_document("weather", "更新时间：08:00\nRain", history_value="Rain"),
+        _context_document("weather", "更新时间：09:00\nRain", history_value="Rain"),
+    )
+
+    selected = _context_history_candidates(documents, max_documents=2)
+
+    assert [(candidate.document.content, candidate.role) for candidate in selected] == [
+        ("更新时间：08:00\nRain", "latest")
+    ]
+
+
 def test_context_history_enforces_document_and_serialized_character_limits() -> None:
     oversized = _context_document("oversized", "private-history" * 20_000)
     compact = _context_document("compact", "current")
-    compact_payload, compact_characters, compact_overflows = _bounded_context_history(
+    compact_history = _bounded_context_history(
         (compact,),
         max_documents=1,
         max_characters=1_000,
     )
-    character_limit = compact_characters
+    character_limit = compact_history.serialized_characters
 
-    selected, serialized_characters, overflows = _bounded_context_history(
+    bounded_history = _bounded_context_history(
         (compact, oversized),
         max_documents=2,
         max_characters=character_limit,
     )
 
-    assert [item["source_id"] for item in selected] == ["compact"]
-    assert selected[0]["history_role"] == "latest"
-    assert len(selected) <= 2
-    assert serialized_characters == len(json.dumps(selected, ensure_ascii=False, separators=(",", ":")))
-    assert serialized_characters <= character_limit
-    assert compact_overflows == ()
-    assert [(overflow.source_id, overflow.role) for overflow in overflows] == [("oversized", "latest")]
+    assert [item["source_id"] for item in bounded_history.payload] == ["compact"]
+    assert bounded_history.payload[0]["history_role"] == "latest"
+    assert len(bounded_history.payload) <= 2
+    assert bounded_history.serialized_characters == len(
+        json.dumps(bounded_history.payload, ensure_ascii=False, separators=(",", ":"))
+    )
+    assert bounded_history.serialized_characters <= character_limit
+    assert compact_history.overflows == ()
+    assert [(overflow.source_id, overflow.role) for overflow in bounded_history.overflows] == [("oversized", "latest")]
     expected = hashlib.sha256()
-    for value in ("latest", oversized.content, ""):
+    for value in (
+        "latest",
+        oversized.name,
+        oversized.url,
+        oversized.content,
+        "",
+    ):
         encoded = value.encode()
         expected.update(len(encoded).to_bytes(8, byteorder="big"))
         expected.update(encoded)
-    assert overflows[0].fingerprint == expected.hexdigest()
+    assert bounded_history.overflows[0].fingerprint == expected.hexdigest()
 
 
 def test_context_history_overflow_fingerprint_has_unambiguous_field_boundaries() -> None:
     first = _context_document("weather", "content\0summary", history_summary="tail")
     second = _context_document("weather", "content", history_summary="summary\0tail")
 
-    _, _, first_overflows = _bounded_context_history((first,), max_documents=1, max_characters=len("[]"))
-    _, _, second_overflows = _bounded_context_history((second,), max_documents=1, max_characters=len("[]"))
+    first_history = _bounded_context_history((first,), max_documents=1, max_characters=len("[]"))
+    second_history = _bounded_context_history((second,), max_documents=1, max_characters=len("[]"))
 
-    assert first_overflows[0].fingerprint != second_overflows[0].fingerprint
+    assert first_history.overflows[0].fingerprint != second_history.overflows[0].fingerprint
+
+
+def test_context_history_overflow_fingerprint_uses_semantic_value() -> None:
+    first = _context_document("weather", "更新时间：08:00\nRain", history_value="Rain")
+    same_value = _context_document("weather", "更新时间：09:00\nRain", history_value="Rain")
+    changed_value = _context_document("weather", "更新时间：09:00\nStorm", history_value="Storm")
+
+    fingerprints = [
+        _bounded_context_history((document,), max_documents=1, max_characters=len("[]")).overflows[0].fingerprint
+        for document in (first, same_value, changed_value)
+    ]
+
+    assert fingerprints[0] == fingerprints[1]
+    assert fingerprints[0] != fingerprints[2]
 
 
 def test_context_history_uses_deterministic_summary_before_skipping_mandatory_document() -> None:
@@ -323,15 +365,16 @@ def test_context_history_uses_deterministic_summary_before_skipping_mandatory_do
     }
     character_limit = len(json.dumps([summary_entry], ensure_ascii=False, separators=(",", ":")))
 
-    selected, serialized_characters, overflows = _bounded_context_history(
+    bounded_history = _bounded_context_history(
         (document,),
         max_documents=1,
         max_characters=character_limit,
     )
 
-    assert selected == [summary_entry]
-    assert serialized_characters == character_limit
-    assert overflows == ()
+    assert bounded_history.payload == [summary_entry]
+    assert [document.id for document in bounded_history.documents] == ["weather"]
+    assert bounded_history.serialized_characters == character_limit
+    assert bounded_history.overflows == ()
 
 
 def test_context_history_repacks_selected_entries_before_skipping_mandatory_document() -> None:
@@ -344,15 +387,15 @@ def test_context_history_repacks_selected_entries_before_skipping_mandatory_docu
     earlier_full = _serialize_context_document(earlier, history_role="latest")
     character_limit = len(json.dumps([earlier_full], ensure_ascii=False, separators=(",", ":")))
 
-    selected, serialized_characters, overflows = _bounded_context_history(
+    bounded_history = _bounded_context_history(
         (later, earlier),
         max_documents=2,
         max_characters=character_limit,
     )
 
-    assert selected == expected
-    assert serialized_characters == len(json.dumps(expected, ensure_ascii=False, separators=(",", ":")))
-    assert overflows == ()
+    assert bounded_history.payload == expected
+    assert bounded_history.serialized_characters == len(json.dumps(expected, ensure_ascii=False, separators=(",", ":")))
+    assert bounded_history.overflows == ()
 
 
 def test_context_history_repacks_multiple_entries_when_one_summary_is_insufficient() -> None:
@@ -363,14 +406,14 @@ def test_context_history_repacks_multiple_entries_when_one_summary_is_insufficie
     second_full = _serialize_context_document(second, history_role="latest")
     character_limit = len(json.dumps([first_full, second_full], ensure_ascii=False, separators=(",", ":")))
 
-    selected, _, overflows = _bounded_context_history(
+    bounded_history = _bounded_context_history(
         (third, second, first),
         max_documents=3,
         max_characters=character_limit,
     )
 
-    assert [entry.get("content_compacted", False) for entry in selected] == [True, True, True]
-    assert overflows == ()
+    assert [entry.get("content_compacted", False) for entry in bounded_history.payload] == [True, True, True]
+    assert bounded_history.overflows == ()
 
 
 def test_context_history_ignores_unhelpful_prior_summaries_when_repacking() -> None:
@@ -381,14 +424,16 @@ def test_context_history_ignores_unhelpful_prior_summaries_when_repacking() -> N
     unhelpful_entry = _serialize_context_document(unhelpful, history_role="latest")
     character_limit = len(json.dumps([plain_entry, unhelpful_entry], ensure_ascii=False, separators=(",", ":")))
 
-    selected, _, overflows = _bounded_context_history(
+    bounded_history = _bounded_context_history(
         (overflowing, unhelpful, plain),
         max_documents=3,
         max_characters=character_limit,
     )
 
-    assert selected == [plain_entry, unhelpful_entry]
-    assert [(overflow.source_id, overflow.role) for overflow in overflows] == [("overflowing", "latest")]
+    assert bounded_history.payload == [plain_entry, unhelpful_entry]
+    assert [(overflow.source_id, overflow.role) for overflow in bounded_history.overflows] == [
+        ("overflowing", "latest")
+    ]
 
 
 def test_context_history_reports_mandatory_documents_excluded_by_count_limit() -> None:
@@ -399,18 +444,20 @@ def test_context_history_reports_mandatory_documents_excluded_by_count_limit() -
         _context_document("air", "air latest"),
     )
 
-    selected, _, overflows = _bounded_context_history(
+    bounded_history = _bounded_context_history(
         documents,
         max_documents=3,
         max_characters=10_000,
     )
 
-    assert [(item["source_id"], item["history_role"]) for item in selected] == [
+    assert [(item["source_id"], item["history_role"]) for item in bounded_history.payload] == [
         ("air", "latest"),
         ("weather", "latest"),
         ("air", "retention_baseline"),
     ]
-    assert [(overflow.source_id, overflow.role) for overflow in overflows] == [("weather", "retention_baseline")]
+    assert [(overflow.source_id, overflow.role) for overflow in bounded_history.overflows] == [
+        ("weather", "retention_baseline")
+    ]
 
 
 def test_context_history_reports_mandatory_overflow_but_silently_drops_recent_change() -> None:
@@ -419,15 +466,75 @@ def test_context_history_reports_mandatory_overflow_but_silently_drops_recent_ch
         for content in ("baseline", "recent", "latest")
     )
 
-    selected, serialized_characters, overflows = _bounded_context_history(
+    bounded_history = _bounded_context_history(
         documents,
         max_documents=3,
         max_characters=len("[]"),
     )
 
-    assert selected == []
-    assert serialized_characters == len("[]")
-    assert [overflow.role for overflow in overflows] == ["latest", "retention_baseline"]
+    assert bounded_history.payload == []
+    assert bounded_history.documents == ()
+    assert bounded_history.serialized_characters == len("[]")
+    assert [overflow.role for overflow in bounded_history.overflows] == ["latest", "retention_baseline"]
+
+
+async def test_bounded_history_excludes_omitted_sources_from_citation_validation(tmp_path: Path) -> None:
+    class OmittedHistoryCitationLLM:
+        def __init__(self) -> None:
+            self.payload: dict[str, object] | None = None
+
+        async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
+            self.payload = payload
+            return {
+                "headline": "Invalid historical citation",
+                "headline_source_ids": ["omitted-history"],
+                "conclusions": [{"text": "Invalid claim", "source_ids": ["omitted-history"]}],
+                "active_warnings": [],
+                "resolved_warning_ids": [],
+                "advice": [],
+                "disaster_tracking": [],
+                "should_publish": True,
+            }
+
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = _TestSettings(
+        timezone=timezone,
+        llm_history_max_documents=1,
+        llm_max_attempts=1,
+    )
+    llm = OmittedHistoryCitationLLM()
+    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+    now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "bounded-citations.sqlite3") as state:
+        state.save_context_documents(
+            (_context_document("omitted-history", "older history"),),
+            now.subtract(hours=2),
+        )
+        state.save_context_documents(
+            (_context_document("selected-history", "newer history"),),
+            now.subtract(hours=1),
+        )
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            llm,
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+
+        with pytest.raises(LLMError, match="validation failed") as error:
+            await service.run("forecast", now)
+
+    assert "unknown source IDs: ['omitted-history']" in str(error.value.__cause__)
+    assert llm.payload is not None
+    recent_context = llm.payload["recent_context_documents"]
+    assert _is_dict_list(recent_context)
+    assert [item["source_id"] for item in recent_context] == ["selected-history"]
 
 
 async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Path) -> None:

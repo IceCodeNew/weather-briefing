@@ -72,6 +72,8 @@ def test_allergen_to_document_format() -> None:
     assert "桦木：15 粒/m³（中）" in document.content
     assert "禾本：3 粒/m³（低）" in document.content
     assert "总体等级：中" in document.content
+    assert document.history_value is not None
+    assert "2026-07-13T08:00:00Z" not in document.history_value
 
 
 def test_allergen_to_document_without_observed_at() -> None:

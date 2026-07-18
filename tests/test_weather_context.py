@@ -236,6 +236,8 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
         "air-quality:qweather",
     ]
     assert documents[0].has_allergen_information
+    assert documents[0].history_value is not None
+    assert snapshot.observed_at.to_iso8601_string() not in documents[0].history_value
 
 
 async def test_qweather_provider_selects_requested_future_date() -> None:
