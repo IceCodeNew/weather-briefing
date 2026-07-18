@@ -954,7 +954,7 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
     assert publisher.messages == []
 
 
-async def test_unknown_resolved_warning_id_triggers_contract_retry(tmp_path: Path) -> None:
+async def test_unknown_resolved_warning_id_is_ignored(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
     article = Article(
@@ -982,12 +982,14 @@ async def test_unknown_resolved_warning_id_triggers_contract_retry(tmp_path: Pat
 
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             self.attempts += 1
+            assert "input.allowed_resolved_warning_ids" in system_prompt
+            assert payload["allowed_resolved_warning_ids"] == [warning.id]
             return {
                 "headline": "Warning update",
                 "headline_source_ids": [article.id],
                 "conclusions": [],
                 "active_warnings": [],
-                "resolved_warning_ids": ["invented-warning" if self.attempts == 1 else warning.id],
+                "resolved_warning_ids": ["invented-warning", "invented-warning", warning.id],
                 "advice": [],
                 "disaster_tracking": [],
                 "should_publish": False,
@@ -1010,11 +1012,13 @@ async def test_unknown_resolved_warning_id_triggers_contract_retry(tmp_path: Pat
             delivery,
         )
 
-        assert await service.run("briefing", now.add(hours=1)) is None
+        with caplog.at_level("WARNING", logger="weather_briefing.service"):
+            assert await service.run("briefing", now.add(hours=1)) is None
         assert state.active_warnings(now.add(hours=1), 12) == ()
 
-    assert llm.attempts == 2
+    assert llm.attempts == 1
     assert publisher.messages == []
+    assert "Ignoring 1 distinct resolved warning ID(s) that are not currently active" in caplog.text
 
 
 async def test_unpublished_article_is_included_until_a_later_briefing_is_published(
@@ -1543,6 +1547,7 @@ class FailingOnceLLM:
         assert ("previous_invalid_response" in payload) is not self._fail_before_response
         allowed_source_ids = payload["allowed_source_ids"]
         assert isinstance(allowed_source_ids, list)
+        assert payload["allowed_resolved_warning_ids"] == []
         source_id = str(allowed_source_ids[0])
         return {
             "headline": "Briefing",
