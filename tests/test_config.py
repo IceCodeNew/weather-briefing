@@ -777,6 +777,36 @@ class TestConfigErrorPaths:
         assert source.id == "context"
         assert source.name == "Context"
         assert source.url == "https://example.invalid/context"
+        assert source.language == "und"
+
+    def test_context_source_normalizes_declared_language(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv(
+            "CONTEXT_SOURCES_JSON",
+            '[{"id":"context","name":"Context","url":"https://example.invalid/context","language":"EN-us"}]',
+        )
+
+        assert Settings.from_env().context_sources[0].language == "en-US"
+
+    @pytest.mark.parametrize("language", ("english", 1, None))
+    def test_context_source_rejects_invalid_language(self, monkeypatch, language: object) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv(
+            "CONTEXT_SOURCES_JSON",
+            json.dumps(
+                [
+                    {
+                        "id": "context",
+                        "name": "Context",
+                        "url": "https://example.invalid/context",
+                        "language": language,
+                    }
+                ]
+            ),
+        )
+
+        with pytest.raises(ConfigurationError, match=r"CONTEXT_SOURCES_JSON\[0\]\.language"):
+            Settings.from_env()
 
     def test_invalid_timezone_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)

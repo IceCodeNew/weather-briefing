@@ -9,9 +9,73 @@ import httpx
 import pendulum
 
 from .api_client import api_call_extensions
+from .languages import localized_labels
 from .models import AirQualitySnapshot, AirQualityTimeKind, SourceDocument
 from .reference_data import ReferenceDataError, reference_value
 from .time_utils import parse_datetime_with_default_timezone
+
+_AIR_QUALITY_FORMATS = {
+    "zh-CN": {
+        "separator": "：",
+        "unavailable": "不可用",
+        "forecast_time": "预报时段",
+        "observation_time": "观测时间",
+        "observation": "观测",
+        "forecast": "预报",
+        "time_kind": "时间类型：{kind}",
+        "aqi": "AQI：{aqi}（标准：{standard}；类别：{category}）",
+        "aqi_summary": "AQI：{aqi}（{category}）",
+        "pm25_aqi": "PM2.5 单项 AQI：{value}（标准：{standard}）",
+        "pm25_summary": "PM2.5 单项 AQI：{value}；浓度：{concentration}",
+        "pm25": "PM2.5 {concentration}",
+        "health": "健康提示：{guidance}",
+    },
+    "zh-TW": {
+        "separator": "：",
+        "unavailable": "無法取得",
+        "forecast_time": "預報時段",
+        "observation_time": "觀測時間",
+        "observation": "觀測",
+        "forecast": "預報",
+        "time_kind": "時間類型：{kind}",
+        "aqi": "AQI：{aqi}（標準：{standard}；類別：{category}）",
+        "aqi_summary": "AQI：{aqi}（{category}）",
+        "pm25_aqi": "PM2.5 單項 AQI：{value}（標準：{standard}）",
+        "pm25_summary": "PM2.5 單項 AQI：{value}；濃度：{concentration}",
+        "pm25": "PM2.5 {concentration}",
+        "health": "健康提示：{guidance}",
+    },
+    "en": {
+        "separator": ": ",
+        "unavailable": "Unavailable",
+        "forecast_time": "Forecast period",
+        "observation_time": "Observed at",
+        "observation": "Observation",
+        "forecast": "Forecast",
+        "time_kind": "Time type: {kind}",
+        "aqi": "AQI: {aqi} (Standard: {standard}; Category: {category})",
+        "aqi_summary": "AQI: {aqi} ({category})",
+        "pm25_aqi": "PM2.5 sub-index AQI: {value} (Standard: {standard})",
+        "pm25_summary": "PM2.5 sub-index AQI: {value}; concentration: {concentration}",
+        "pm25": "PM2.5 concentration: {concentration}",
+        "health": "Health guidance: {guidance}",
+    },
+    "ja": {
+        "separator": "：",
+        "unavailable": "利用不可",
+        "forecast_time": "予報期間",
+        "observation_time": "観測時刻",
+        "observation": "観測",
+        "forecast": "予報",
+        "time_kind": "時刻種別：{kind}",
+        "aqi": "AQI：{aqi}（基準：{standard}、区分：{category}）",
+        "aqi_summary": "AQI：{aqi}（{category}）",
+        "pm25_aqi": "PM2.5 個別 AQI：{value}（基準：{standard}）",
+        "pm25_summary": "PM2.5 個別 AQI：{value}、濃度：{concentration}",
+        "pm25": "PM2.5 濃度：{concentration}",
+        "health": "健康上の注意：{guidance}",
+    },
+}
 
 
 class AirQualityError(RuntimeError):
@@ -88,40 +152,50 @@ class AQICNProvider:
             pm25_unit=None,
             category=category,
             health_guidance=guidance,
+            output_language="zh-CN",
         )
 
 
 def air_quality_to_document(snapshot: AirQualitySnapshot) -> SourceDocument:
     """Convert an air-quality snapshot into a citable source document."""
-    effective_at = snapshot.effective_at.to_iso8601_string() if snapshot.effective_at is not None else "不可用"
-    time_label = "预报时段" if snapshot.time_kind is AirQualityTimeKind.FORECAST else "观测时间"
-    concentration = "不可用"
+    labels = localized_labels(snapshot.output_language, _AIR_QUALITY_FORMATS)
+    effective_at = (
+        snapshot.effective_at.to_iso8601_string() if snapshot.effective_at is not None else labels["unavailable"]
+    )
+    time_label = (
+        labels["forecast_time"] if snapshot.time_kind is AirQualityTimeKind.FORECAST else labels["observation_time"]
+    )
+    concentration = labels["unavailable"]
     if snapshot.pm25_concentration is not None and snapshot.pm25_unit:
         concentration = f"{snapshot.pm25_concentration:g} {snapshot.pm25_unit}"
-    pm25_aqi = "不可用" if snapshot.pm25_aqi is None else f"{snapshot.pm25_aqi:g}"
-    history_value = (
-        f"时间类型：{snapshot.time_kind.value}\n"
-        f"AQI：{snapshot.aqi_display}（标准：{snapshot.aqi_standard}；类别：{snapshot.category}）\n"
-        f"PM2.5 单项 AQI：{pm25_aqi}（标准：{snapshot.aqi_standard}）\n"
-        f"PM2.5 {concentration}\n"
-        f"健康提示：{snapshot.health_guidance}"
+    pm25_aqi = labels["unavailable"] if snapshot.pm25_aqi is None else f"{snapshot.pm25_aqi:g}"
+    aqi = labels["aqi"].format(
+        aqi=snapshot.aqi_display,
+        standard=snapshot.aqi_standard,
+        category=snapshot.category,
+    )
+    pm25_index = labels["pm25_aqi"].format(value=pm25_aqi, standard=snapshot.aqi_standard)
+    pm25 = labels["pm25"].format(concentration=concentration)
+    health = labels["health"].format(guidance=snapshot.health_guidance)
+    history_value = "\n".join(
+        (
+            labels["time_kind"].format(kind=labels[snapshot.time_kind.value]),
+            aqi,
+            pm25_index,
+            pm25,
+            health,
+        )
     )
     return SourceDocument(
         id=snapshot.source_id,
         name=snapshot.source_name,
         url=snapshot.source_url,
-        content=(
-            f"{time_label}：{effective_at}\n"
-            f"AQI：{snapshot.aqi_display}（标准：{snapshot.aqi_standard}；"
-            f"类别：{snapshot.category}）\n"
-            f"PM2.5 单项 AQI：{pm25_aqi}（标准：{snapshot.aqi_standard}）\n"
-            f"PM2.5 {concentration}\n"
-            f"健康提示：{snapshot.health_guidance}"
-        ),
+        content="\n".join((f"{time_label}{labels['separator']}{effective_at}", aqi, pm25_index, pm25, health)),
+        language=snapshot.output_language,
         history_summary=(
-            f"{time_label}：{effective_at}\n"
-            f"AQI：{snapshot.aqi_display}（{snapshot.category}）\n"
-            f"PM2.5 单项 AQI：{pm25_aqi}；浓度：{concentration}"
+            f"{time_label}{labels['separator']}{effective_at}\n"
+            f"{labels['aqi_summary'].format(aqi=snapshot.aqi_display, category=snapshot.category)}\n"
+            f"{labels['pm25_summary'].format(value=pm25_aqi, concentration=concentration)}"
         ),
         history_value=history_value,
     )

@@ -220,8 +220,34 @@ def test_air_quality_document_labels_forecast_time() -> None:
     assert "预报时段：2026-07-15T18:00:00+08:00" in document.content
     assert "观测时间" not in document.content
     assert document.history_value is not None
-    assert document.history_value.startswith("时间类型：forecast\n")
+    assert document.history_value.startswith("时间类型：预报\n")
     assert "2026-07-15T18:00:00+08:00" not in document.history_value
+
+
+def test_air_quality_document_scaffold_matches_english_source_language() -> None:
+    snapshot = AirQualitySnapshot(
+        source_id="air-quality:test",
+        source_name="Test",
+        source_url="https://example.invalid/air-quality",
+        effective_at=None,
+        time_kind=AirQualityTimeKind.OBSERVATION,
+        aqi=42,
+        aqi_display="42",
+        aqi_standard="US EPA",
+        pm25_aqi=None,
+        pm25_concentration=None,
+        pm25_unit=None,
+        category="Good",
+        health_guidance="Normal activities are suitable.",
+        output_language="en",
+    )
+
+    document = air_quality_to_document(snapshot)
+
+    assert document.language == "en"
+    assert "Observed at: Unavailable" in document.content
+    assert "Health guidance: Normal activities are suitable." in document.content
+    assert "健康提示" not in document.content
 
 
 def test_health_guidance_unbounded_band_required(monkeypatch) -> None:

@@ -76,6 +76,26 @@ def test_allergen_to_document_format() -> None:
     assert "2026-07-13T08:00:00Z" not in document.history_value
 
 
+def test_allergen_document_scaffold_matches_english_source_language() -> None:
+    snapshot = AllergenSnapshot(
+        source_id="allergen:test",
+        source_name="Test pollen",
+        source_url="https://example.invalid/allergen",
+        observed_at=None,
+        levels=(AllergenLevel(name="Birch", category="Moderate", concentration=15),),
+        overall_category="Moderate",
+        health_guidance="Reduce prolonged outdoor activity.",
+        output_language="en",
+    )
+
+    document = allergen_to_document(snapshot)
+
+    assert document.language == "en"
+    assert "Pollen allergens:" in document.content
+    assert "Birch: 15 grains/m³ (Moderate)" in document.content
+    assert "花粉过敏原" not in document.content
+
+
 def test_allergen_to_document_without_observed_at() -> None:
     snapshot = AllergenSnapshot(
         source_id="allergen:test",

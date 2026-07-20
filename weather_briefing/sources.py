@@ -182,4 +182,10 @@ class HTTPContextSource:
             response.raise_for_status()
         except httpx.HTTPError:
             raise SourceFetchError(f"Context source {config.id} failed") from None
-        return SourceDocument(id=config.id, name=config.name, url=config.url, content=response.text)
+        return SourceDocument(
+            id=config.id,
+            name=config.name,
+            url=config.url,
+            content=response.text,
+            language=config.language,
+        )

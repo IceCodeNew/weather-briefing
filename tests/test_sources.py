@@ -263,12 +263,13 @@ async def test_http_context_source_fetches_successfully() -> None:
         transport=httpx.MockTransport(lambda _: httpx.Response(200, text="context data"))
     ) as client:
         result = await HTTPContextSource(client).fetch(
-            ContextSourceConfig(id="ctx", name="Context", url="https://example.invalid/ctx")
+            ContextSourceConfig(id="ctx", name="Context", url="https://example.invalid/ctx", language="en")
         )
 
     assert isinstance(result, SourceDocument)
     assert result.id == "ctx"
     assert result.content == "context data"
+    assert result.language == "en"
 
 
 async def test_http_context_source_raises_on_http_error() -> None:
