@@ -377,6 +377,7 @@ class CachedLocationResolver:
                     administrative_area=None,
                     timezone=None,
                     is_mainland_china=possibly_mainland_china(location.latitude, location.longitude),
+                    summary_language=location.summary_language,
                 ),
                 from_cache=False,
             )
@@ -386,16 +387,19 @@ class CachedLocationResolver:
         cached = cache.get(cache_key)
         if isinstance(cached, dict):
             try:
-                return LocationResolution(ResolvedLocation(**cached), from_cache=True)
-            except TypeError as exc:
+                return LocationResolution(
+                    replace(ResolvedLocation(**cached), summary_language=location.summary_language),
+                    from_cache=True,
+                )
+            except (TypeError, ValueError) as exc:
                 raise GeocodingError(
                     f"Invalid cached geocoding record for location: {location.id} ({type(exc).__name__})",
                     cause_type=type(exc),
                 ) from None
         if cached is not None:
             raise GeocodingError(f"Invalid cached geocoding record for location: {location.id}")
-        resolved = await self._provider.geocode(location)
-        cache[cache_key] = asdict(resolved)
+        resolved = replace(await self._provider.geocode(location), summary_language=location.summary_language)
+        cache[cache_key] = _location_cache_record(resolved)
         self._write_cache(cache)
         return LocationResolution(resolved, from_cache=False)
 
@@ -412,16 +416,22 @@ class CachedLocationResolver:
         cached = cache.get(cache_key)
         if isinstance(cached, dict):
             try:
-                return LocationResolution(ResolvedLocation(**cached), from_cache=True)
-            except TypeError as exc:
+                return LocationResolution(
+                    replace(ResolvedLocation(**cached), summary_language=location.summary_language),
+                    from_cache=True,
+                )
+            except (TypeError, ValueError) as exc:
                 raise GeocodingError(
                     f"Invalid cached reverse geocoding record for location: {location.id} ({type(exc).__name__})",
                     cause_type=type(exc),
                 ) from None
         if cached is not None:
             raise GeocodingError(f"Invalid cached reverse geocoding record for location: {location.id}")
-        resolved = await self._reverse_provider.reverse_geocode(location)
-        cache[cache_key] = asdict(resolved)
+        resolved = replace(
+            await self._reverse_provider.reverse_geocode(location),
+            summary_language=location.summary_language,
+        )
+        cache[cache_key] = _location_cache_record(resolved)
         self._write_cache(cache)
         return LocationResolution(resolved, from_cache=False)
 
@@ -441,6 +451,12 @@ class CachedLocationResolver:
         temporary = self._cache_path.with_suffix(f"{self._cache_path.suffix}.tmp")
         temporary.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
         temporary.replace(self._cache_path)
+
+
+def _location_cache_record(location: ResolvedLocation) -> dict[str, Any]:
+    record = asdict(location)
+    del record["summary_language"]
+    return record
 
 
 def _is_geocoded_mainland(country_code: str | None, administrative_area: str | None) -> bool:

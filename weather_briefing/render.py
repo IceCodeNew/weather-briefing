@@ -7,6 +7,7 @@ from typing import Protocol
 
 from bs4 import BeautifulSoup
 
+from .languages import LanguageSupport
 from .models import (
     Advice,
     Article,
@@ -14,6 +15,66 @@ from .models import (
     Conclusion,
     RenderedMessage,
     SourceDocument,
+)
+
+_ZH_CN_BRIEFING_LABELS = {
+    "weather": "天气信息",
+    "warnings": "气象预警",
+    "disasters": "自然灾害动态",
+    "advice": "生活建议",
+    "attribution": "（来源：{sources}）",
+    "html_source_separator": "、",
+    "plain_source_separator": "；",
+    "status_open": "（",
+    "status_close": "）",
+    "detail_separator": "：",
+}
+_ZH_TW_BRIEFING_LABELS = {
+    "weather": "天氣資訊",
+    "warnings": "氣象警報",
+    "disasters": "自然災害動態",
+    "advice": "生活建議",
+    "attribution": "（來源：{sources}）",
+    "html_source_separator": "、",
+    "plain_source_separator": "；",
+    "status_open": "（",
+    "status_close": "）",
+    "detail_separator": "：",
+}
+_BRIEFING_LABELS = {
+    "zh": _ZH_CN_BRIEFING_LABELS,
+    "zh-CN": _ZH_CN_BRIEFING_LABELS,
+    "zh-Hans": _ZH_CN_BRIEFING_LABELS,
+    "zh-TW": _ZH_TW_BRIEFING_LABELS,
+    "zh-Hant": _ZH_TW_BRIEFING_LABELS,
+    "en": {
+        "weather": "Weather information",
+        "warnings": "Weather warnings",
+        "disasters": "Natural disaster updates",
+        "advice": "Advice",
+        "attribution": "(Sources: {sources})",
+        "html_source_separator": ", ",
+        "plain_source_separator": "; ",
+        "status_open": " (",
+        "status_close": ")",
+        "detail_separator": ": ",
+    },
+    "ja": {
+        "weather": "気象情報",
+        "warnings": "気象警報",
+        "disasters": "自然災害情報",
+        "advice": "生活上の注意",
+        "attribution": "（出典：{sources}）",
+        "html_source_separator": "、",
+        "plain_source_separator": "；",
+        "status_open": "（",
+        "status_close": "）",
+        "detail_separator": "：",
+    },
+}
+_BRIEFING_LANGUAGE_SUPPORT = LanguageSupport(
+    default="en",
+    supported=tuple(_BRIEFING_LABELS),
 )
 
 
@@ -48,27 +109,31 @@ class TelegramHTMLRenderer:
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
         """Render a sourced briefing as Telegram HTML."""
+        labels = _briefing_labels(result.output_language)
         source_links = {
             article.id: _html_link(article.url, _article_source_name(article)) for article in reference_articles
         }
         source_links.update({document.id: _html_link(document.url, document.name) for document in context})
         lines = [
-            f"<b>{_html_text(result.headline)}</b> {_html_attribution(result.headline_source_ids, source_links)}",
+            f"<b>{_html_text(result.headline)}</b> "
+            f"{_html_attribution(result.headline_source_ids, source_links, labels)}",
             "",
         ]
-        lines.extend(_html_items("天气信息", result.conclusions, source_links))
+        lines.extend(_html_items(labels["weather"], result.conclusions, source_links, labels))
         if result.active_warnings:
-            lines.extend(["<b>气象预警</b>", ""])
+            lines.extend([f"<b>{labels['warnings']}</b>", ""])
             lines.extend(
                 (
-                    f"• <b>{_html_text(warning.title)}（{_html_text(warning.status)}）</b>："
-                    f"{_html_text(warning.detail)} {_html_attribution(warning.source_ids, source_links)}"
+                    f"• <b>{_html_text(warning.title)}{labels['status_open']}"
+                    f"{_html_text(warning.status)}{labels['status_close']}</b>"
+                    f"{labels['detail_separator']}{_html_text(warning.detail)} "
+                    f"{_html_attribution(warning.source_ids, source_links, labels)}"
                 )
                 for warning in result.active_warnings
             )
             lines.append("")
-        lines.extend(_html_items("自然灾害动态", result.disaster_tracking, source_links))
-        lines.extend(_html_items("生活建议", result.advice, source_links))
+        lines.extend(_html_items(labels["disasters"], result.disaster_tracking, source_links, labels))
+        lines.extend(_html_items(labels["advice"], result.advice, source_links, labels))
         return _html_message("\n".join(lines).strip())
 
     def render_verbatim(self, article: Article) -> RenderedMessage:
@@ -98,23 +163,27 @@ class PlainTextRenderer:
         context: tuple[SourceDocument, ...],
     ) -> RenderedMessage:
         """Render a sourced briefing as plain text."""
+        labels = _briefing_labels(result.output_language)
         source_references = {
             article.id: f"{_article_source_name(article)}: {article.url}" for article in reference_articles
         }
         source_references.update({document.id: f"{document.name}: {document.url}" for document in context})
         lines = [
-            f"{result.headline} {_plain_attribution(result.headline_source_ids, source_references)}",
+            f"{result.headline} {_plain_attribution(result.headline_source_ids, source_references, labels)}",
             "",
         ]
-        lines.extend(_plain_items("天气信息", result.conclusions, source_references))
+        lines.extend(_plain_items(labels["weather"], result.conclusions, source_references, labels))
         if result.active_warnings:
-            lines.extend(["气象预警", ""])
+            lines.extend([labels["warnings"], ""])
             for warning in result.active_warnings:
-                sources = _plain_attribution(warning.source_ids, source_references)
-                lines.append(f"- {warning.title}（{warning.status}）：{warning.detail} {sources}")
+                sources = _plain_attribution(warning.source_ids, source_references, labels)
+                lines.append(
+                    f"- {warning.title}{labels['status_open']}{warning.status}{labels['status_close']}"
+                    f"{labels['detail_separator']}{warning.detail} {sources}"
+                )
             lines.append("")
-        lines.extend(_plain_items("自然灾害动态", result.disaster_tracking, source_references))
-        lines.extend(_plain_items("生活建议", result.advice, source_references))
+        lines.extend(_plain_items(labels["disasters"], result.disaster_tracking, source_references, labels))
+        lines.extend(_plain_items(labels["advice"], result.advice, source_references, labels))
         return _plain_message("\n".join(lines).strip())
 
     def render_verbatim(self, article: Article) -> RenderedMessage:
@@ -142,11 +211,14 @@ def _html_items(
     title: str,
     items: tuple[Conclusion | Advice, ...],
     source_links: dict[str, str],
+    labels: dict[str, str],
 ) -> list[str]:
     if not items:
         return []
     lines = [f"<b>{_html_text(title)}</b>", ""]
-    lines.extend(f"• {_html_text(item.text)} {_html_attribution(item.source_ids, source_links)}" for item in items)
+    lines.extend(
+        f"• {_html_text(item.text)} {_html_attribution(item.source_ids, source_links, labels)}" for item in items
+    )
     lines.append("")
     return lines
 
@@ -155,23 +227,39 @@ def _plain_items(
     title: str,
     items: tuple[Conclusion | Advice, ...],
     source_references: dict[str, str],
+    labels: dict[str, str],
 ) -> list[str]:
     if not items:
         return []
     lines = [title, ""]
-    lines.extend(f"- {item.text} {_plain_attribution(item.source_ids, source_references)}" for item in items)
+    lines.extend(f"- {item.text} {_plain_attribution(item.source_ids, source_references, labels)}" for item in items)
     lines.append("")
     return lines
 
 
-def _html_attribution(source_ids: tuple[str, ...], source_links: dict[str, str]) -> str:
-    sources = "、".join(dict.fromkeys(source_links[source_id] for source_id in source_ids))
-    return f"（来源：{sources}）"
+def _html_attribution(
+    source_ids: tuple[str, ...],
+    source_links: dict[str, str],
+    labels: dict[str, str],
+) -> str:
+    sources = labels["html_source_separator"].join(dict.fromkeys(source_links[source_id] for source_id in source_ids))
+    return labels["attribution"].format(sources=sources)
 
 
-def _plain_attribution(source_ids: tuple[str, ...], source_references: dict[str, str]) -> str:
-    sources = "；".join(dict.fromkeys(source_references[source_id] for source_id in source_ids))
-    return f"（来源：{sources}）"
+def _plain_attribution(
+    source_ids: tuple[str, ...],
+    source_references: dict[str, str],
+    labels: dict[str, str],
+) -> str:
+    sources = labels["plain_source_separator"].join(
+        dict.fromkeys(source_references[source_id] for source_id in source_ids)
+    )
+    return labels["attribution"].format(sources=sources)
+
+
+def _briefing_labels(language: str) -> dict[str, str]:
+    selected = _BRIEFING_LANGUAGE_SUPPORT.match(language)
+    return _BRIEFING_LABELS[selected]
 
 
 def _html_message(body: str) -> RenderedMessage:

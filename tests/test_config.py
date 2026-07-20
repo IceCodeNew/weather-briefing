@@ -129,6 +129,66 @@ def test_optional_rss_sources_are_loaded_from_named_file(monkeypatch, tmp_path: 
     assert [feed.id for feed in settings.feeds] == ["test"]
 
 
+def test_location_summary_language_is_loaded_and_normalized(monkeypatch, tmp_path: Path) -> None:
+    _required_environment(monkeypatch)
+    locations_file = tmp_path / "locations.json"
+    locations_file.write_text(
+        '[{"id":"tokyo","name":"Tokyo","language":"ja-jp"}]',
+        encoding="utf-8",
+    )
+    rss_file = tmp_path / "rss-sources.json"
+    rss_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(locations_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(rss_file))
+
+    settings = Settings.from_env()
+
+    assert settings.locations[0].summary_language == "ja-JP"
+
+
+def test_location_summary_language_defaults_to_english(monkeypatch, tmp_path: Path) -> None:
+    _required_environment(monkeypatch)
+    locations_file = tmp_path / "locations.json"
+    locations_file.write_text('[{"id":"singapore","name":"Singapore"}]', encoding="utf-8")
+    rss_file = tmp_path / "rss-sources.json"
+    rss_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(locations_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(rss_file))
+
+    settings = Settings.from_env()
+
+    assert settings.locations[0].summary_language == "en"
+
+
+def test_location_summary_language_rejects_invalid_tag(monkeypatch, tmp_path: Path) -> None:
+    _required_environment(monkeypatch)
+    locations_file = tmp_path / "locations.json"
+    locations_file.write_text(
+        '[{"id":"tokyo","name":"Tokyo","language":"not a language"}]',
+        encoding="utf-8",
+    )
+    rss_file = tmp_path / "rss-sources.json"
+    rss_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(locations_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(rss_file))
+
+    with pytest.raises(ConfigurationError, match="language must be a basic BCP 47-like"):
+        Settings.from_env()
+
+
+def test_location_summary_language_rejects_non_string(monkeypatch, tmp_path: Path) -> None:
+    _required_environment(monkeypatch)
+    locations_file = tmp_path / "locations.json"
+    locations_file.write_text('[{"id":"tokyo","name":"Tokyo","language":7}]', encoding="utf-8")
+    rss_file = tmp_path / "rss-sources.json"
+    rss_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(locations_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(rss_file))
+
+    with pytest.raises(ConfigurationError, match="language must be a basic BCP 47-like"):
+        Settings.from_env()
+
+
 def test_rss_source_requires_public_display_name(monkeypatch, tmp_path: Path) -> None:
     _required_environment(monkeypatch)
     source_file = tmp_path / "rss-sources.json"

@@ -48,6 +48,7 @@ from weather_briefing.config import Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
+from weather_briefing.weather_context import QWeatherProvider
 
 _REQUIRED_SENSITIVE_SDK_LOGGERS = frozenset({"any_llm", "openai", "httpx", "httpcore"})
 
@@ -1266,7 +1267,24 @@ async def test_build_qweather_returns_provider(async_client: httpx.AsyncClient) 
         qweather_base_url="https://qweather.example.invalid",
     )
     provider = _build_qweather(settings, async_client)
-    assert provider is not None
+    assert isinstance(provider, QWeatherProvider)
+    assert provider.output_language == "en"
+
+
+async def test_build_weather_provider_passes_location_language_to_qweather(async_client: httpx.AsyncClient) -> None:
+    import base64 as b64
+
+    settings = _make_fake_settings(
+        qweather_project_id="project",
+        qweather_credential_id="credential",
+        qweather_private_key=b64.b64encode(b"fake-private-key-content").decode(),
+        qweather_base_url="https://qweather.example.invalid",
+    )
+
+    provider = _build_weather_provider("qweather", settings, async_client, "ja")
+
+    assert isinstance(provider, QWeatherProvider)
+    assert provider.output_language == "ja"
 
 
 async def test_build_qweather_missing_config_raises(async_client: httpx.AsyncClient) -> None:

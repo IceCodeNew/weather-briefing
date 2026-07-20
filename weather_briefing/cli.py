@@ -474,7 +474,12 @@ def _weather_context_provider(
             if settings.weather_providers is not None:
                 raise ValueError("Explicit QWeather provider is missing JWT configuration")
             continue
-        providers.append(LoggedWeatherContextProvider(name, _build_weather_provider(name, settings, client)))
+        providers.append(
+            LoggedWeatherContextProvider(
+                name,
+                _build_weather_provider(name, settings, client, location.summary_language),
+            )
+        )
         active_names.append(name)
     if not providers:
         raise ValueError("No configured weather provider is available")
@@ -529,14 +534,26 @@ def _precision_reduction_notice(location: ResolvedLocation, locations_path: Path
     )
 
 
-def _build_weather_provider(name: str, settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
+def _build_weather_provider(
+    name: str,
+    settings: Settings,
+    client: httpx.AsyncClient,
+    output_language: str = "en",
+) -> WeatherContextProvider:
     builder = WEATHER_PROVIDER_BUILDERS.get(name)
     if builder is None:
         raise ValueError(f"Unsupported weather provider: {name}")
+    if name == WeatherProviderName.QWEATHER:
+        return _build_qweather(settings, client, output_language=output_language)
     return builder(settings, client)
 
 
-def _build_qweather(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
+def _build_qweather(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    *,
+    output_language: str = "en",
+) -> WeatherContextProvider:
     project_id = settings.qweather_project_id
     credential_id = settings.qweather_credential_id
     private_key = settings.qweather_private_key
@@ -553,6 +570,7 @@ def _build_qweather(settings: Settings, client: httpx.AsyncClient) -> WeatherCon
         ),
         base_url=base_url,
         index_types=settings.qweather_index_types,
+        output_language=output_language,
     )
 
 

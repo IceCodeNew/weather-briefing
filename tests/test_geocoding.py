@@ -1,4 +1,5 @@
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -313,16 +314,20 @@ async def test_resolver_caches_name_lookup(tmp_path: Path) -> None:
             )
 
     geocoder = RecordingGeocoder()
-    resolver = CachedLocationResolver(geocoder, tmp_path / "geocoding.json")
-    location = LocationSpec("beijing", "北京市西城区中南海")
+    cache_path = tmp_path / "geocoding.json"
+    resolver = CachedLocationResolver(geocoder, cache_path)
+    location = LocationSpec("beijing", "北京市西城区中南海", summary_language="zh-CN")
 
     first = await resolver.resolve_with_metadata(location)
-    second = await resolver.resolve_with_metadata(location)
+    second = await resolver.resolve_with_metadata(LocationSpec("beijing", "北京市西城区中南海", summary_language="ja"))
 
-    assert first.location == second.location
+    assert first.location.summary_language == "zh-CN"
+    assert second.location.summary_language == "ja"
+    assert first.location == replace(second.location, summary_language="zh-CN")
     assert first.from_cache is False
     assert second.from_cache is True
     assert geocoder.calls == 1
+    assert "summary_language" not in cache_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("name", (None, "  "))
@@ -351,22 +356,32 @@ async def test_resolver_reverse_geocodes_coordinate_only_location_and_caches_res
 
     reverse_geocoder = RecordingReverseGeocoder()
     forward_geocoder = _NeverCalledGeocoder()
+    cache_path = tmp_path / "geocoding.json"
     resolver = CachedLocationResolver(
         forward_geocoder,
-        tmp_path / "geocoding.json",
+        cache_path,
         reverse_provider=reverse_geocoder,
     )
-    location = LocationSpec("beijing", name, latitude=39.911389, longitude=116.380556)
+    location = LocationSpec(
+        "beijing",
+        name,
+        latitude=39.911389,
+        longitude=116.380556,
+        summary_language="zh-CN",
+    )
 
     first = await resolver.resolve_with_metadata(location)
-    second = await resolver.resolve_with_metadata(location)
+    second = await resolver.resolve_with_metadata(replace(location, summary_language="ja"))
 
     assert first.location.name == "中南海, 西城区, 北京市, 中国"
+    assert first.location.summary_language == "zh-CN"
     assert first.from_cache is False
-    assert second.location == first.location
+    assert second.location == replace(first.location, summary_language="ja")
     assert second.from_cache is True
     assert reverse_geocoder.calls == 1
-    assert '"beijing:coords:39.9113890,116.3805560"' in (tmp_path / "geocoding.json").read_text(encoding="utf-8")
+    cache_text = cache_path.read_text(encoding="utf-8")
+    assert '"beijing:coords:39.9113890,116.3805560"' in cache_text
+    assert "summary_language" not in cache_text
     assert forward_geocoder.calls == 0
 
 
@@ -414,6 +429,9 @@ async def test_forward_geocoder_strips_programmatic_location_name() -> None:
     (
         '"invalid"',
         '{"id":"example","name":"Example"}',
+        '{"id":"example","name":"Example","latitude":1,"longitude":2,'
+        '"country_code":null,"administrative_area":null,"timezone":null,'
+        '"is_mainland_china":false,"summary_language":"english"}',
     ),
 )
 async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, cached: str) -> None:
@@ -433,14 +451,23 @@ async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, ca
     assert reverse_geocoder.calls == 0
 
 
-async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "cached",
+    (
+        '{"id":"example","name":"Example"}',
+        '{"id":"example","name":"Example","latitude":1,"longitude":2,'
+        '"country_code":null,"administrative_area":null,"timezone":null,'
+        '"is_mainland_china":false,"summary_language":"english"}',
+    ),
+)
+async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path, cached: str) -> None:
     class NeverCalledGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
             raise AssertionError("Invalid cache data must not trigger geocoding")
 
     cache_path = tmp_path / "geocoding.json"
     cache_path.write_text(
-        '{"example:Example":{"id":"example","name":"Example"}}',
+        f'{{"example:Example":{cached}}}',
         encoding="utf-8",
     )
     resolver = CachedLocationResolver(
