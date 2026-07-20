@@ -101,14 +101,7 @@ async def _fetch_context(
     longitude: float,
     forecast_date: pendulum.Date | None,
 ) -> WeatherContextSnapshot:
-    """Call providers that support either current or dated context."""
-    if forecast_date is None:
-        return await provider.fetch(latitude, longitude)
-    from .weather_context import DatedWeatherContextProvider, WeatherContextError
+    """Route current or dated context through the shared provider boundary."""
+    from .weather_context import fetch_weather_context
 
-    if not isinstance(provider, DatedWeatherContextProvider):
-        raise WeatherContextError(f"{type(provider).__name__} does not support target forecast dates")
-    fetch_for_date = provider.fetch_for_date
-    if not callable(fetch_for_date):
-        raise WeatherContextError(f"{type(provider).__name__} does not support target forecast dates")
-    return await fetch_for_date(latitude, longitude, forecast_date)
+    return await fetch_weather_context(provider, latitude, longitude, forecast_date)

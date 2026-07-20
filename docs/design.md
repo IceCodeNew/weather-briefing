@@ -48,7 +48,7 @@ service 将最终解析得到的完整地点名作为 `location_scope.full_name`
 
 `WeatherContextProvider` 以关注地区的经纬度为输入，返回统一的天气上下文快照，核心编排不依赖具体厂商响应结构。快照包含天气预报、可选生活指数、可选空气质量和可选花粉过敏原；独立 `AirQualityProvider` 只承担缺失空气质量时的补充。`AirQualitySnapshot` 用统一生效时间配合 observation/forecast 时间类型表达资料语义，渲染层据此分别标注“观测时间”或“预报时段”，避免把 QWeather 或 Open-Meteo 的目标日期预报描述成既成观测。
 
-能力组合边界由 `capabilities.py` 的 `CapabilityProviderSet` 承担。天气、空气质量、过敏原、生活指数、预警和短时预报属于可独立声明的 capability；现有 QWeather/Open-Meteo 完整上下文 adapter 暂时挂在天气槽位，AQICN 挂在空气质量槽位。这样本地气象机构可以只实现预警或 nowcast，而不必伪装为完整天气 provider；后续能力 provider 不应为填充无关字段而发起额外请求。
+能力组合边界由 `capabilities.py` 的 `CapabilityProviderSet` 承担。天气、空气质量、结构化过敏原、生活指数、预警和短时预报属于可独立声明的 capability；现有 QWeather/Open-Meteo 完整上下文 adapter 暂时挂在天气槽位，AQICN 挂在空气质量槽位。`ALLERGEN` 表示 adapter 能提供独立 `AllergenSnapshot`，不表示任意与过敏有关的文本；QWeather 类型 7 综合过敏指数仍属于 `LIFESTYLE`，即使它会标记文档包含过敏建议。这样本地气象机构可以只实现预警或 nowcast，而不必伪装为完整天气 provider；后续能力 provider 不应为填充无关字段而发起额外请求。
 
 `QWeatherProvider` 的常规预报读取实时空气质量、今明两日天气和当日生活指数；显式目标日期查询改用 3 日生活指数及 3 日空气质量预报，并按天气预报中的目标日期选择同一天的数据。它提供目标日期天气、温度、风、湿度、预期降水及运动、穿衣、旅游、舒适度和交通指数。空气质量请求失败不会丢弃已经有效的天气结果；常规预报把空气质量留空交给补充层，目标日期查询则保留缺失而不使用当前 AQICN 观测冒充预报。
 
