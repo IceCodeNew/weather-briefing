@@ -341,6 +341,7 @@ def test_context_history_enforces_document_and_serialized_character_limits() -> 
         "latest",
         oversized.name,
         oversized.url,
+        oversized.language,
         oversized.content,
         "",
     ):
@@ -380,6 +381,7 @@ def test_context_history_uses_deterministic_summary_before_skipping_mandatory_do
         "source_id": "weather",
         "name": "Source weather",
         "url": "https://example.invalid/weather",
+        "language": "zh-CN",
         "content": "weather summary",
         "history_role": "latest",
         "content_compacted": True,

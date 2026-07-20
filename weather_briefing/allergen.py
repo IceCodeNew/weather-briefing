@@ -5,8 +5,52 @@ from __future__ import annotations
 from functools import cache
 from math import isfinite
 
+from .languages import localized_labels
 from .models import AllergenSnapshot, SourceDocument
 from .reference_data import ReferenceDataError, reference_value
+
+_ALLERGEN_FORMATS = {
+    "zh-CN": {
+        "separator": "：",
+        "unavailable": "不可用",
+        "observed_at": "观测时间",
+        "allergens": "花粉过敏原",
+        "overall": "总体等级",
+        "health": "健康提示",
+        "count": "花粉类型数",
+        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
+    },
+    "zh-TW": {
+        "separator": "：",
+        "unavailable": "無法取得",
+        "observed_at": "觀測時間",
+        "allergens": "花粉過敏原",
+        "overall": "整體等級",
+        "health": "健康提示",
+        "count": "花粉類型數",
+        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
+    },
+    "en": {
+        "separator": ": ",
+        "unavailable": "Unavailable",
+        "observed_at": "Observed at",
+        "allergens": "Pollen allergens",
+        "overall": "Overall level",
+        "health": "Health guidance",
+        "count": "Pollen type count",
+        "level": "- {name}: {concentration:g} grains/m³ ({category})",
+    },
+    "ja": {
+        "separator": "：",
+        "unavailable": "利用不可",
+        "observed_at": "観測時刻",
+        "allergens": "花粉アレルゲン",
+        "overall": "総合レベル",
+        "health": "健康上の注意",
+        "count": "花粉種類数",
+        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
+    },
+}
 
 
 def allergen_guidance(concentration: float) -> tuple[str, str]:
@@ -21,27 +65,43 @@ def allergen_guidance(concentration: float) -> tuple[str, str]:
 
 def allergen_to_document(snapshot: AllergenSnapshot) -> SourceDocument:
     """Convert an allergen snapshot into a citable source document."""
-    observed_at = snapshot.observed_at.to_iso8601_string() if snapshot.observed_at is not None else "不可用"
+    labels = localized_labels(snapshot.output_language, _ALLERGEN_FORMATS)
+    separator = labels["separator"]
+    observed_at = (
+        snapshot.observed_at.to_iso8601_string() if snapshot.observed_at is not None else labels["unavailable"]
+    )
     levels = (
-        "\n".join(f"- {level.name}：{level.concentration:g} 粒/m³（{level.category}）" for level in snapshot.levels)
-        or "不可用"
+        "\n".join(
+            labels["level"].format(
+                name=level.name,
+                concentration=level.concentration,
+                category=level.category,
+            )
+            for level in snapshot.levels
+        )
+        or labels["unavailable"]
     )
     history_value = (
-        f"花粉过敏原：\n{levels}\n总体等级：{snapshot.overall_category}\n健康提示：{snapshot.health_guidance}"
+        f"{labels['allergens']}{separator}\n{levels}\n"
+        f"{labels['overall']}{separator}{snapshot.overall_category}\n"
+        f"{labels['health']}{separator}{snapshot.health_guidance}"
     )
     return SourceDocument(
         id=snapshot.source_id,
         name=snapshot.source_name,
         url=snapshot.source_url,
         has_allergen_information=True,
+        language=snapshot.output_language,
         content=(
-            f"观测时间：{observed_at}\n"
-            f"花粉过敏原：\n{levels}\n"
-            f"总体等级：{snapshot.overall_category}\n"
-            f"健康提示：{snapshot.health_guidance}"
+            f"{labels['observed_at']}{separator}{observed_at}\n"
+            f"{labels['allergens']}{separator}\n{levels}\n"
+            f"{labels['overall']}{separator}{snapshot.overall_category}\n"
+            f"{labels['health']}{separator}{snapshot.health_guidance}"
         ),
         history_summary=(
-            f"观测时间：{observed_at}\n花粉类型数：{len(snapshot.levels)}\n总体等级：{snapshot.overall_category}"
+            f"{labels['observed_at']}{separator}{observed_at}\n"
+            f"{labels['count']}{separator}{len(snapshot.levels)}\n"
+            f"{labels['overall']}{separator}{snapshot.overall_category}"
         ),
         history_value=history_value,
     )

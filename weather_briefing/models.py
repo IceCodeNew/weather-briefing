@@ -7,6 +7,8 @@ from enum import StrEnum
 
 import pendulum
 
+from .languages import normalize_language_tag
+
 
 @dataclass(frozen=True, slots=True)
 class FeedConfig:
@@ -29,6 +31,11 @@ class ContextSourceConfig:
     id: str
     name: str
     url: str
+    language: str = "und"
+
+    def __post_init__(self) -> None:
+        """Normalize the declared or undefined source language."""
+        object.__setattr__(self, "language", normalize_language_tag(self.language))
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,9 +94,14 @@ class SourceDocument:
     name: str
     url: str
     content: str
+    language: str = "zh-CN"
     has_allergen_information: bool = False
     history_summary: str | None = None
     history_value: str | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize the language before persistence or LLM serialization."""
+        object.__setattr__(self, "language", normalize_language_tag(self.language))
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +137,7 @@ class AirQualitySnapshot:
     pm25_unit: str | None
     category: str
     health_guidance: str
+    output_language: str = "zh-CN"
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +160,7 @@ class AllergenSnapshot:
     levels: tuple[AllergenLevel, ...]
     overall_category: str
     health_guidance: str
+    output_language: str = "zh-CN"
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +176,7 @@ class WeatherContextSnapshot:
     air_quality: AirQualitySnapshot | None = None
     allergen: AllergenSnapshot | None = None
     allergen_advice_available: bool = False
+    output_language: str = "zh-CN"
 
 
 @dataclass(frozen=True, slots=True)

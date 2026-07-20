@@ -603,6 +603,7 @@ class BriefingService:
             location_scope["country_code"] = self._location.country_code
         return {
             "mode": kind,
+            "output_language": "zh-CN",
             "now": now.isoformat(),
             "forecast_date": str(forecast_date or now.in_timezone(self._settings.timezone).date()),
             "region": self._location.name,
@@ -615,7 +616,14 @@ class BriefingService:
                 if kind == "forecast" or article.is_verbatim
             ],
             "context_documents": [
-                {"source_id": item.id, "name": item.name, "url": item.url, "content": item.content} for item in context
+                {
+                    "source_id": item.id,
+                    "name": item.name,
+                    "url": item.url,
+                    "language": item.language,
+                    "content": item.content,
+                }
+                for item in context
             ],
             "recent_context_documents": historical_context,
             "recent_briefings": [
@@ -654,6 +662,7 @@ def _serialize_context_document(
         "source_id": document.id,
         "name": document.name,
         "url": document.url,
+        "language": document.language,
         "content": document.history_summary if compact else document.content,
         "history_role": history_role,
     }
@@ -819,10 +828,10 @@ def _context_history_selection(
     )
 
 
-def _context_document_value(document: SourceDocument) -> tuple[str, str, str, str | None]:
+def _context_document_value(document: SourceDocument) -> tuple[str, str, str, str, str | None]:
     if document.history_value is not None:
-        return document.name, document.url, document.history_value, None
-    return document.name, document.url, document.content, document.history_summary
+        return document.name, document.url, document.language, document.history_value, None
+    return document.name, document.url, document.language, document.content, document.history_summary
 
 
 def _required_advice_topics(

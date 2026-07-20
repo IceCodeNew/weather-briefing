@@ -16,6 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 from soupsieve import SelectorSyntaxError
 from soupsieve import compile as compile_selector
 
+from .languages import normalize_language_tag
 from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation
 from .reference_data import reference_string_tuple
 from .registries import PublisherName, WeatherProviderName
@@ -177,7 +178,16 @@ def _context_source(item: object, index: int) -> ContextSourceConfig:
         if not isinstance(value, str) or not value.strip():
             raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}].{field} must be a non-empty string")
         values[field] = value.strip()
-    return ContextSourceConfig(id=values["id"], name=values["name"], url=values["url"])
+    language_value = item.get("language", "und")
+    if not isinstance(language_value, str):
+        raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}].language must be a basic BCP 47-like language tag")
+    try:
+        language = normalize_language_tag(language_value)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"CONTEXT_SOURCES_JSON[{index}].language must be a basic BCP 47-like language tag"
+        ) from exc
+    return ContextSourceConfig(id=values["id"], name=values["name"], url=values["url"], language=language)
 
 
 def _configured_weather_providers() -> tuple[str, ...] | None:

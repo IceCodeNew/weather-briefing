@@ -22,6 +22,8 @@ from weather_briefing.weather_context import (
     QWeatherJWTAuthenticator,
     QWeatherProvider,
     WeatherContextError,
+    _format_qweather_day,
+    _format_qweather_lifestyle,
     _open_meteo_daily_peak_values,
     snapshot_to_documents,
 )
@@ -131,6 +133,7 @@ def test_qweather_jwt_authenticator_delegates_eddsa_signing_to_pyjwt(monkeypatch
 async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer runtime-token"
+        assert request.url.params["lang"] == "zh"
         if request.url.path == "/v7/weather/3d":
             return httpx.Response(
                 200,
@@ -217,6 +220,7 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
         ).fetch(39.911389, 116.380556)
 
     assert snapshot.source_id == "weather:qweather"
+    assert snapshot.output_language == "zh-CN"
     assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
     assert len(snapshot.weather_forecast) == 2
     assert snapshot.lifestyle_advice == (
@@ -238,6 +242,33 @@ async def test_qweather_provider_returns_weather_lifestyle_and_air_quality() -> 
     assert documents[0].has_allergen_information
     assert documents[0].history_value is not None
     assert snapshot.observed_at.to_iso8601_string() not in documents[0].history_value
+
+
+async def test_qweather_provider_selects_supported_output_language() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["lang"] == "ja"
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(WeatherContextError, match="HTTP 500"):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+                output_language="ja",
+            ).fetch(1, 2)
+
+
+async def test_qweather_provider_matches_region_variant_output_language() -> None:
+    async with httpx.AsyncClient() as client:
+        provider = QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+            output_language="ja-JP",
+        )
+
+        assert provider.output_language == "ja"
 
 
 async def test_qweather_provider_selects_requested_future_date() -> None:
@@ -1310,6 +1341,44 @@ async def test_snapshot_to_documents_without_air_quality() -> None:
     documents = snapshot_to_documents(snapshot)
 
     assert [doc.id for doc in documents] == ["weather:test"]
+
+
+def test_weather_document_scaffold_matches_japanese_source_language() -> None:
+    snapshot = WeatherContextSnapshot(
+        source_id="weather:test",
+        source_name="Test",
+        source_url="https://example.invalid/",
+        observed_at=pendulum.datetime(2026, 7, 13, 8, tz="Asia/Tokyo"),
+        weather_forecast=("晴れ",),
+        lifestyle_advice=("運動指数：適しています",),
+        output_language="ja",
+    )
+
+    document = snapshot_to_documents(snapshot)[0]
+
+    assert document.language == "ja"
+    assert "更新時刻：" in document.content
+    assert "天気予報：" in document.content
+    assert "更新时间" not in document.content
+
+
+def test_qweather_scaffold_matches_selected_language() -> None:
+    forecast = {
+        "fxDate": "2026-07-20",
+        "textDay": "Sunny",
+        "textNight": "Clear",
+        "tempMin": "20",
+        "tempMax": "30",
+        "windDirDay": "South wind",
+        "windScaleDay": "3",
+        "humidity": "50",
+        "precip": "0",
+    }
+
+    assert "relative humidity 50%" in _format_qweather_day(forecast, "en")
+    assert _format_qweather_lifestyle({"name": "運動指数", "category": "適切", "text": "運動日和です"}, "ja") == (
+        "運動指数（適切）：運動日和です"
+    )
 
 
 async def test_qweather_air_quality_parses_invalid_indexes_gracefully() -> None:

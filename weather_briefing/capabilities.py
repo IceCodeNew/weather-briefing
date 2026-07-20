@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol
 
 import pendulum
 
 from .air_quality import AirQualityError, AirQualityProvider
+from .languages import LanguageSupport
 from .models import WeatherContextSnapshot
 from .time_utils import datetime_timezone_specifier
 
@@ -43,6 +44,7 @@ class ProviderCapabilities:
     provider_id: str
     provider_name: str
     capabilities: frozenset[CapabilityName]
+    language_support: LanguageSupport = field(default_factory=lambda: LanguageSupport.fixed("zh-CN"))
 
     def supports(self, capability: CapabilityName) -> bool:
         """Return whether this provider exposes a capability."""

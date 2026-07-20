@@ -161,7 +161,7 @@ class SQLiteStateStore:
             );
             CREATE TABLE IF NOT EXISTS context_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL,
-                name TEXT NOT NULL, url TEXT NOT NULL, content TEXT NOT NULL,
+                name TEXT NOT NULL, url TEXT NOT NULL, content TEXT NOT NULL, language TEXT NOT NULL DEFAULT 'zh-CN',
                 history_summary TEXT, history_value TEXT,
                 observed_at TEXT NOT NULL
             );
@@ -191,6 +191,8 @@ class SQLiteStateStore:
             self._connection.execute("ALTER TABLE context_snapshots ADD COLUMN history_summary TEXT")
         if "history_value" not in context_columns:
             self._connection.execute("ALTER TABLE context_snapshots ADD COLUMN history_value TEXT")
+        if "language" not in context_columns:
+            self._connection.execute("ALTER TABLE context_snapshots ADD COLUMN language TEXT NOT NULL DEFAULT 'zh-CN'")
         self._connection.commit()
 
     def known_article_ids(self, ids: tuple[str, ...]) -> set[str]:
@@ -430,14 +432,15 @@ class SQLiteStateStore:
     ) -> None:
         self._connection.executemany(
             """INSERT INTO context_snapshots(
-                source_id, name, url, content, history_summary, history_value, observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                source_id, name, url, content, language, history_summary, history_value, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     document.id,
                     document.name,
                     document.url,
                     document.content,
+                    document.language,
                     document.history_summary,
                     document.history_value,
                     _storage_time(observed_at),
@@ -450,7 +453,7 @@ class SQLiteStateStore:
         """Return context documents inside the configured history window."""
         threshold = _storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
-            """SELECT source_id, name, url, content, history_summary, history_value FROM context_snapshots
+            """SELECT source_id, name, url, content, language, history_summary, history_value FROM context_snapshots
             WHERE observed_at >= ? ORDER BY observed_at""",
             (threshold,),
         )
@@ -460,6 +463,7 @@ class SQLiteStateStore:
                 name=str(row["name"]),
                 url=str(row["url"]),
                 content=str(row["content"]),
+                language=str(row["language"]),
                 history_summary=str(row["history_summary"]) if row["history_summary"] is not None else None,
                 history_value=str(row["history_value"]) if row["history_value"] is not None else None,
             )

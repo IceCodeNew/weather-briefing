@@ -379,6 +379,22 @@ def test_context_snapshots_are_available_for_briefing_change_detection(tmp_path:
         assert state.recent_context_documents(now.add(hours=3), 2) == ()
 
 
+def test_context_snapshot_language_is_persisted(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    document = SourceDocument(
+        "weather:jma",
+        "JMA",
+        "https://example.invalid/jma",
+        "雨",
+        language="ja",
+    )
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        state.save_context_documents((document,), now)
+
+        assert state.recent_context_documents(now.add(hours=1), 2) == (document,)
+
+
 def test_existing_context_snapshot_schema_adds_history_fields(tmp_path: Path) -> None:
     database_path = tmp_path / "existing-state.db"
     with closing(sqlite3.connect(database_path)) as connection:

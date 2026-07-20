@@ -19,6 +19,7 @@ import pendulum
 from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_document, health_guidance
 from .allergen import allergen_guidance, allergen_to_document, pollen_type_names
 from .api_client import api_call_extensions
+from .languages import LanguageSupport, localized_labels
 from .models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
@@ -34,6 +35,94 @@ from .time_utils import (
 )
 
 _LOGGER = logging.getLogger("weather_briefing.weather_context")
+QWEATHER_LANGUAGE_SUPPORT = LanguageSupport(
+    default="zh-CN",
+    supported=("zh-CN", "zh-TW", "en", "ja"),
+    api_codes=(("zh-CN", "zh"), ("zh-TW", "zh-hant"), ("en", "en"), ("ja", "ja")),
+)
+OPEN_METEO_LANGUAGE_SUPPORT = LanguageSupport.fixed("zh-CN")
+
+_WEATHER_DOCUMENT_LABELS = {
+    "zh-CN": {
+        "separator": "：",
+        "section_separator": "：",
+        "unavailable": "不可用",
+        "updated_at": "更新时间",
+        "forecast": "天气预报",
+        "lifestyle": "生活与出行指数",
+        "summary": "天气概览",
+        "lifestyle_count": "生活与出行指数项数",
+    },
+    "zh-TW": {
+        "separator": "：",
+        "section_separator": "：",
+        "unavailable": "無法取得",
+        "updated_at": "更新時間",
+        "forecast": "天氣預報",
+        "lifestyle": "生活與出行指數",
+        "summary": "天氣概覽",
+        "lifestyle_count": "生活與出行指數項數",
+    },
+    "en": {
+        "separator": ": ",
+        "section_separator": ":",
+        "unavailable": "Unavailable",
+        "updated_at": "Updated at",
+        "forecast": "Weather forecast",
+        "lifestyle": "Lifestyle and travel indices",
+        "summary": "Weather summary",
+        "lifestyle_count": "Lifestyle and travel index count",
+    },
+    "ja": {
+        "separator": "：",
+        "section_separator": "：",
+        "unavailable": "利用不可",
+        "updated_at": "更新時刻",
+        "forecast": "天気予報",
+        "lifestyle": "生活・外出指数",
+        "summary": "天気概要",
+        "lifestyle_count": "生活・外出指数の件数",
+    },
+}
+
+_QWEATHER_FORMATS = {
+    "zh-CN": {
+        "day": (
+            "{date}：{day}转{night}，{minimum}~{maximum}℃，{wind}{scale}级，"
+            "相对湿度{humidity}%，预计降水量{precipitation}毫米"
+        ),
+        "lifestyle": "{name}（{category}）：{text}",
+        "unknown": "未知",
+        "no_details": "无详细建议",
+    },
+    "zh-TW": {
+        "day": (
+            "{date}：{day}轉{night}，{minimum}~{maximum}℃，{wind}{scale}級，"
+            "相對濕度{humidity}%，預計降水量{precipitation}毫米"
+        ),
+        "lifestyle": "{name}（{category}）：{text}",
+        "unknown": "未知",
+        "no_details": "無詳細建議",
+    },
+    "en": {
+        "day": (
+            "{date}: {day} to {night}; {minimum}-{maximum} °C; {wind}, force {scale}; "
+            "relative humidity {humidity}%; forecast precipitation {precipitation} mm"
+        ),
+        "lifestyle": "{name} ({category}): {text}",
+        "unknown": "Unknown",
+        "no_details": "No detailed advice",
+    },
+    "ja": {
+        "day": (
+            "{date}：{day}から{night}、{minimum}～{maximum}℃、{wind}{scale}級、"
+            "相対湿度{humidity}%、予想降水量{precipitation}mm"
+        ),
+        "lifestyle": "{name}（{category}）：{text}",
+        "unknown": "不明",
+        "no_details": "詳しいアドバイスはありません",
+    },
+}
 
 
 class WeatherContextError(RuntimeError):
@@ -176,6 +265,13 @@ class QWeatherJWTAuthenticator:
 class QWeatherProvider:
     """Fetch weather, lifestyle, and air-quality context from QWeather."""
 
+    language_support = QWEATHER_LANGUAGE_SUPPORT
+
+    @property
+    def output_language(self) -> str:
+        """Return the selected QWeather response language."""
+        return self._output_language
+
     def __init__(
         self,
         client: httpx.AsyncClient,
@@ -183,11 +279,14 @@ class QWeatherProvider:
         authenticator: QWeatherAuthenticator,
         base_url: str,
         index_types: tuple[str, ...] | None = None,
+        output_language: str = "zh-CN",
     ) -> None:
         """Configure authenticated QWeather access and lifestyle index selection."""
         self._client = client
         self._authenticator = authenticator
         self._base_url = base_url
+        self._output_language = QWEATHER_LANGUAGE_SUPPORT.match(output_language)
+        self._api_language = QWEATHER_LANGUAGE_SUPPORT.api_code(self._output_language)
         self._index_types = index_types or reference_string_tuple(
             "provider_defaults.json", "qweather_lifestyle_index_types"
         )
@@ -209,7 +308,7 @@ class QWeatherProvider:
                 f"{self._base_url}/v7/weather/3d",
                 params={
                     "location": f"{longitude:.2f},{latitude:.2f}",
-                    "lang": "zh",
+                    "lang": self._api_language,
                     "unit": "m",
                 },
                 headers=headers,
@@ -236,7 +335,7 @@ class QWeatherProvider:
                 selected_forecasts = tuple(item for _, item in matching_forecasts)
                 if matching_forecasts:
                     forecast_index = matching_forecasts[0][0]
-            weather_forecast = tuple(_format_qweather_day(item) for item in selected_forecasts)
+            weather_forecast = tuple(_format_qweather_day(item, self._output_language) for item in selected_forecasts)
             if not weather_forecast:
                 if forecast_date is None:
                     raise WeatherContextError("QWeather returned no daily forecast")
@@ -252,7 +351,7 @@ class QWeatherProvider:
                     params={
                         "type": ",".join(self._index_types),
                         "location": f"{longitude:.2f},{latitude:.2f}",
-                        "lang": "zh",
+                        "lang": self._api_language,
                     },
                     headers=headers,
                     extensions=api_call_extensions("qweather", "lifestyle-indices"),
@@ -269,7 +368,9 @@ class QWeatherProvider:
                     for item in indices_payload.get("daily", ())
                     if forecast_date is None or (isinstance(item, dict) and item.get("date") == str(forecast_date))
                 )
-                lifestyle_advice = tuple(_format_qweather_lifestyle(item) for item in daily_indices)
+                lifestyle_advice = tuple(
+                    _format_qweather_lifestyle(item, self._output_language) for item in daily_indices
+                )
                 allergen_advice_available = any(
                     str(item.get("type")) == self._allergen_index_type
                     for item in daily_indices
@@ -318,6 +419,7 @@ class QWeatherProvider:
             lifestyle_advice=lifestyle_advice,
             air_quality=air_quality,
             allergen_advice_available=allergen_advice_available,
+            output_language=self._output_language,
         )
 
     async def fetch_for_date(
@@ -342,7 +444,7 @@ class QWeatherProvider:
             endpoint = "current" if forecast_index is None else "daily"
             response = await self._client.get(
                 f"{self._base_url}/airquality/v1/{endpoint}/{latitude:.2f}/{longitude:.2f}",
-                params={"lang": "zh"},
+                params={"lang": self._api_language},
                 headers=headers,
                 extensions=api_call_extensions("qweather", "air-quality"),
             )
@@ -365,7 +467,13 @@ class QWeatherProvider:
                     context="QWeather air-quality forecast start time",
                 )
                 time_kind = AirQualityTimeKind.FORECAST
-            return _qweather_air_quality_snapshot(payload, source_url, effective_at, time_kind)
+            return _qweather_air_quality_snapshot(
+                payload,
+                source_url,
+                effective_at,
+                time_kind,
+                self._output_language,
+            )
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             _LOGGER.warning(
                 "Weather API optional call failed provider=qweather operation=air-quality reason=%s",
@@ -376,6 +484,8 @@ class QWeatherProvider:
 
 class OpenMeteoProvider:
     """Fetch global weather, air-quality, and pollen context from Open-Meteo."""
+
+    language_support = OPEN_METEO_LANGUAGE_SUPPORT
 
     def __init__(
         self,
@@ -469,6 +579,7 @@ class OpenMeteoProvider:
             weather_forecast=weather_forecast,
             air_quality=air_quality,
             allergen=allergen,
+            output_language=OPEN_METEO_LANGUAGE_SUPPORT.default,
         )
 
     async def fetch_for_date(
@@ -575,6 +686,7 @@ class OpenMeteoProvider:
                 pm25_unit="μg/m³",
                 category=category,
                 health_guidance=guidance,
+                output_language=OPEN_METEO_LANGUAGE_SUPPORT.default,
             )
         except (KeyError, TypeError, ValueError) as exc:
             _LOGGER.warning(
@@ -625,6 +737,7 @@ class OpenMeteoProvider:
             levels=tuple(levels),
             overall_category=overall_category,
             health_guidance=overall_guidance,
+            output_language=OPEN_METEO_LANGUAGE_SUPPORT.default,
         )
 
 
@@ -747,10 +860,15 @@ class AirQualitySupplementingWeatherProvider:
 
 def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocument, ...]:
     """Convert a weather snapshot into citable LLM source documents."""
+    labels = localized_labels(snapshot.output_language, _WEATHER_DOCUMENT_LABELS)
     weather = "\n".join(f"- {item}" for item in snapshot.weather_forecast)
-    lifestyle = "\n".join(f"- {item}" for item in snapshot.lifestyle_advice) or "不可用"
-    weather_summary = snapshot.weather_forecast[0] if snapshot.weather_forecast else "不可用"
-    history_value = f"今明天气预报：\n{weather}\n生活与出行指数：\n{lifestyle}"
+    lifestyle = "\n".join(f"- {item}" for item in snapshot.lifestyle_advice) or labels["unavailable"]
+    weather_summary = snapshot.weather_forecast[0] if snapshot.weather_forecast else labels["unavailable"]
+    separator = labels["separator"]
+    section_separator = labels["section_separator"]
+    history_value = (
+        f"{labels['forecast']}{section_separator}\n{weather}\n{labels['lifestyle']}{section_separator}\n{lifestyle}"
+    )
     documents = [
         SourceDocument(
             id=snapshot.source_id,
@@ -758,14 +876,15 @@ def snapshot_to_documents(snapshot: WeatherContextSnapshot) -> tuple[SourceDocum
             url=snapshot.source_url,
             has_allergen_information=snapshot.allergen_advice_available,
             content=(
-                f"更新时间：{snapshot.observed_at.to_iso8601_string()}\n"
-                f"今明天气预报：\n{weather}\n"
-                f"生活与出行指数：\n{lifestyle}"
+                f"{labels['updated_at']}{separator}{snapshot.observed_at.to_iso8601_string()}\n"
+                f"{labels['forecast']}{section_separator}\n{weather}\n"
+                f"{labels['lifestyle']}{section_separator}\n{lifestyle}"
             ),
+            language=snapshot.output_language,
             history_summary=(
-                f"更新时间：{snapshot.observed_at.to_iso8601_string()}\n"
-                f"天气概览：{weather_summary}\n"
-                f"生活与出行指数项数：{len(snapshot.lifestyle_advice)}"
+                f"{labels['updated_at']}{separator}{snapshot.observed_at.to_iso8601_string()}\n"
+                f"{labels['summary']}{separator}{weather_summary}\n"
+                f"{labels['lifestyle_count']}{separator}{len(snapshot.lifestyle_advice)}"
             ),
             history_value=history_value,
         )
@@ -789,7 +908,9 @@ def _qweather_air_quality_snapshot(
     source_url: str,
     effective_at: pendulum.DateTime | None,
     time_kind: AirQualityTimeKind,
+    output_language: str,
 ) -> AirQualitySnapshot:
+    labels = localized_labels(output_language, _QWEATHER_FORMATS)
     index = _first_mapping(payload, "indexes")
     pm25 = _mapping_by_code(payload, "pollutants", "pm2p5")
     concentration: dict[str, Any] = pm25.get("concentration", {})
@@ -808,8 +929,9 @@ def _qweather_air_quality_snapshot(
         pm25_aqi=_sub_index(pm25, str(index["code"])),
         pm25_concentration=float(concentration["value"]),
         pm25_unit=str(concentration["unit"]),
-        category=str(index.get("category", "未知")),
+        category=str(index.get("category", labels["unknown"])),
         health_guidance=str(advice.get("generalPopulation") or health.get("effect", "")),
+        output_language=output_language,
     )
 
 
@@ -839,11 +961,14 @@ def _aqi_standard(index: dict[str, object]) -> str:
     return name if name == code else f"{name}（{code}）"
 
 
-def _format_qweather_lifestyle(item: dict[str, object]) -> str:
+def _format_qweather_lifestyle(item: dict[str, object], language: str) -> str:
+    labels = localized_labels(language, _QWEATHER_FORMATS)
     name = str(item["name"])
-    category = str(item.get("category", "未知"))
-    text = str(item.get("text") or "无详细建议")
-    return f"{name}（{category}）：{text}"
+    return labels["lifestyle"].format(
+        name=name,
+        category=str(item.get("category", labels["unknown"])),
+        text=str(item.get("text") or labels["no_details"]),
+    )
 
 
 def _is_string_keyed_dict(value: object) -> TypeGuard[dict[str, object]]:
@@ -854,7 +979,7 @@ def _is_object_list(value: object) -> TypeGuard[list[object]]:
     return isinstance(value, list)
 
 
-def _format_qweather_day(item: object) -> str:
+def _format_qweather_day(item: object, language: str) -> str:
     if not _is_string_keyed_dict(item):
         raise TypeError("daily forecast entries must be objects")
     required_fields = (
@@ -870,11 +995,16 @@ def _format_qweather_day(item: object) -> str:
     )
     if missing_field := next((field for field in required_fields if field not in item), None):
         raise _QWeatherResponseError(f"daily forecast missing required field: {missing_field}")
-    return (
-        f"{item['fxDate']}：{item['textDay']}转{item['textNight']}，"
-        f"{item['tempMin']}~{item['tempMax']}℃，"
-        f"{item['windDirDay']}{item['windScaleDay']}级，"
-        f"相对湿度{item['humidity']}%，预计降水量{item['precip']}毫米"
+    return localized_labels(language, _QWEATHER_FORMATS)["day"].format(
+        date=item["fxDate"],
+        day=item["textDay"],
+        night=item["textNight"],
+        minimum=item["tempMin"],
+        maximum=item["tempMax"],
+        wind=item["windDirDay"],
+        scale=item["windScaleDay"],
+        humidity=item["humidity"],
+        precipitation=item["precip"],
     )
 
 

@@ -50,6 +50,8 @@ service 将最终解析得到的完整地点名作为 `location_scope.full_name`
 
 能力组合边界由 `capabilities.py` 的 `CapabilityProviderSet` 承担。天气、空气质量、结构化过敏原、生活指数、预警和短时预报属于可独立声明的 capability；现有 QWeather/Open-Meteo 完整上下文 adapter 暂时挂在天气槽位，AQICN 挂在空气质量槽位。`ALLERGEN` 表示 adapter 能提供独立 `AllergenSnapshot`，不表示任意与过敏有关的文本；QWeather 类型 7 综合过敏指数仍属于 `LIFESTYLE`，即使它会标记文档包含过敏建议。这样本地气象机构可以只实现预警或 nowcast，而不必伪装为完整天气 provider；后续能力 provider 不应为填充无关字段而发起额外请求。
 
+每个天气或能力 provider 通过 `LanguageSupport` 声明固定或可选的输出语言，规范化快照和 `SourceDocument` 使用 BCP 47 标签记录实际正文语言，并把该标签随当前及历史上下文传入 LLM。可选语言在 provider 请求边界映射为厂商 wire code；固定语言不会被伪装为用户目标语言。LLM 只在来源语言与目标输出语言不同时于最终输出阶段翻译一次，来源语言已经匹配时不得先翻译到中间语言再译回。SQLite 持久化来源语言，旧快照迁移时按当时唯一的中文输出契约标记为 `zh-CN`。
+
 `QWeatherProvider` 的常规预报读取实时空气质量、今明两日天气和当日生活指数；显式目标日期查询改用 3 日生活指数及 3 日空气质量预报，并按天气预报中的目标日期选择同一天的数据。它提供目标日期天气、温度、风、湿度、预期降水及运动、穿衣、旅游、舒适度和交通指数。空气质量请求失败不会丢弃已经有效的天气结果；常规预报把空气质量留空交给补充层，目标日期查询则保留缺失而不使用当前 AQICN 观测冒充预报。
 
 `OpenMeteoProvider` 使用全球 Weather Forecast API，并尝试从其独立 Air Quality API 获取 U.S. AQI 与 PM2.5 浓度。公开 endpoint 适用于非商业免费使用、要求署名且无 SLA；Base URL 和可选 API Key 可配置，以便切换商业 endpoint。

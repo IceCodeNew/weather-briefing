@@ -46,6 +46,8 @@ from .sources import HTTPContextSource, RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from .time_utils import parse_aware_datetime
 from .weather_context import (
+    OPEN_METEO_LANGUAGE_SUPPORT,
+    QWEATHER_LANGUAGE_SUPPORT,
     FallbackWeatherContextProvider,
     LoggedWeatherContextProvider,
     OpenMeteoProvider,
@@ -422,6 +424,7 @@ _WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
                 CapabilityName.LIFESTYLE,
             }
         ),
+        language_support=QWEATHER_LANGUAGE_SUPPORT,
     ),
     WeatherProviderName.OPEN_METEO: ProviderCapabilities(
         provider_id=WeatherProviderName.OPEN_METEO,
@@ -433,6 +436,7 @@ _WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
                 CapabilityName.ALLERGEN,
             }
         ),
+        language_support=OPEN_METEO_LANGUAGE_SUPPORT,
     ),
 }
 
