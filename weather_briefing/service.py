@@ -12,6 +12,7 @@ from typing import Literal, Protocol
 
 import pendulum
 
+from .capabilities import CapabilityProviderSet
 from .llm import LLMError, LLMProvider, LLMRequestError, parse_result, serialize_llm_payload
 from .models import (
     AdviceTopic,
@@ -329,13 +330,23 @@ class BriefingService:
             await asyncio.gather(*(self._context_source.fetch(config) for config in self._settings.context_sources))
         )
         if self._weather_context_provider is not None:
-            weather_context = await fetch_weather_context(
-                self._weather_context_provider,
-                self._location.latitude,
-                self._location.longitude,
-                forecast_date,
-            )
-            context_items.extend(snapshot_to_documents(weather_context))
+            if isinstance(self._weather_context_provider, CapabilityProviderSet):
+                weather_contexts = await self._weather_context_provider.fetch_all(
+                    self._location.latitude,
+                    self._location.longitude,
+                    forecast_date=forecast_date,
+                )
+            else:
+                weather_contexts = (
+                    await fetch_weather_context(
+                        self._weather_context_provider,
+                        self._location.latitude,
+                        self._location.longitude,
+                        forecast_date,
+                    ),
+                )
+            for weather_context in weather_contexts:
+                context_items.extend(snapshot_to_documents(weather_context))
         context = tuple(context_items)
         historical_context = self._state.recent_context_documents(now, self._settings.history_hours)
         bounded_history = _bounded_context_history(

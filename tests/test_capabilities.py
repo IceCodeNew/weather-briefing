@@ -149,3 +149,54 @@ async def test_dated_context_rejects_non_callable_fetch_method() -> None:
 
     with pytest.raises(WeatherContextError, match="does not support target forecast dates"):
         await provider.fetch_for_date(1, 2, pendulum.date(2026, 7, 21))
+
+
+@pytest.mark.anyio
+async def test_capability_set_includes_best_effort_supplementary_context() -> None:
+    class Weather:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return _weather()
+
+    class Supplement:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return _weather()
+
+    class Air:
+        async def fetch(self, latitude: float, longitude: float, timezone: str) -> AirQualitySnapshot:
+            return _air_quality()
+
+    provider = CapabilityProviderSet(
+        weather=Weather(),
+        weather_metadata=_metadata(),
+        air_quality=Air(),
+        supplements=(Supplement(),),
+    )
+
+    assert len(await provider.fetch_all(1, 2)) == 2
+
+
+async def test_capability_set_skips_failed_supplement_and_dated_supplements() -> None:
+    class Weather:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return _weather(air_quality=_air_quality())
+
+        async def fetch_for_date(
+            self,
+            latitude: float,
+            longitude: float,
+            forecast_date: pendulum.Date,
+        ) -> WeatherContextSnapshot:
+            return _weather()
+
+    class Supplement:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            raise WeatherContextError("optional")
+
+    provider = CapabilityProviderSet(
+        weather=Weather(),
+        weather_metadata=_metadata(),
+        supplements=(Supplement(),),
+    )
+
+    assert len(await provider.fetch_all(1, 2)) == 1
+    assert len(await provider.fetch_all(1, 2, forecast_date=pendulum.date(2026, 7, 21))) == 1

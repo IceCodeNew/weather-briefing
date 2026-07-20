@@ -39,6 +39,7 @@ from .geocoding import (
 from .llm import AnyLLMStructuredProvider, create_any_llm_provider
 from .models import ResolvedLocation
 from .publishers import DeliveryProvider, RenderedTextDiagnostics, StdoutPublisher, TelegramPublisher
+from .regional_weather import NEA_LANGUAGE_SUPPORT, NEASingaporeNowcastProvider
 from .registries import PublisherName, WeatherProviderName
 from .render import PlainTextRenderer, TelegramHTMLRenderer
 from .service import BriefingService
@@ -438,6 +439,12 @@ _WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
         ),
         language_support=OPEN_METEO_LANGUAGE_SUPPORT,
     ),
+    WeatherProviderName.NEA_SINGAPORE: ProviderCapabilities(
+        provider_id=WeatherProviderName.NEA_SINGAPORE,
+        provider_name="Singapore NEA",
+        capabilities=frozenset({CapabilityName.NOWCAST}),
+        language_support=NEA_LANGUAGE_SUPPORT,
+    ),
 }
 
 
@@ -467,9 +474,14 @@ def _weather_context_provider(
     location: ResolvedLocation,
 ) -> CapabilityProviderSet:
     names = weather_providers_for(location, settings.weather_providers)
+    local_capability_names = {WeatherProviderName.NEA_SINGAPORE}
+    main_names = [name for name in names if name not in local_capability_names]
+    supplement_names = [name for name in names if name in local_capability_names]
+    if not main_names:
+        main_names, supplement_names = supplement_names, []
     providers: list[WeatherContextProvider] = []
     active_names: list[str] = []
-    for name in names:
+    for name in main_names:
         if name == WeatherProviderName.QWEATHER and not _qweather_is_configured(settings):
             if settings.weather_providers is not None:
                 raise ValueError("Explicit QWeather provider is missing JWT configuration")
@@ -483,9 +495,20 @@ def _weather_context_provider(
         active_names.append(name)
     if not providers:
         raise ValueError("No configured weather provider is available")
+    supplements = tuple(
+        LoggedWeatherContextProvider(
+            name,
+            _build_weather_provider(name, settings, client, location.summary_language),
+        )
+        for name in supplement_names
+    )
     _LOGGER.info(
         "Weather provider order providers=%s",
-        ",".join(name for name in names if name != WeatherProviderName.QWEATHER or _qweather_is_configured(settings)),
+        ",".join(
+            name
+            for name in (*main_names, *supplement_names)
+            if name != WeatherProviderName.QWEATHER or _qweather_is_configured(settings)
+        ),
     )
     weather_provider: WeatherContextProvider = (
         providers[0] if len(providers) == 1 else FallbackWeatherContextProvider(*providers)
@@ -504,6 +527,8 @@ def _weather_context_provider(
             if air_quality_provider is not None
             else None
         ),
+        supplements=supplements,
+        supplement_metadata=tuple(_WEATHER_PROVIDER_METADATA[name] for name in supplement_names),
     )
 
 
@@ -545,6 +570,12 @@ def _build_weather_provider(
         raise ValueError(f"Unsupported weather provider: {name}")
     if name == WeatherProviderName.QWEATHER:
         return _build_qweather(settings, client, output_language=output_language)
+    if name == WeatherProviderName.NEA_SINGAPORE:
+        return NEASingaporeNowcastProvider(
+            client,
+            base_url=settings.nea_base_url,
+            api_key=settings.nea_api_key,
+        )
     return builder(settings, client)
 
 
@@ -574,6 +605,10 @@ def _build_qweather(
     )
 
 
+def _build_nea(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
+    return NEASingaporeNowcastProvider(client, base_url=settings.nea_base_url, api_key=settings.nea_api_key)
+
+
 def _build_open_meteo(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
     return OpenMeteoProvider(
         client,
@@ -596,6 +631,7 @@ def _aqicn_provider(settings: Settings, client: httpx.AsyncClient) -> AirQuality
 WEATHER_PROVIDER_BUILDERS: dict[str, Callable[[Settings, httpx.AsyncClient], WeatherContextProvider]] = {
     WeatherProviderName.QWEATHER: _build_qweather,
     WeatherProviderName.OPEN_METEO: _build_open_meteo,
+    WeatherProviderName.NEA_SINGAPORE: _build_nea,
 }
 
 

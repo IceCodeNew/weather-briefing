@@ -4,6 +4,8 @@
 
 ## 审查时应保留的显式边界
 
+地区 nowcast 作为 supplement 只补充主天气快照，不改变主 provider 的成功/失败语义。`CapabilityProviderSet.fetch_all()` 先完成主天气请求，再按配置顺序调用当前地点的 supplement；预期的 `WeatherContextError` 和输入契约 `ValueError` 被丢弃，主快照仍可继续编排。显式混合配置要求 `nea-sg` 位于末尾，而不是静默重写用户顺序；单独配置仍允许它成为唯一上下文来源，便于受限部署，但 capability 元数据继续只声明 `NOWCAST`。它不会捕获取消或任意编程异常，也不承诺 supplement 与主请求并行或拥有独立 timeout；当前地点每次最多配置少量本地源，HTTP 客户端的统一 timeout 是延迟上界。若 supplement 数量或延迟成为可观测瓶颈，应先引入带日志和取消语义的独立任务边界，再重新定义失败隔离，不应把 `except Exception` 当作 best-effort 实现。
+
 ### 镜像构建与发布串行边界
 
 release tag 工作流构建的镜像会复用同一套镜像构建流程产出 `edge`。为了避免在 master 与
