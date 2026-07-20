@@ -54,6 +54,8 @@ service 将最终解析得到的完整地点名作为 `location_scope.full_name`
 
 `locations.json` 的 `language` 映射为内部的 `LocationSpec.summary_language`，表示地点级天气总结语言；它使用规范化的基础 BCP 47-like 标签，默认 `en`。现有中国大陆部署必须在 `locations.json` 中显式配置 `zh-CN`，公开示例也声明该值。解析后的 `ResolvedLocation` 保留该配置，即使命中定位缓存也以当前地点配置覆盖缓存中的语言；这样改变总结语言不需要重新地理编码。CLI 在构造地点级天气 capability 时把该语言传给支持可选语言的 provider，固定语言 provider 则保留自己的实际输出语言并由 LLM 在最终输出阶段处理差异。provider 只会选择已声明语言或其逐级去除区域/脚本后缀后的匹配值，找不到时回到默认输出语言。service 把同一语种写入 `BriefingResult.output_language`，Telegram 与纯文本 renderer 据此本地化章节、预警标点和来源 attribution，避免 LLM 正文与平台外壳使用不同语言。
 
+新加坡 NEA 作为 capability supplement 接入，只提供两小时 nowcast，不替换主 Open-Meteo 预报。本地 adapter 以 `WeatherContextError` 或输入契约 `ValueError` 报告预期失败时保留主天气上下文，其他编程异常继续暴露；supplement 按配置顺序串行调用并与主 provider 共用 HTTP timeout，不承诺独立的延迟隔离。地点国家代码为 `SG` 且未显式配置 provider 顺序时默认追加 `nea-sg`。显式配置多个 provider 时，`nea-sg` 必须位于末尾；单独配置时它可作为唯一上下文来源，但不会因此获得未声明的完整天气能力。
+
 `QWeatherProvider` 的常规预报读取实时空气质量、今明两日天气和当日生活指数；显式目标日期查询改用 3 日生活指数及 3 日空气质量预报，并按天气预报中的目标日期选择同一天的数据。它提供目标日期天气、温度、风、湿度、预期降水及运动、穿衣、旅游、舒适度和交通指数。空气质量请求失败不会丢弃已经有效的天气结果；常规预报把空气质量留空交给补充层，目标日期查询则保留缺失而不使用当前 AQICN 观测冒充预报。
 
 `OpenMeteoProvider` 使用全球 Weather Forecast API，并尝试从其独立 Air Quality API 获取 U.S. AQI 与 PM2.5 浓度。公开 endpoint 适用于非商业免费使用、要求署名且无 SLA；Base URL 和可选 API Key 可配置，以便切换商业 endpoint。

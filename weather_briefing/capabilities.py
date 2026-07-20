@@ -59,6 +59,8 @@ class CapabilityProviderSet:
     weather_metadata: ProviderCapabilities
     air_quality: AirQualityProvider | None = None
     air_quality_metadata: ProviderCapabilities | None = None
+    supplements: tuple[ContextCapabilityProvider, ...] = ()
+    supplement_metadata: tuple[ProviderCapabilities, ...] = ()
 
     async def fetch(
         self,
@@ -95,6 +97,26 @@ class CapabilityProviderSet:
     ) -> WeatherContextSnapshot:
         """Fetch a dated context through the composed capabilities."""
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
+
+    async def fetch_all(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        forecast_date: pendulum.Date | None = None,
+    ) -> tuple[WeatherContextSnapshot, ...]:
+        """Fetch primary context and skip expected supplement failures."""
+        snapshots = [await self.fetch(latitude, longitude, forecast_date=forecast_date)]
+        if forecast_date is not None:
+            return tuple(snapshots)
+        from .weather_context import WeatherContextError
+
+        for provider in self.supplements:
+            try:
+                snapshots.append(await _fetch_context(provider, latitude, longitude, None))
+            except (WeatherContextError, ValueError):
+                continue
+        return tuple(snapshots)
 
 
 async def _fetch_context(

@@ -105,6 +105,29 @@ def test_weather_provider_order_can_be_configured(monkeypatch) -> None:
     )
 
 
+def test_nea_supplement_must_follow_explicit_primary_providers(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("WEATHER_PROVIDERS", "nea-sg,open-meteo")
+
+    with pytest.raises(ConfigurationError, match="place nea-sg last"):
+        Settings.from_env()
+
+
+def test_nea_supplement_can_be_last_or_the_only_explicit_provider(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+
+    monkeypatch.setenv("WEATHER_PROVIDERS", "open-meteo,nea-sg")
+    assert Settings.from_env().weather_providers == ("open-meteo", "nea-sg")
+
+    monkeypatch.setenv("WEATHER_PROVIDERS", "nea-sg")
+    assert Settings.from_env().weather_providers == ("nea-sg",)
+
+
+def test_programmatic_weather_order_cannot_bypass_nea_supplement_constraint() -> None:
+    with pytest.raises(ConfigurationError, match="place nea-sg last"):
+        weather_providers_for(_resolved_location(mainland=False), ("nea-sg", "open-meteo"))
+
+
 def test_non_mainland_weather_providers_default_to_open_meteo_only(monkeypatch) -> None:
     _required_environment(monkeypatch)
     monkeypatch.delenv("WEATHER_PROVIDERS", raising=False)
@@ -112,6 +135,12 @@ def test_non_mainland_weather_providers_default_to_open_meteo_only(monkeypatch) 
     settings = Settings.from_env()
 
     assert weather_providers_for(_resolved_location(mainland=False), settings.weather_providers) == ("open-meteo",)
+
+
+def test_singapore_and_japan_weather_provider_defaults(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    singapore = ResolvedLocation("sg", "Singapore", 1.3, 103.8, "SG", None, "Asia/Singapore", False)
+    assert weather_providers_for(singapore, None) == ("open-meteo", "nea-sg")
 
 
 def test_optional_rss_sources_are_loaded_from_named_file(monkeypatch, tmp_path: Path) -> None:

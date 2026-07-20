@@ -11,6 +11,7 @@ from typing import TypeGuard
 import pendulum
 import pytest
 
+from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
 from weather_briefing.llm import LLMError, LLMRequestError
 from weather_briefing.models import (
     AirQualitySnapshot,
@@ -722,6 +723,14 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
         llm_max_attempts=3,
     )
     weather_context = StaticWeatherContextProvider()
+    weather_provider = CapabilityProviderSet(
+        weather=weather_context,
+        weather_metadata=ProviderCapabilities(
+            provider_id="test",
+            provider_name="Test weather",
+            capabilities=frozenset({CapabilityName.WEATHER, CapabilityName.AIR_QUALITY}),
+        ),
+    )
     llm = RecordingLLM()
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
@@ -738,7 +747,7 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
             llm,
             delivery,
             delivery,
-            weather_context,
+            weather_provider,
         )
         body = await service.run("forecast", now)
 

@@ -6,6 +6,10 @@
     ],
     "other": [
       "open-meteo"
+    ],
+    "SG": [
+      "open-meteo",
+      "nea-sg"
     ]
   },
   "qweather_lifestyle_index_types": [

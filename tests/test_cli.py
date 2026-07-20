@@ -23,6 +23,7 @@ from weather_briefing.cli import (
     _aqicn_provider,
     _briefing_delivery_policy,
     _briefing_sent_today,
+    _build_nea,
     _build_open_meteo,
     _build_qweather,
     _build_weather_provider,
@@ -712,6 +713,8 @@ _DEFAULT_SETTINGS = Settings(
     qweather_jwt_lifetime_seconds=900,
     qweather_base_url=None,
     qweather_index_types=(),
+    nea_base_url="https://nea.example.com",
+    nea_api_key=None,
     open_meteo_weather_base_url="https://weather.example.com",
     open_meteo_air_quality_base_url="https://air.example.com",
     open_meteo_api_key=None,
@@ -1285,6 +1288,22 @@ async def test_build_weather_provider_passes_location_language_to_qweather(async
 
     assert isinstance(provider, QWeatherProvider)
     assert provider.output_language == "ja"
+
+
+async def test_local_provider_registry_builders(async_client: httpx.AsyncClient) -> None:
+    settings = _make_fake_settings()
+
+    assert _build_nea(settings, async_client) is not None
+
+
+async def test_explicit_local_provider_can_be_used_as_primary(async_client: httpx.AsyncClient) -> None:
+    settings = _make_fake_settings(weather_providers=("nea-sg",))
+    location = ResolvedLocation("sg", "Singapore", 1.3, 103.8, "SG", None, "Asia/Singapore", False)
+
+    provider = _weather_context_provider(settings, async_client, location)
+
+    assert provider.weather_metadata.provider_id == "nea-sg"
+    assert provider.weather_metadata.language_support.default == "en"
 
 
 async def test_build_qweather_missing_config_raises(async_client: httpx.AsyncClient) -> None:

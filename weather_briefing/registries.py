@@ -8,6 +8,7 @@ class WeatherProviderName(StrEnum):
 
     QWEATHER = "qweather"
     OPEN_METEO = "open-meteo"
+    NEA_SINGAPORE = "nea-sg"
 
 
 class PublisherName(StrEnum):

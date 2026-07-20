@@ -200,7 +200,13 @@ def _configured_weather_providers() -> tuple[str, ...] | None:
     unsupported = sorted(set(providers) - SUPPORTED_WEATHER_PROVIDERS)
     if unsupported:
         raise ConfigurationError(f"WEATHER_PROVIDERS contains unsupported providers: {', '.join(unsupported)}")
+    _validate_weather_provider_order(providers)
     return providers
+
+
+def _validate_weather_provider_order(providers: tuple[str, ...]) -> None:
+    if len(providers) > 1 and WeatherProviderName.NEA_SINGAPORE in providers[:-1]:
+        raise ConfigurationError("WEATHER_PROVIDERS must place nea-sg last when combined with other providers")
 
 
 def _publisher() -> str:
@@ -218,8 +224,15 @@ def state_path_from_env() -> Path:
 def weather_providers_for(location: ResolvedLocation, configured: tuple[str, ...] | None) -> tuple[str, ...]:
     """Resolve the configured or region-default weather provider order."""
     if configured is not None:
+        _validate_weather_provider_order(configured)
         return configured
-    region = "mainland_china" if location.is_mainland_china else "other"
+    region = (
+        "mainland_china"
+        if location.is_mainland_china
+        else location.country_code
+        if location.country_code == "SG"
+        else "other"
+    )
     return reference_string_tuple("provider_defaults.json", "weather_provider_order", region)
 
 
@@ -325,6 +338,8 @@ class Settings:
     qweather_jwt_lifetime_seconds: int
     qweather_base_url: str | None
     qweather_index_types: tuple[str, ...]
+    nea_base_url: str
+    nea_api_key: str | None
     open_meteo_weather_base_url: str
     open_meteo_air_quality_base_url: str
     open_meteo_api_key: str | None
@@ -443,6 +458,8 @@ class Settings:
                 ).split(",")
                 if item.strip()
             ),
+            nea_base_url=_clean_env(os.getenv("NEA_BASE_URL", "https://api-open.data.gov.sg")).rstrip("/"),
+            nea_api_key=_clean_env(os.getenv("NEA_API_KEY")) or None,
             open_meteo_weather_base_url=_clean_env(
                 os.getenv("OPEN_METEO_WEATHER_BASE_URL", "https://api.open-meteo.com")
             ).rstrip("/"),
