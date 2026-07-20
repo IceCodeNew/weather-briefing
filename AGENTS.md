@@ -95,11 +95,18 @@ Usage notes:
 - A feature should satisfy the current design when first introduced. Amend later corrections into that original commit instead of preserving `fix`, `fixup!`, cleanup, or compatibility commits. A deliberate cross-cutting refactor may remain separate when that history is meaningful.
 - Keep packaging and deployment commits after the application behavior they package.
 - During a history rewrite, validate the repository at each meaningful snapshot and remove temporary branches, handoff files, and TODO files when finished.
+- For stacked pull requests, do not repeatedly rebase and push downstream branches while an upstream pull request is still under review. Use the wait time to inspect and fix downstream feedback locally without pushing. After the upstream pull request is merged, rebase the remaining stack in dependency order, validate every layer, then push each rewritten branch once.
 - Do not push, force-push, or open a pull request without explicit user approval.
 
 ## Pull request review workflow
 
 - Run proportional local verification, then manually review the complete diff before creating or updating a pull request. Fix every known issue and repeat both steps until they are clean.
+- Treat a successful reviewer check as evidence that a bot finished, not evidence that its findings are clean. Before declaring a pull request review-complete, ready to merge, or merged safely:
+  - record the current `headRefOid` and confirm every requested review was generated for that exact commit;
+  - query GitHub review threads with thread-aware GraphQL data and inspect `isResolved` and `isOutdated`; flat comments and aggregate badges are insufficient;
+  - read the latest-head section of edited or cumulative bot summaries instead of relying on their top-level bug count, crossed-out history, or an earlier review result;
+  - fix every valid finding and request a new review for the new head, or record a concrete technical rationale for rejecting the finding and close the thread before merging.
+- Do not merge with an unresolved actionable review thread or an unadjudicated latest-head finding, including an item labelled optional or informational. When a finding is intentionally rejected, make the capability or behavior contract explicit in code or the owning architecture documentation when ambiguity caused the finding.
 - Open the pull request as a draft and request a GitHub Copilot review. Address valid feedback, then repeat local verification, manual review, and Copilot review until no known issue remains.
 - Only after that loop is clean, mark the pull request ready for review. Treat the automatic CodeRabbit run triggered by the ready pull request as the code-review stage; do not start a duplicate CodeRabbit CLI review or manually request another CodeRabbit run.
 - After each ready-state update, wait for both CodeRabbit and GitHub Copilot to finish and make all feedback available before fixing or pushing anything. Evaluate their findings together, fix every valid issue in one batch, revalidate, push once, and repeat the two-reviewer wait. Run the `autofix` skill only after both reviews have completed.
@@ -108,6 +115,8 @@ Usage notes:
 
 - Make local verification proportional to the change. Start with the narrowest useful test and add direct probes for the behavior or boundary that changed.
 - Local tests should catch likely mistakes quickly. Avoid expensive multi-platform builds, broad network calls, or full external end-to-end runs unless the risk justifies them or the user asks; exhaustive matrices belong in CI.
+- On macOS, run Python tests and coverage in the configured native project environment. Do not use Docker as a substitute for native tests; use containers only when the changed behavior is container-specific or a configured hook owns that check.
+- After a rebase or manual conflict resolution, run Ruff formatting before the full test pass, then rerun all repository hooks. Conflict markers can leave syntactically valid but unformatted combinations that should be caught locally rather than by CI or a reviewer.
 - For container and workflow changes, verify observable behavior rather than relying on configuration inspection alone. Useful probes include the final process tree, runtime user, argument override behavior, filesystem contents, or an actual workflow log.
 - Use mocks and dummy configuration for routine tests. Use real services only for an explicitly requested end-to-end test, and never expose private inputs in output.
 - If a check cannot run because of the local environment, report the exact limitation and what remains unverified instead of installing an alternative stack.
@@ -115,6 +124,12 @@ Usage notes:
 ## Pre-commit checklist
 
 Before every commit, run the following checks. Do not commit if any check fails.
+
+Run the repository-wide hooks first; they include Ruff check and Ruff format validation as well as the remaining static checks:
+
+```bash
+prek run --all-files
+```
 
 ### Coverage
 

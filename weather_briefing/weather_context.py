@@ -673,7 +673,10 @@ async def fetch_weather_context(
         return await provider.fetch(latitude, longitude)
     if not isinstance(provider, DatedWeatherContextProvider):
         raise WeatherContextError(f"{type(provider).__name__} does not support target forecast dates")
-    return await provider.fetch_for_date(latitude, longitude, forecast_date)
+    fetch_for_date = provider.fetch_for_date
+    if not callable(fetch_for_date):
+        raise WeatherContextError(f"{type(provider).__name__} does not support target forecast dates")
+    return await fetch_for_date(latitude, longitude, forecast_date)
 
 
 def _elapsed_milliseconds(started_at: float) -> int:
