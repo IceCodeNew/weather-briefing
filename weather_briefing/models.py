@@ -10,6 +10,18 @@ import pendulum
 from .languages import normalize_language_tag
 
 
+def normalize_jma_office_code(value: object) -> str | None:
+    """Normalize an optional six-digit JMA forecast office code."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("JMA office code must contain six digits (ASCII)")
+    normalized = value.strip()
+    if len(normalized) != 6 or not normalized.isascii() or not normalized.isdigit():
+        raise ValueError("JMA office code must contain six digits (ASCII)")
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class FeedConfig:
     """Describe an RSS feed and its location-specific content rules."""
@@ -47,10 +59,12 @@ class LocationSpec:
     latitude: float | None = None
     longitude: float | None = None
     summary_language: str = "en"
+    jma_office_code: str | None = None
 
     def __post_init__(self) -> None:
-        """Normalize the configured briefing language."""
+        """Normalize location-level runtime configuration."""
         object.__setattr__(self, "summary_language", normalize_language_tag(self.summary_language))
+        object.__setattr__(self, "jma_office_code", normalize_jma_office_code(self.jma_office_code))
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,10 +82,12 @@ class ResolvedLocation:
     matched_name: str | None = None
     precision_reduced: bool = False
     summary_language: str = "en"
+    jma_office_code: str | None = None
 
     def __post_init__(self) -> None:
-        """Normalize the briefing language retained after geocoding."""
+        """Normalize runtime configuration retained after geocoding."""
         object.__setattr__(self, "summary_language", normalize_language_tag(self.summary_language))
+        object.__setattr__(self, "jma_office_code", normalize_jma_office_code(self.jma_office_code))
 
 
 @dataclass(frozen=True, slots=True)

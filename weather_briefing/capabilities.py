@@ -107,13 +107,11 @@ class CapabilityProviderSet:
     ) -> tuple[WeatherContextSnapshot, ...]:
         """Fetch primary context and skip expected supplement failures."""
         snapshots = [await self.fetch(latitude, longitude, forecast_date=forecast_date)]
-        if forecast_date is not None:
-            return tuple(snapshots)
         from .weather_context import WeatherContextError
 
         for provider in self.supplements:
             try:
-                snapshots.append(await _fetch_context(provider, latitude, longitude, None))
+                snapshots.append(await _fetch_context(provider, latitude, longitude, forecast_date))
             except (WeatherContextError, ValueError):
                 continue
         return tuple(snapshots)

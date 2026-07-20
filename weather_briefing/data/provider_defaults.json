@@ -10,6 +10,10 @@
     "SG": [
       "open-meteo",
       "nea-sg"
+    ],
+    "JP": [
+      "open-meteo",
+      "jma-jp"
     ]
   },
   "qweather_lifestyle_index_types": [

@@ -316,18 +316,29 @@ async def test_resolver_caches_name_lookup(tmp_path: Path) -> None:
     geocoder = RecordingGeocoder()
     cache_path = tmp_path / "geocoding.json"
     resolver = CachedLocationResolver(geocoder, cache_path)
-    location = LocationSpec("beijing", "北京市西城区中南海", summary_language="zh-CN")
+    location = LocationSpec(
+        "beijing",
+        "北京市西城区中南海",
+        summary_language="zh-CN",
+        jma_office_code="130000",
+    )
 
     first = await resolver.resolve_with_metadata(location)
-    second = await resolver.resolve_with_metadata(LocationSpec("beijing", "北京市西城区中南海", summary_language="ja"))
+    second = await resolver.resolve_with_metadata(
+        LocationSpec("beijing", "北京市西城区中南海", summary_language="ja", jma_office_code="270000")
+    )
 
     assert first.location.summary_language == "zh-CN"
+    assert first.location.jma_office_code == "130000"
     assert second.location.summary_language == "ja"
-    assert first.location == replace(second.location, summary_language="zh-CN")
+    assert second.location.jma_office_code == "270000"
+    assert first.location == replace(second.location, summary_language="zh-CN", jma_office_code="130000")
     assert first.from_cache is False
     assert second.from_cache is True
     assert geocoder.calls == 1
-    assert "summary_language" not in cache_path.read_text(encoding="utf-8")
+    cache_text = cache_path.read_text(encoding="utf-8")
+    assert "summary_language" not in cache_text
+    assert "jma_office_code" not in cache_text
 
 
 @pytest.mark.parametrize("name", (None, "  "))
@@ -368,20 +379,23 @@ async def test_resolver_reverse_geocodes_coordinate_only_location_and_caches_res
         latitude=39.911389,
         longitude=116.380556,
         summary_language="zh-CN",
+        jma_office_code="130000",
     )
 
     first = await resolver.resolve_with_metadata(location)
-    second = await resolver.resolve_with_metadata(replace(location, summary_language="ja"))
+    second = await resolver.resolve_with_metadata(replace(location, summary_language="ja", jma_office_code="270000"))
 
     assert first.location.name == "中南海, 西城区, 北京市, 中国"
     assert first.location.summary_language == "zh-CN"
     assert first.from_cache is False
-    assert second.location == replace(first.location, summary_language="ja")
+    assert first.location.jma_office_code == "130000"
+    assert second.location == replace(first.location, summary_language="ja", jma_office_code="270000")
     assert second.from_cache is True
     assert reverse_geocoder.calls == 1
     cache_text = cache_path.read_text(encoding="utf-8")
     assert '"beijing:coords:39.9113890,116.3805560"' in cache_text
     assert "summary_language" not in cache_text
+    assert "jma_office_code" not in cache_text
     assert forward_geocoder.calls == 0
 
 
@@ -489,13 +503,14 @@ async def test_coordinates_skip_geocoding_and_use_extreme_bounds(
     resolver = CachedLocationResolver(FailingGeocoder(), tmp_path / "cache.json")
 
     beijing = await resolver.resolve(LocationSpec("beijing", "  Beijing  ", 39.9, 116.4))
-    outside = await resolver.resolve(LocationSpec("outside", "Example", 0.0, 0.0))
+    outside = await resolver.resolve(LocationSpec("outside", "Tokyo", 35.7, 139.7, jma_office_code="130000"))
     latitude = reference_value("geography.json", "mainland_china_service_bounds", "latitude")
     longitude = reference_value("geography.json", "mainland_china_service_bounds", "longitude")
 
     assert beijing.is_mainland_china is True
     assert beijing.name == "Beijing"
     assert outside.is_mainland_china is False
+    assert outside.jma_office_code == "130000"
     assert possibly_mainland_china(latitude["maximum"], longitude["maximum"]) is True
     assert possibly_mainland_china(latitude["maximum"] + 0.01, longitude["maximum"]) is False
     assert possibly_mainland_china(latitude["minimum"] - 0.01, longitude["minimum"]) is False

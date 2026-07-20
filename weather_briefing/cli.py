@@ -39,8 +39,13 @@ from .geocoding import (
 from .llm import AnyLLMStructuredProvider, create_any_llm_provider
 from .models import ResolvedLocation
 from .publishers import DeliveryProvider, RenderedTextDiagnostics, StdoutPublisher, TelegramPublisher
-from .regional_weather import NEA_LANGUAGE_SUPPORT, NEASingaporeNowcastProvider
-from .registries import PublisherName, WeatherProviderName
+from .regional_weather import (
+    JMA_LANGUAGE_SUPPORT,
+    NEA_LANGUAGE_SUPPORT,
+    JMAJapanForecastProvider,
+    NEASingaporeNowcastProvider,
+)
+from .registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 from .render import PlainTextRenderer, TelegramHTMLRenderer
 from .service import BriefingService
 from .sources import HTTPContextSource, RSSSource
@@ -445,6 +450,12 @@ _WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
         capabilities=frozenset({CapabilityName.NOWCAST}),
         language_support=NEA_LANGUAGE_SUPPORT,
     ),
+    WeatherProviderName.JMA_JAPAN: ProviderCapabilities(
+        provider_id=WeatherProviderName.JMA_JAPAN,
+        provider_name="Japan JMA",
+        capabilities=frozenset({CapabilityName.WEATHER}),
+        language_support=JMA_LANGUAGE_SUPPORT,
+    ),
 }
 
 
@@ -474,9 +485,16 @@ def _weather_context_provider(
     location: ResolvedLocation,
 ) -> CapabilityProviderSet:
     names = weather_providers_for(location, settings.weather_providers)
-    local_capability_names = {WeatherProviderName.NEA_SINGAPORE}
-    main_names = [name for name in names if name not in local_capability_names]
-    supplement_names = [name for name in names if name in local_capability_names]
+    jma_available = location.jma_office_code is not None and location.country_code in {None, "JP"}
+    if settings.weather_providers is not None and WeatherProviderName.JMA_JAPAN in names and not jma_available:
+        reason = "missing-jma-office-code" if location.jma_office_code is None else "known-non-japan-country"
+        _LOGGER.warning("Skipping explicit JMA provider reason=%s", reason)
+    main_names = [name for name in names if name not in LOCAL_WEATHER_CAPABILITY_PROVIDERS]
+    supplement_names = [
+        name
+        for name in names
+        if name in LOCAL_WEATHER_CAPABILITY_PROVIDERS and (name != WeatherProviderName.JMA_JAPAN or jma_available)
+    ]
     if not main_names:
         main_names, supplement_names = supplement_names, []
     providers: list[WeatherContextProvider] = []
@@ -489,7 +507,13 @@ def _weather_context_provider(
         providers.append(
             LoggedWeatherContextProvider(
                 name,
-                _build_weather_provider(name, settings, client, location.summary_language),
+                _build_weather_provider(
+                    name,
+                    settings,
+                    client,
+                    location.summary_language,
+                    jma_office_code=location.jma_office_code,
+                ),
             )
         )
         active_names.append(name)
@@ -498,7 +522,13 @@ def _weather_context_provider(
     supplements = tuple(
         LoggedWeatherContextProvider(
             name,
-            _build_weather_provider(name, settings, client, location.summary_language),
+            _build_weather_provider(
+                name,
+                settings,
+                client,
+                location.summary_language,
+                jma_office_code=location.jma_office_code,
+            ),
         )
         for name in supplement_names
     )
@@ -564,6 +594,8 @@ def _build_weather_provider(
     settings: Settings,
     client: httpx.AsyncClient,
     output_language: str = "en",
+    *,
+    jma_office_code: str | None = None,
 ) -> WeatherContextProvider:
     builder = WEATHER_PROVIDER_BUILDERS.get(name)
     if builder is None:
@@ -576,6 +608,8 @@ def _build_weather_provider(
             base_url=settings.nea_base_url,
             api_key=settings.nea_api_key,
         )
+    if name == WeatherProviderName.JMA_JAPAN:
+        return _build_jma(settings, client, office_code=jma_office_code)
     return builder(settings, client)
 
 
@@ -609,6 +643,21 @@ def _build_nea(settings: Settings, client: httpx.AsyncClient) -> WeatherContextP
     return NEASingaporeNowcastProvider(client, base_url=settings.nea_base_url, api_key=settings.nea_api_key)
 
 
+def _build_jma(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    *,
+    office_code: str | None = None,
+) -> WeatherContextProvider:
+    if office_code is None:
+        raise ValueError("JMA provider requires locations.json jma_office_code")
+    return JMAJapanForecastProvider(
+        client,
+        base_url=settings.jma_base_url,
+        office_code=office_code,
+    )
+
+
 def _build_open_meteo(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
     return OpenMeteoProvider(
         client,
@@ -632,6 +681,7 @@ WEATHER_PROVIDER_BUILDERS: dict[str, Callable[[Settings, httpx.AsyncClient], Wea
     WeatherProviderName.QWEATHER: _build_qweather,
     WeatherProviderName.OPEN_METEO: _build_open_meteo,
     WeatherProviderName.NEA_SINGAPORE: _build_nea,
+    WeatherProviderName.JMA_JAPAN: _build_jma,
 }
 
 

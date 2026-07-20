@@ -1,11 +1,12 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
 
 from weather_briefing.config import ConfigurationError, Settings, weather_providers_for
-from weather_briefing.models import ResolvedLocation
+from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
 from weather_briefing.reference_data import reference_string_tuple
 
 
@@ -105,11 +106,11 @@ def test_weather_provider_order_can_be_configured(monkeypatch) -> None:
     )
 
 
-def test_nea_supplement_must_follow_explicit_primary_providers(monkeypatch) -> None:
+def test_local_supplement_must_follow_explicit_primary_providers(monkeypatch) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("WEATHER_PROVIDERS", "nea-sg,open-meteo")
 
-    with pytest.raises(ConfigurationError, match="place nea-sg last"):
+    with pytest.raises(ConfigurationError, match="local capability providers after all primary providers"):
         Settings.from_env()
 
 
@@ -123,9 +124,16 @@ def test_nea_supplement_can_be_last_or_the_only_explicit_provider(monkeypatch) -
     assert Settings.from_env().weather_providers == ("nea-sg",)
 
 
-def test_programmatic_weather_order_cannot_bypass_nea_supplement_constraint() -> None:
-    with pytest.raises(ConfigurationError, match="place nea-sg last"):
-        weather_providers_for(_resolved_location(mainland=False), ("nea-sg", "open-meteo"))
+@pytest.mark.parametrize("local_provider", ("nea-sg", "jma-jp"))
+def test_programmatic_weather_order_cannot_bypass_local_supplement_constraint(local_provider: str) -> None:
+    with pytest.raises(ConfigurationError, match="local capability providers after all primary providers"):
+        weather_providers_for(_resolved_location(mainland=False), (local_provider, "open-meteo"))
+
+
+def test_multiple_local_supplements_can_follow_primary_providers() -> None:
+    providers = ("open-meteo", "nea-sg", "jma-jp")
+
+    assert weather_providers_for(_resolved_location(mainland=False), providers) == providers
 
 
 def test_non_mainland_weather_providers_default_to_open_meteo_only(monkeypatch) -> None:
@@ -141,6 +149,67 @@ def test_singapore_and_japan_weather_provider_defaults(monkeypatch) -> None:
     _required_environment(monkeypatch)
     singapore = ResolvedLocation("sg", "Singapore", 1.3, 103.8, "SG", None, "Asia/Singapore", False)
     assert weather_providers_for(singapore, None) == ("open-meteo", "nea-sg")
+    japan_without_office = ResolvedLocation("jp", "Osaka", 34.7, 135.5, "JP", None, "Asia/Tokyo", False)
+    assert weather_providers_for(japan_without_office, None) == ("open-meteo",)
+    japan = ResolvedLocation("jp", "Osaka", 34.7, 135.5, "JP", None, "Asia/Tokyo", False, jma_office_code="270000")
+    assert weather_providers_for(japan, None) == ("open-meteo", "jma-jp")
+    japan_without_country_code = ResolvedLocation(
+        "jp-coordinates",
+        "Osaka",
+        34.7,
+        135.5,
+        None,
+        None,
+        None,
+        False,
+        jma_office_code="270000",
+    )
+    assert weather_providers_for(japan_without_country_code, None) == ("open-meteo", "jma-jp")
+    known_non_japan = replace(japan_without_country_code, country_code="US")
+    assert weather_providers_for(known_non_japan, None) == ("open-meteo",)
+
+
+def test_location_jma_office_code_is_loaded(monkeypatch, tmp_path: Path) -> None:
+    _required_environment(monkeypatch)
+    locations_file = tmp_path / "locations.json"
+    locations_file.write_text('[{"id":"osaka","name":"Osaka","jma_office_code":" 270000 "}]', encoding="utf-8")
+    rss_file = tmp_path / "rss-sources.json"
+    rss_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(locations_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(rss_file))
+
+    assert Settings.from_env().locations[0].jma_office_code == "270000"
+
+
+def test_location_models_enforce_jma_office_code_invariant() -> None:
+    spec = LocationSpec("jp", "Tokyo", jma_office_code=" 130000 ")
+    resolved = ResolvedLocation("jp", "Tokyo", 35.7, 139.7, "JP", None, "Asia/Tokyo", False, jma_office_code=" 130000 ")
+
+    assert spec.jma_office_code == "130000"
+    assert resolved.jma_office_code == "130000"
+    with pytest.raises(ValueError, match="six digits"):
+        LocationSpec("jp", "Tokyo", jma_office_code="１２３４５６")
+    with pytest.raises(ValueError, match="six digits"):
+        ResolvedLocation("jp", "Tokyo", 35.7, 139.7, "JP", None, "Asia/Tokyo", False, jma_office_code="１２３４５６")
+    with pytest.raises(ValueError, match="six digits"):
+        normalize_jma_office_code(130000)
+
+
+@pytest.mark.parametrize("value", ("13000", "tokyo", "１２３４５６", 130000))
+def test_location_jma_office_code_rejects_invalid_values(monkeypatch, tmp_path: Path, value: object) -> None:
+    _required_environment(monkeypatch)
+    locations_file = tmp_path / "locations.json"
+    locations_file.write_text(
+        json.dumps([{"id": "tokyo", "name": "Tokyo", "jma_office_code": value}]),
+        encoding="utf-8",
+    )
+    rss_file = tmp_path / "rss-sources.json"
+    rss_file.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(locations_file))
+    monkeypatch.setenv("RSS_SOURCES_FILE", str(rss_file))
+
+    with pytest.raises(ConfigurationError, match="six-digit JMA office code"):
+        Settings.from_env()
 
 
 def test_optional_rss_sources_are_loaded_from_named_file(monkeypatch, tmp_path: Path) -> None:

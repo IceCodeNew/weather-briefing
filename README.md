@@ -14,7 +14,7 @@
 - 默认 09:00–23:00 每小时生成增量简报，不重复生活建议。
 - 标题匹配配置规则的权威预报文章经 HTML 与页面噪声清洗后完整独立转发，并进入后续预报上下文。
 - 日报通过可组合 provider 加入 API 天气预报、AQI、指数标准、PM2.5 浓度、生活指数及花粉过敏原信息，并用于穿衣、运动和口罩建议。
-- 中国大陆天气默认使用 QWeather、Open-Meteo 的降级顺序；新加坡追加 NEA 两小时 nowcast；其他地区默认只使用 Open-Meteo，也可通过 `WEATHER_PROVIDERS` 显式指定主要来源和其他备用来源。`nea-sg` 与其他 provider 组合时必须放在末尾，避免把只提供 nowcast 的 supplement 静默解释为完整主天气源；单独配置时可作为唯一来源。
+- 中国大陆天气默认使用 QWeather、Open-Meteo 的降级顺序；新加坡追加 NEA 两小时 nowcast，日本追加 JMA 本地预报；其他地区默认只使用 Open-Meteo，也可通过 `WEATHER_PROVIDERS` 显式指定主要来源和其他备用来源。`nea-sg`、`jma-jp` 等本地 capability provider 与完整天气 provider 组合时必须放在其后，避免静默改写主来源；单独配置时可作为唯一来源。
 - 支持多个关注地点；只给地名时正向解析并缓存坐标与国家信息，只给坐标时反查地点名和行政信息，名称与坐标齐全时不发起定位请求。
 - 完整地名无法解析时按可配置规则逐级降低查询精度；首次匹配会投递实际匹配地名和坐标，请用户确认并写回私密地点文件。
 - 天气来源缺少空气质量时才使用可选 AQICN；两者都无法提供空气质量时给出明确配置错误。
@@ -41,7 +41,7 @@ cp locations.example.json locations.json
 uv run --frozen weather-briefing run briefing
 ```
 
-`env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id`，并在 `name` 与成对的 `latitude`、`longitude` 之间至少提供一项：只有名称时程序正向解析并支持降精度回退，只有坐标时通过 Nominatim 反查规范地点名和行政信息，两者都有时不发起定位请求。可选 `language` 使用基础 BCP 47-like 标签指定该地点的天气总结语种，默认 `en`；示例为当前中国大陆配置显式使用 `zh-CN`。provider 支持该语言时也会在请求边界选择最接近的输出语言；项目当前不接受 BCP 47 extension/private-use 子标签。解析结果缓存到 `state/`。
+`env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id`，并在 `name` 与成对的 `latitude`、`longitude` 之间至少提供一项：只有名称时程序正向解析并支持降精度回退，只有坐标时通过 Nominatim 反查规范地点名和行政信息，两者都有时不发起定位请求。可选 `language` 使用基础 BCP 47-like 标签指定该地点的天气总结语种，默认 `en`；示例为当前中国大陆配置显式使用 `zh-CN`。日本地点还可设置六位 `jma_office_code` 以启用对应 JMA 预报区；未设置时只使用 Open-Meteo，避免误用东京 office。provider 支持该语言时也会在请求边界选择最接近的输出语言；项目当前不接受 BCP 47 extension/private-use 子标签。解析结果缓存到 `state/`。
 
 `CONTEXT_SOURCES_JSON` 可配置由 `id`、`name`、`url` 和可选 `language` 组成的辅助 HTTP 上下文数组。`language` 使用基础 BCP 47-like 标签记录正文实际语种；无法确定时省略并按 `und` 处理，不能默认假定为中文。
 
