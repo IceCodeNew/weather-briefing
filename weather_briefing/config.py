@@ -252,7 +252,14 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
             raise ConfigurationError(f"Location {location_id} longitude is out of range")
         if name is None and latitude is None:
             raise ConfigurationError(f"Location {location_id} must provide a name or coordinates")
-        locations.append(LocationSpec(location_id, name, latitude, longitude))
+        language_value = item.get("language", "en")
+        if not isinstance(language_value, str):
+            raise ConfigurationError(f"{item_path}.language must be a basic BCP 47-like language tag")
+        try:
+            summary_language = normalize_language_tag(language_value)
+        except ValueError as exc:
+            raise ConfigurationError(f"{item_path}.language must be a basic BCP 47-like language tag") from exc
+        locations.append(LocationSpec(location_id, name, latitude, longitude, summary_language=summary_language))
         seen_ids.add(location_id)
     return tuple(locations)
 

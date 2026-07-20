@@ -46,6 +46,11 @@ class LocationSpec:
     name: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    summary_language: str = "en"
+
+    def __post_init__(self) -> None:
+        """Normalize the configured briefing language."""
+        object.__setattr__(self, "summary_language", normalize_language_tag(self.summary_language))
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +67,11 @@ class ResolvedLocation:
     is_mainland_china: bool
     matched_name: str | None = None
     precision_reduced: bool = False
+    summary_language: str = "en"
+
+    def __post_init__(self) -> None:
+        """Normalize the briefing language retained after geocoding."""
+        object.__setattr__(self, "summary_language", normalize_language_tag(self.summary_language))
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,7 +240,12 @@ class BriefingResult:
     advice: tuple[Advice, ...] = ()
     disaster_tracking: tuple[Conclusion, ...] = ()
     should_publish: bool = True
+    output_language: str = "en"
     raw_payload: dict[str, object] = field(default_factory=dict, compare=False)
+
+    def __post_init__(self) -> None:
+        """Normalize the language used by delivery renderers."""
+        object.__setattr__(self, "output_language", normalize_language_tag(self.output_language))
 
 
 @dataclass(frozen=True, slots=True)

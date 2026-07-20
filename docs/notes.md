@@ -57,6 +57,10 @@ HTTPX `request.extensions` 是可扩展输入，不保证只由 `api_client.py` 
 
 ## LLM 请求与输出修复边界
 
+地点总结语种属于当前配置而不是地理编码结果。解析缓存只保存坐标、行政区和时区等 provider-derived metadata；每次读取缓存或新解析完成后，都用 `LocationSpec.summary_language` 覆盖运行时地点，因此用户修改 `locations.json` 的语言不需要重新请求地理编码，也不会把旧缓存语种误当成当前意图。代价是缓存内容与运行时地点配置有意分离，必须继续在所有缓存命中路径执行覆盖；若未来语言影响地理编码服务返回的名称、行政区或 provider 路由，应把该输入纳入缓存 key 或显式拆分缓存记录，而不能静默复用当前覆盖规则。
+
+投递 renderer 从 `BriefingResult.output_language` 选择平台外壳语言，当前内置简体中文、繁体中文、英文和日文；区域标签按主语言回退，其他合法语种的 LLM 正文仍保持用户配置，但章节与来源外壳回退英文，避免渲染失败。这个边界接受尚未覆盖的语种出现英文 UI 外壳；当新增目标地区、用户实际使用其他总结语种，或英文外壳造成理解障碍时，应补充对应 renderer 标签，而不是限制 LLM 正文语种或让 provider 伪报输出语言。
+
 ### 当前选择
 
 应用不在 any-llm 外层实现网络重试，也不向 provider 注入应用 HTTP client。请求协议、timeout、可重试异常、`Retry-After` 与退避由 any-llm 选择的厂商 SDK 负责，避免应用分类与 SDK 演进脱节，或两层重试把请求次数和最长耗时相乘。adapter 只把 any-llm 已统一的请求异常标记为 `LLMRequestError`；尚未统一的厂商 SDK 异常原样传播，两者都会绕过 service 的输出契约修复并使本轮任务失败。

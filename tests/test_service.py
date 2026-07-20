@@ -231,6 +231,7 @@ def _location(
     *,
     country_code: str | None = "CN",
     administrative_area: str | None = "Beijing",
+    summary_language: str = "zh-CN",
 ) -> ResolvedLocation:
     return ResolvedLocation(
         id="test",
@@ -241,6 +242,7 @@ def _location(
         administrative_area=administrative_area,
         timezone="Asia/Shanghai",
         is_mainland_china=True,
+        summary_language=summary_language,
     )
 
 
@@ -692,6 +694,14 @@ def test_build_payload_serializes_article_groups_consistently(
             _location(country_code=None, administrative_area=None),
             {"full_name": "runtime-region"},
         ),
+        (
+            _location(summary_language="en"),
+            {
+                "full_name": "runtime-region",
+                "administrative_area": "Beijing",
+                "country_code": "CN",
+            },
+        ),
     ),
 )
 async def test_forecast_uses_configured_coordinates_and_air_quality_context(
@@ -745,6 +755,7 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     assert "PM2.5 12 µg/m³" in content
     assert "原始浓度" not in content
     assert llm.payload["location_scope"] == expected_scope
+    assert llm.payload["output_language"] == location.summary_language
     assert "coordinates" not in llm.payload
     assert "location_id" not in llm.payload
     assert llm.payload["required_advice_topics"] == [
@@ -763,6 +774,9 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
         }
     ]
     assert body is not None
+    if location.summary_language == "en":
+        assert "Weather information" in body
+        assert "天气信息" not in body
     assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
 
 

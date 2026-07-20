@@ -26,6 +26,10 @@ def test_prompt_separates_advice_and_avoids_repetition() -> None:
     assert "不得原样复述或改写后重复表达" in SYSTEM_PROMPT
 
 
+def test_prompt_compares_primary_language_before_translating() -> None:
+    assert "output_language 的主语言相同时" in SYSTEM_PROMPT
+
+
 def test_prompt_condenses_the_overview_into_the_headline() -> None:
     assert "将当下最重要的天气概况浓缩其中" in SYSTEM_PROMPT
     assert "不要另写摘要段落" in SYSTEM_PROMPT

@@ -41,7 +41,7 @@ cp locations.example.json locations.json
 uv run --frozen weather-briefing run briefing
 ```
 
-`env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id`，并在 `name` 与成对的 `latitude`、`longitude` 之间至少提供一项：只有名称时程序正向解析并支持降精度回退，只有坐标时通过 Nominatim 反查规范地点名和行政信息，两者都有时不发起定位请求。解析结果缓存到 `state/`。
+`env.example` 将必填项、条件必填项和选填项分别写在注释中，所有凭据和投递标识均为无效占位值。复制 `locations.example.json` 为被 Git 忽略的 `locations.json` 后可配置多个地点；示例使用北京市西城区中南海的公开坐标。每项必须有稳定 `id`，并在 `name` 与成对的 `latitude`、`longitude` 之间至少提供一项：只有名称时程序正向解析并支持降精度回退，只有坐标时通过 Nominatim 反查规范地点名和行政信息，两者都有时不发起定位请求。可选 `language` 使用基础 BCP 47-like 标签指定该地点的天气总结语种，默认 `en`；示例为当前中国大陆配置显式使用 `zh-CN`。provider 支持该语言时也会在请求边界选择最接近的输出语言；项目当前不接受 BCP 47 extension/private-use 子标签。解析结果缓存到 `state/`。
 
 `CONTEXT_SOURCES_JSON` 可配置由 `id`、`name`、`url` 和可选 `language` 组成的辅助 HTTP 上下文数组。`language` 使用基础 BCP 47-like 标签记录正文实际语种；无法确定时省略并按 `und` 处理，不能默认假定为中文。
 

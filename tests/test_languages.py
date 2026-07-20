@@ -1,7 +1,7 @@
 import pytest
 
 from weather_briefing.languages import LanguageSupport, localized_labels, normalize_language_tag
-from weather_briefing.models import SourceDocument
+from weather_briefing.models import BriefingResult, LocationSpec, ResolvedLocation, SourceDocument
 from weather_briefing.weather_context import OPEN_METEO_LANGUAGE_SUPPORT, QWEATHER_LANGUAGE_SUPPORT
 
 
@@ -96,3 +96,42 @@ def test_source_document_normalizes_language_at_model_boundary() -> None:
 def test_source_document_rejects_invalid_language() -> None:
     with pytest.raises(ValueError, match="language tag"):
         SourceDocument("source", "Source", "https://example.invalid/source", "内容", language="english")
+
+
+def test_location_and_briefing_models_normalize_language_fields() -> None:
+    location_spec = LocationSpec("tokyo", "Tokyo", summary_language="JA-jp")
+    resolved_location = ResolvedLocation(
+        "tokyo",
+        "Tokyo",
+        35.7,
+        139.7,
+        "JP",
+        None,
+        "Asia/Tokyo",
+        False,
+        summary_language="JA-jp",
+    )
+    result = BriefingResult("Headline", ("source",), (), output_language="JA-jp")
+
+    assert location_spec.summary_language == "ja-JP"
+    assert resolved_location.summary_language == "ja-JP"
+    assert result.output_language == "ja-JP"
+
+
+def test_location_and_briefing_models_reject_invalid_language_fields() -> None:
+    with pytest.raises(ValueError, match="language tag"):
+        LocationSpec("tokyo", "Tokyo", summary_language="english")
+    with pytest.raises(ValueError, match="language tag"):
+        ResolvedLocation(
+            "tokyo",
+            "Tokyo",
+            35.7,
+            139.7,
+            "JP",
+            None,
+            "Asia/Tokyo",
+            False,
+            summary_language="english",
+        )
+    with pytest.raises(ValueError, match="language tag"):
+        BriefingResult("Headline", ("source",), (), output_language="english")

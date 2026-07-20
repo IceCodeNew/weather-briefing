@@ -545,7 +545,10 @@ class BriefingService:
             try:
                 _LOGGER.debug("LLM summarization attempt %d/%d", attempt + 1, self._settings.llm_max_attempts)
                 raw_result = await self._llm.summarize(instructions, current_payload)
-                result = parse_result(raw_result, now, valid_source_ids)
+                result = replace(
+                    parse_result(raw_result, now, valid_source_ids),
+                    output_language=self._location.summary_language,
+                )
                 validator(result)
                 _LOGGER.debug(
                     "LLM summarization successful on attempt %d/%d", attempt + 1, self._settings.llm_max_attempts
@@ -603,7 +606,7 @@ class BriefingService:
             location_scope["country_code"] = self._location.country_code
         return {
             "mode": kind,
-            "output_language": "zh-CN",
+            "output_language": self._location.summary_language,
             "now": now.isoformat(),
             "forecast_date": str(forecast_date or now.in_timezone(self._settings.timezone).date()),
             "region": self._location.name,
