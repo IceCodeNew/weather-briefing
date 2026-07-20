@@ -35,6 +35,8 @@ DeepSeek 是唯一保留旧环境变量别名的 LLM provider：`DEEPSEEK_MODEL`
 
 ### 领域模型与平台适配边界
 
+天气能力先按可独立替换的领域能力建模，但现有 QWeather 和 Open-Meteo adapter 仍各用一次完整请求流程返回天气、空气质量、生活指数或过敏原的组合快照。`CapabilityProviderSet` 因此把完整 adapter 放在天气槽位，只把已有独立 adapter 的 AQICN 放在空气质量槽位；为了拆分类型而重复请求同一厂商会增加延迟、配额消耗和部分失败状态。fallback 的 `weather_metadata` 只声明所有候选 adapter 都支持的能力，避免当前实际选中某一路时 `supports()` 返回无法兑现的结果。若厂商提供可独立调用且有实际替换需求的预警、nowcast 或过敏原接口，应新增对应槽位和薄 adapter；若未来路由需要表达“至少一个候选支持”而不是共同保证，则应另建聚合元数据，不能改变当前 `supports()` 的语义。
+
 `Article.id` 是带 Feed 身份的文章级稳定 ID，用于去重和模型引用；`Article.source_id` 是 Feed 配置 ID。同一内容出现在不同 Feed 时保留不同文章 ID，以维持来源隔离和可追溯性。只有在产品明确引入跨来源 canonical identity、并定义转载和更新版本的合并规则后，才应重新评估这一选择。
 
 LLM schema 到 `BriefingResult` 的转换保持为领域模型之外的 `parse_result()`。领域 dataclass 不依赖 Pydantic 或 any-llm，provider 也不拥有来源 ID 归属规则。将转换放入任一对象都会让平台 SDK 或不可信输入校验进入错误的层级。
