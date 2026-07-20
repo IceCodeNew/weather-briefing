@@ -17,9 +17,9 @@ from soupsieve import SelectorSyntaxError
 from soupsieve import compile as compile_selector
 
 from .languages import normalize_language_tag
-from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation
+from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation, normalize_jma_office_code
 from .reference_data import reference_string_tuple
-from .registries import PublisherName, WeatherProviderName
+from .registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 
 
 class ConfigurationError(ValueError):
@@ -205,8 +205,14 @@ def _configured_weather_providers() -> tuple[str, ...] | None:
 
 
 def _validate_weather_provider_order(providers: tuple[str, ...]) -> None:
-    if len(providers) > 1 and WeatherProviderName.NEA_SINGAPORE in providers[:-1]:
-        raise ConfigurationError("WEATHER_PROVIDERS must place nea-sg last when combined with other providers")
+    local_provider_seen = False
+    for provider in providers:
+        if provider in LOCAL_WEATHER_CAPABILITY_PROVIDERS:
+            local_provider_seen = True
+        elif local_provider_seen:
+            raise ConfigurationError(
+                "WEATHER_PROVIDERS must place local capability providers after all primary providers"
+            )
 
 
 def _publisher() -> str:
@@ -226,14 +232,21 @@ def weather_providers_for(location: ResolvedLocation, configured: tuple[str, ...
     if configured is not None:
         _validate_weather_provider_order(configured)
         return configured
-    region = (
-        "mainland_china"
-        if location.is_mainland_china
-        else location.country_code
-        if location.country_code == "SG"
-        else "other"
-    )
-    return reference_string_tuple("provider_defaults.json", "weather_provider_order", region)
+    region = _weather_region(location)
+    providers = reference_string_tuple("provider_defaults.json", "weather_provider_order", region)
+    if region == "JP" and location.jma_office_code is None:
+        return tuple(provider for provider in providers if provider != WeatherProviderName.JMA_JAPAN)
+    return providers
+
+
+def _weather_region(location: ResolvedLocation) -> str:
+    if location.is_mainland_china:
+        return "mainland_china"
+    if location.country_code in {"SG", "JP"}:
+        return location.country_code
+    if location.country_code is None and location.jma_office_code is not None:
+        return "JP"
+    return "other"
 
 
 def _locations(path: Path) -> tuple[LocationSpec, ...]:
@@ -272,7 +285,23 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
             summary_language = normalize_language_tag(language_value)
         except ValueError as exc:
             raise ConfigurationError(f"{item_path}.language must be a basic BCP 47-like language tag") from exc
-        locations.append(LocationSpec(location_id, name, latitude, longitude, summary_language=summary_language))
+        jma_office_code_value = item.get("jma_office_code")
+        if jma_office_code_value is not None and not isinstance(jma_office_code_value, str):
+            raise ConfigurationError(f"{item_path}.jma_office_code must be a six-digit JMA office code")
+        try:
+            jma_office_code = normalize_jma_office_code(jma_office_code_value)
+        except ValueError as exc:
+            raise ConfigurationError(f"{item_path}.jma_office_code must be a six-digit JMA office code") from exc
+        locations.append(
+            LocationSpec(
+                location_id,
+                name,
+                latitude,
+                longitude,
+                summary_language=summary_language,
+                jma_office_code=jma_office_code,
+            )
+        )
         seen_ids.add(location_id)
     return tuple(locations)
 
@@ -340,6 +369,7 @@ class Settings:
     qweather_index_types: tuple[str, ...]
     nea_base_url: str
     nea_api_key: str | None
+    jma_base_url: str
     open_meteo_weather_base_url: str
     open_meteo_air_quality_base_url: str
     open_meteo_api_key: str | None
@@ -460,6 +490,9 @@ class Settings:
             ),
             nea_base_url=_clean_env(os.getenv("NEA_BASE_URL", "https://api-open.data.gov.sg")).rstrip("/"),
             nea_api_key=_clean_env(os.getenv("NEA_API_KEY")) or None,
+            jma_base_url=_clean_env(
+                os.getenv("JMA_BASE_URL", "https://www.jma.go.jp/bosai/forecast/data/forecast")
+            ).rstrip("/"),
             open_meteo_weather_base_url=_clean_env(
                 os.getenv("OPEN_METEO_WEATHER_BASE_URL", "https://api.open-meteo.com")
             ).rstrip("/"),

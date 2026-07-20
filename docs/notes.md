@@ -4,7 +4,9 @@
 
 ## 审查时应保留的显式边界
 
-地区 nowcast 作为 supplement 只补充主天气快照，不改变主 provider 的成功/失败语义。`CapabilityProviderSet.fetch_all()` 先完成主天气请求，再按配置顺序调用当前地点的 supplement；预期的 `WeatherContextError` 和输入契约 `ValueError` 被丢弃，主快照仍可继续编排。显式混合配置要求 `nea-sg` 位于末尾，而不是静默重写用户顺序；单独配置仍允许它成为唯一上下文来源，便于受限部署，但 capability 元数据继续只声明 `NOWCAST`。它不会捕获取消或任意编程异常，也不承诺 supplement 与主请求并行或拥有独立 timeout；当前地点每次最多配置少量本地源，HTTP 客户端的统一 timeout 是延迟上界。若 supplement 数量或延迟成为可观测瓶颈，应先引入带日志和取消语义的独立任务边界，再重新定义失败隔离，不应把 `except Exception` 当作 best-effort 实现。
+地区 nowcast 作为 supplement 只补充主天气快照，不改变主 provider 的成功/失败语义。`CapabilityProviderSet.fetch_all()` 先完成主天气请求，再按配置顺序调用当前地点的 supplement；预期的 `WeatherContextError` 和输入契约 `ValueError` 被丢弃，主快照仍可继续编排。显式混合配置要求所有本地 capability provider 位于完整天气 provider 之后，而不是静默重写用户顺序；单独配置仍允许本地 provider 成为唯一上下文来源，便于受限部署，但 capability 元数据继续只声明实际能力。它不会捕获取消或任意编程异常，也不承诺 supplement 与主请求并行或拥有独立 timeout；当前地点每次最多配置少量本地源，HTTP 客户端的统一 timeout 是延迟上界。若 supplement 数量或延迟成为可观测瓶颈，应先引入带日志和取消语义的独立任务边界，再重新定义失败隔离，不应把 `except Exception` 当作 best-effort 实现。
+
+JMA 默认作为日本地点的本地 supplement，不替换全球主天气 provider；单独配置 `jma-jp` 时仍可作为唯一主来源，与本地 capability provider 的通用规则一致。JMA API 使用 forecast office code 而不是坐标查询；为支持多个日本地点并避免把东京的 `130000` 静默套到其他地区，office code 属于 `locations.json` 的地点配置，只有配置六位 code 时才自动启用 `jma-jp`，缺失时安全退回 Open-Meteo。名称与坐标齐全而跳过地理编码时，国家代码未知，显式 office code 足以选择日本默认；若解析结果已有非日本国家代码，则该地理事实优先，错误填写的 code 不得改写地区。这样增加了每地点配置成本，也要求地点跨预报区移动时同步更新 code；JMA 响应失败仍按 supplement 的预期失败边界丢弃，不阻断主天气上下文。若未来维护一份经审核的坐标/行政区到 office code 参考数据，才可把手工字段改为自动解析；在此之前不能用近似坐标或全局默认值猜测预报区。
 
 ### 镜像构建与发布串行边界
 

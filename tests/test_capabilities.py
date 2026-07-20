@@ -175,7 +175,32 @@ async def test_capability_set_includes_best_effort_supplementary_context() -> No
     assert len(await provider.fetch_all(1, 2)) == 2
 
 
-async def test_capability_set_skips_failed_supplement_and_dated_supplements() -> None:
+async def test_capability_set_includes_dated_capable_supplement() -> None:
+    forecast_date = pendulum.date(2026, 7, 21)
+
+    class Weather:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            return _weather()  # pragma: no cover
+
+        async def fetch_for_date(
+            self,
+            latitude: float,
+            longitude: float,
+            requested_date: pendulum.Date,
+        ) -> WeatherContextSnapshot:
+            assert requested_date == forecast_date
+            return _weather()
+
+    provider = CapabilityProviderSet(
+        weather=Weather(),
+        weather_metadata=_metadata(),
+        supplements=(Weather(),),
+    )
+
+    assert len(await provider.fetch_all(1, 2, forecast_date=forecast_date)) == 2
+
+
+async def test_capability_set_skips_failed_and_non_dated_supplements() -> None:
     class Weather:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
             return _weather(air_quality=_air_quality())

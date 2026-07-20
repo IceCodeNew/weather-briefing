@@ -378,6 +378,7 @@ class CachedLocationResolver:
                     timezone=None,
                     is_mainland_china=possibly_mainland_china(location.latitude, location.longitude),
                     summary_language=location.summary_language,
+                    jma_office_code=location.jma_office_code,
                 ),
                 from_cache=False,
             )
@@ -388,7 +389,11 @@ class CachedLocationResolver:
         if isinstance(cached, dict):
             try:
                 return LocationResolution(
-                    replace(ResolvedLocation(**cached), summary_language=location.summary_language),
+                    replace(
+                        ResolvedLocation(**cached),
+                        summary_language=location.summary_language,
+                        jma_office_code=location.jma_office_code,
+                    ),
                     from_cache=True,
                 )
             except (TypeError, ValueError) as exc:
@@ -398,7 +403,11 @@ class CachedLocationResolver:
                 ) from None
         if cached is not None:
             raise GeocodingError(f"Invalid cached geocoding record for location: {location.id}")
-        resolved = replace(await self._provider.geocode(location), summary_language=location.summary_language)
+        resolved = replace(
+            await self._provider.geocode(location),
+            summary_language=location.summary_language,
+            jma_office_code=location.jma_office_code,
+        )
         cache[cache_key] = _location_cache_record(resolved)
         self._write_cache(cache)
         return LocationResolution(resolved, from_cache=False)
@@ -417,7 +426,11 @@ class CachedLocationResolver:
         if isinstance(cached, dict):
             try:
                 return LocationResolution(
-                    replace(ResolvedLocation(**cached), summary_language=location.summary_language),
+                    replace(
+                        ResolvedLocation(**cached),
+                        summary_language=location.summary_language,
+                        jma_office_code=location.jma_office_code,
+                    ),
                     from_cache=True,
                 )
             except (TypeError, ValueError) as exc:
@@ -430,6 +443,7 @@ class CachedLocationResolver:
         resolved = replace(
             await self._reverse_provider.reverse_geocode(location),
             summary_language=location.summary_language,
+            jma_office_code=location.jma_office_code,
         )
         cache[cache_key] = _location_cache_record(resolved)
         self._write_cache(cache)
@@ -456,6 +470,7 @@ class CachedLocationResolver:
 def _location_cache_record(location: ResolvedLocation) -> dict[str, Any]:
     record = asdict(location)
     del record["summary_language"]
+    del record["jma_office_code"]
     return record
 
 

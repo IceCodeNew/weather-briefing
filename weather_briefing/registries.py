@@ -9,6 +9,15 @@ class WeatherProviderName(StrEnum):
     QWEATHER = "qweather"
     OPEN_METEO = "open-meteo"
     NEA_SINGAPORE = "nea-sg"
+    JMA_JAPAN = "jma-jp"
+
+
+LOCAL_WEATHER_CAPABILITY_PROVIDERS = frozenset(
+    {
+        WeatherProviderName.NEA_SINGAPORE,
+        WeatherProviderName.JMA_JAPAN,
+    }
+)
 
 
 class PublisherName(StrEnum):

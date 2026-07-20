@@ -23,6 +23,7 @@ from weather_briefing.cli import (
     _aqicn_provider,
     _briefing_delivery_policy,
     _briefing_sent_today,
+    _build_jma,
     _build_nea,
     _build_open_meteo,
     _build_qweather,
@@ -715,6 +716,7 @@ _DEFAULT_SETTINGS = Settings(
     qweather_index_types=(),
     nea_base_url="https://nea.example.com",
     nea_api_key=None,
+    jma_base_url="https://jma.example.com",
     open_meteo_weather_base_url="https://weather.example.com",
     open_meteo_air_quality_base_url="https://air.example.com",
     open_meteo_api_key=None,
@@ -1163,6 +1165,46 @@ class TestWeatherContextProvider:
         provider = _weather_context_provider(settings, async_client, location)
         assert provider is not None
 
+    @pytest.mark.parametrize(
+        ("country_code", "office_code", "reason"),
+        (("JP", None, "missing-jma-office-code"), ("US", "130000", "known-non-japan-country")),
+    )
+    async def test_unavailable_jma_skips_explicit_supplement(
+        self,
+        async_client: httpx.AsyncClient,
+        caplog,
+        country_code: str,
+        office_code: str | None,
+        reason: str,
+    ) -> None:
+        settings = _make_fake_settings(weather_providers=("open-meteo", "jma-jp"))
+        location = ResolvedLocation(
+            "test",
+            "Test",
+            35.7,
+            139.7,
+            country_code,
+            None,
+            "Asia/Tokyo",
+            False,
+            jma_office_code=office_code,
+        )
+
+        with caplog.at_level(logging.WARNING, logger="weather_briefing"):
+            provider = _weather_context_provider(settings, async_client, location)
+
+        assert provider.weather_metadata.provider_id == "open-meteo"
+        assert provider.supplements == ()
+        assert provider.supplement_metadata == ()
+        assert f"Skipping explicit JMA provider reason={reason}" in caplog.text
+
+    async def test_missing_jma_office_rejects_explicit_jma_only(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(weather_providers=("jma-jp",))
+        location = ResolvedLocation("test", "Test", 35.7, 139.7, "JP", None, "Asia/Tokyo", False)
+
+        with pytest.raises(ValueError, match="No configured weather provider"):
+            _weather_context_provider(settings, async_client, location)
+
     async def test_qweather_configured(self, async_client: httpx.AsyncClient, caplog) -> None:
         key = b"fake-private-key-content"
         settings = _make_fake_settings(
@@ -1294,6 +1336,8 @@ async def test_local_provider_registry_builders(async_client: httpx.AsyncClient)
     settings = _make_fake_settings()
 
     assert _build_nea(settings, async_client) is not None
+    with pytest.raises(ValueError, match="jma_office_code"):
+        _build_jma(settings, async_client)
 
 
 async def test_explicit_local_provider_can_be_used_as_primary(async_client: httpx.AsyncClient) -> None:
@@ -1304,6 +1348,51 @@ async def test_explicit_local_provider_can_be_used_as_primary(async_client: http
 
     assert provider.weather_metadata.provider_id == "nea-sg"
     assert provider.weather_metadata.language_support.default == "en"
+
+
+async def test_explicit_jma_provider_can_be_used_as_primary() -> None:
+    settings = _make_fake_settings(weather_providers=("jma-jp",))
+    location = ResolvedLocation(
+        "jp",
+        "Tokyo",
+        35.7,
+        139.7,
+        "JP",
+        None,
+        "Asia/Tokyo",
+        False,
+        jma_office_code="130000",
+    )
+
+    payload = [
+        {
+            "reportDatetime": "2026-07-20T05:00:00+09:00",
+            "timeSeries": [
+                {
+                    "timeDefines": ["2026-07-20T00:00:00+09:00", "2026-07-21T00:00:00+09:00"],
+                    "areas": [
+                        {"area": {"name": "東京都"}, "weathers": ["晴れ", "曇り"], "winds": ["南の風", "東の風"]}
+                    ],
+                }
+            ],
+        }
+    ]
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    async with httpx.AsyncClient(transport=transport) as client:
+        provider = _weather_context_provider(settings, client, location)
+        snapshot = await provider.fetch_for_date(35.7, 139.7, pendulum.date(2026, 7, 21))
+
+    assert provider.weather_metadata.provider_id == "jma-jp"
+    assert provider.weather_metadata.language_support.default == "ja"
+    assert snapshot.weather_forecast == ("東京都: 曇り", "東京都の風: 東の風")
+
+
+async def test_build_jma_returns_provider(async_client: httpx.AsyncClient) -> None:
+    settings = _make_fake_settings()
+
+    provider = _build_weather_provider("jma-jp", settings, async_client, jma_office_code="130000")
+
+    assert provider is not None
 
 
 async def test_build_qweather_missing_config_raises(async_client: httpx.AsyncClient) -> None:
