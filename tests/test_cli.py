@@ -14,6 +14,7 @@ import pendulum
 import pytest
 
 import weather_briefing.cli as cli_module
+from weather_briefing.capabilities import CapabilityName
 from weather_briefing.cli import (
     _LOGGER,
     _SENSITIVE_SDK_LOGGERS,
@@ -37,6 +38,7 @@ from weather_briefing.cli import (
     _precision_reduction_notice,
     _qweather_is_configured,
     _weather_context_provider,
+    _weather_provider_metadata,
     build_parser,
     daemon,
     main,
@@ -1133,7 +1135,9 @@ class TestWeatherContextProvider:
         )
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
         provider = _weather_context_provider(settings, async_client, location)
-        assert provider is not None
+        assert provider.weather_metadata.provider_id == "open-meteo"
+        assert provider.weather_metadata.supports(CapabilityName.ALLERGEN)
+        assert not provider.weather_metadata.supports(CapabilityName.LIFESTYLE)
 
     async def test_qweather_explicit_not_configured_raises(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
@@ -1167,9 +1171,40 @@ class TestWeatherContextProvider:
         location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
         with caplog.at_level("INFO", logger="weather_briefing"):
             provider = _weather_context_provider(settings, async_client, location)
-        assert provider is not None
+        assert provider.weather_metadata.provider_id == "qweather"
+        assert provider.weather_metadata.supports(CapabilityName.LIFESTYLE)
+        assert not provider.weather_metadata.supports(CapabilityName.ALLERGEN)
         assert "Weather provider order providers=qweather" in caplog.text
         assert "location=test" not in caplog.text
+
+    async def test_fallback_metadata_only_claims_common_capabilities(
+        self,
+        async_client: httpx.AsyncClient,
+    ) -> None:
+        key = b"fake-private-key-content"
+        settings = _make_fake_settings(
+            weather_providers=("qweather", "open-meteo"),
+            qweather_project_id="project",
+            qweather_credential_id="credential",
+            qweather_private_key=base64.b64encode(key).decode(),
+            qweather_base_url="https://qweather.example.invalid",
+        )
+        location = ResolvedLocation("test", "Test", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
+
+        metadata = _weather_context_provider(settings, async_client, location).weather_metadata
+
+        assert metadata.provider_id == "weather-composite"
+        assert metadata.capabilities == frozenset(
+            {
+                CapabilityName.WEATHER,
+                CapabilityName.AIR_QUALITY,
+            }
+        )
+
+
+def test_weather_provider_metadata_rejects_unregistered_provider() -> None:
+    with pytest.raises(ValueError, match="has no capability metadata"):
+        _weather_provider_metadata(("unregistered",))
 
 
 async def test_no_weather_provider_available(monkeypatch, async_client: httpx.AsyncClient) -> None:

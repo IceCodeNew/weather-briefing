@@ -27,6 +27,7 @@ from .air_quality import (
     AQICNProvider,
 )
 from .api_client import LoggedAsyncClient
+from .capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
 from .config import Settings, state_path_from_env, weather_providers_for
 from .geocoding import (
     CachedLocationResolver,
@@ -45,7 +46,6 @@ from .sources import HTTPContextSource, RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from .time_utils import parse_aware_datetime
 from .weather_context import (
-    AirQualitySupplementingWeatherProvider,
     FallbackWeatherContextProvider,
     LoggedWeatherContextProvider,
     OpenMeteoProvider,
@@ -411,20 +411,67 @@ PUBLISHER_BUILDERS: dict[
     PublisherName.TELEGRAM: _build_telegram_publisher,
 }
 
+_WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
+    WeatherProviderName.QWEATHER: ProviderCapabilities(
+        provider_id=WeatherProviderName.QWEATHER,
+        provider_name="QWeather",
+        capabilities=frozenset(
+            {
+                CapabilityName.WEATHER,
+                CapabilityName.AIR_QUALITY,
+                CapabilityName.LIFESTYLE,
+            }
+        ),
+    ),
+    WeatherProviderName.OPEN_METEO: ProviderCapabilities(
+        provider_id=WeatherProviderName.OPEN_METEO,
+        provider_name="Open-Meteo",
+        capabilities=frozenset(
+            {
+                CapabilityName.WEATHER,
+                CapabilityName.AIR_QUALITY,
+                CapabilityName.ALLERGEN,
+            }
+        ),
+    ),
+}
+
+
+def _weather_provider_metadata(names: Sequence[str]) -> ProviderCapabilities:
+    """Describe capabilities common to every active fallback provider."""
+    metadata: list[ProviderCapabilities] = []
+    for name in names:
+        item = _WEATHER_PROVIDER_METADATA.get(name)
+        if item is None:
+            raise ValueError(f"Weather provider {name!r} has no capability metadata")
+        metadata.append(item)
+    if len(metadata) == 1:
+        return metadata[0]
+    capabilities = metadata[0].capabilities
+    for item in metadata[1:]:
+        capabilities &= item.capabilities
+    return ProviderCapabilities(
+        provider_id="weather-composite",
+        provider_name="Weather provider composite",
+        capabilities=capabilities,
+    )
+
 
 def _weather_context_provider(
     settings: Settings,
     client: httpx.AsyncClient,
     location: ResolvedLocation,
-) -> WeatherContextProvider:
+) -> CapabilityProviderSet:
     names = weather_providers_for(location, settings.weather_providers)
     providers: list[WeatherContextProvider] = []
+    active_names: list[str] = []
     for name in names:
         if name == WeatherProviderName.QWEATHER and not _qweather_is_configured(settings):
             if settings.weather_providers is not None:
                 raise ValueError("Explicit QWeather provider is missing JWT configuration")
             continue
         providers.append(LoggedWeatherContextProvider(name, _build_weather_provider(name, settings, client)))
+        active_names.append(name)
     if not providers:
         raise ValueError("No configured weather provider is available")
     _LOGGER.info(
@@ -434,9 +481,20 @@ def _weather_context_provider(
     weather_provider: WeatherContextProvider = (
         providers[0] if len(providers) == 1 else FallbackWeatherContextProvider(*providers)
     )
-    return AirQualitySupplementingWeatherProvider(
-        weather_provider,
-        _aqicn_provider(settings, client),
+    air_quality_provider = _aqicn_provider(settings, client)
+    return CapabilityProviderSet(
+        weather=weather_provider,
+        weather_metadata=_weather_provider_metadata(active_names),
+        air_quality=air_quality_provider,
+        air_quality_metadata=(
+            ProviderCapabilities(
+                provider_id="air-quality:aqicn",
+                provider_name="AQICN",
+                capabilities=frozenset({CapabilityName.AIR_QUALITY}),
+            )
+            if air_quality_provider is not None
+            else None
+        ),
     )
 
 
