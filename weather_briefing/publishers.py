@@ -17,6 +17,7 @@ from .render import MessageRenderer
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 _SAFE_DELIVERY_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+telegram_error_classification()
 
 
 class Publisher(Protocol):
@@ -113,8 +114,10 @@ class DeliveryError(RuntimeError):
 
     def __init__(self, message: str, *, reason: str, channel_unavailable: bool = False) -> None:
         """Describe a delivery failure using a safe structured reason."""
-        if _SAFE_DELIVERY_REASON.fullmatch(reason) is None:
+        if not isinstance(reason, str) or _SAFE_DELIVERY_REASON.fullmatch(reason) is None:
             raise ValueError("Delivery error reason must be a lowercase kebab-case label")
+        if not isinstance(channel_unavailable, bool):
+            raise TypeError("channel_unavailable must be a bool")
         super().__init__(message)
         self.reason = reason
         self.channel_unavailable = channel_unavailable
@@ -188,7 +191,7 @@ class TelegramPublisher:
                 )
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                reason = _telegram_error_reason(exc.response)
+                reason, channel_unavailable = _telegram_error_reason(exc.response)
                 _LOGGER.warning(
                     "Telegram delivery rejected index=%d/%d message_visible_characters=%d payload_characters=%d "
                     "status_code=%d reason=%s",
@@ -202,7 +205,7 @@ class TelegramPublisher:
                 raise DeliveryError(
                     f"Telegram delivery failed ({reason})",
                     reason=reason,
-                    channel_unavailable=_telegram_channel_unavailable(reason),
+                    channel_unavailable=channel_unavailable,
                 ) from None
             except httpx.RequestError as exc:
                 _LOGGER.info(
@@ -246,8 +249,9 @@ def _rendered_text_logging_enabled(diagnostics: RenderedTextDiagnostics | None) 
     return enabled and _LOGGER.isEnabledFor(logging.DEBUG)
 
 
-def _telegram_error_reason(response: httpx.Response) -> str:
+def _telegram_error_reason(response: httpx.Response) -> tuple[str, bool]:
     """Classify a Telegram API error without logging its response body."""
+    classification = telegram_error_classification()
     try:
         payload = response.json()
     except ValueError:
@@ -256,29 +260,18 @@ def _telegram_error_reason(response: httpx.Response) -> str:
     if isinstance(payload, dict):
         parameters = payload.get("parameters")
         if isinstance(parameters, dict) and type(parameters.get("migrate_to_chat_id")) is int:
-            return "chat-migrated"
+            reason = classification.parameter_reasons["migrate_to_chat_id"]
+            return reason, reason in classification.channel_unavailable_reasons
 
         description = payload.get("description")
         if isinstance(description, str):
             normalized = description.casefold()
-            for marker, reason in telegram_error_classification().description_markers:
+            for marker, reason in classification.description_markers:
                 if marker in normalized:
-                    return reason
+                    return reason, reason in classification.channel_unavailable_reasons
 
-    return telegram_error_classification().status_reasons.get(response.status_code, "api-error")
-
-
-def _telegram_channel_unavailable(reason: str) -> bool:
-    return reason in {
-        "bot-blocked",
-        "bot-endpoint-not-found",
-        "bot-token-rejected",
-        "chat-migrated",
-        "chat-not-found",
-        "forbidden",
-        "insufficient-rights",
-        "user-deactivated",
-    }
+    reason = classification.status_reasons.get(response.status_code, "api-error")
+    return reason, reason in classification.channel_unavailable_reasons
 
 
 def _split_message(body: str, limit: int) -> tuple[str, ...]:

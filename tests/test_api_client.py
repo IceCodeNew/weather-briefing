@@ -59,6 +59,12 @@ async def test_logged_client_leaves_handled_response_error_warning_to_adapter(ca
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
 
+@pytest.mark.parametrize("value", (None, 0, 1, "true"))
+def test_api_call_extensions_rejects_non_boolean_response_error_ownership(value) -> None:
+    with pytest.raises(TypeError, match="response_error_handled must be a bool"):
+        api_call_extensions("telegram", "send-message", response_error_handled=value)
+
+
 async def test_logged_client_records_exception_type_without_message(caplog) -> None:
     caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
 

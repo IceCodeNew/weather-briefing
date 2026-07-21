@@ -68,9 +68,16 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
     assert telegram_like.briefing_limit(3500) == 3500
 
 
-def test_delivery_error_rejects_unsafe_structured_reason() -> None:
+@pytest.mark.parametrize("reason", (None, 7, "private detail\nforged-log-line"))
+def test_delivery_error_rejects_unsafe_structured_reason(reason) -> None:
     with pytest.raises(ValueError, match="lowercase kebab-case"):
-        DeliveryError("Delivery failed", reason="private detail\nforged-log-line")
+        DeliveryError("Delivery failed", reason=reason)
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "true"))
+def test_delivery_error_rejects_non_boolean_channel_availability(value) -> None:
+    with pytest.raises(TypeError, match="channel_unavailable must be a bool"):
+        DeliveryError("Delivery failed", reason="request-error", channel_unavailable=value)
 
 
 def test_split_message_prefers_line_boundary() -> None:
@@ -248,30 +255,38 @@ async def test_telegram_failure_emits_one_warning_with_classification(caplog) ->
 
 
 @pytest.mark.parametrize(
-    ("status_code", "payload", "expected_reason"),
+    ("status_code", "payload", "expected_reason", "expected_channel_unavailable"),
     (
-        (400, {"description": "Bad Request: can't parse entities at byte offset 12"}, "invalid-html"),
-        (400, {"description": "Bad Request: message is too long"}, "message-too-long"),
-        (400, {"description": "Bad Request: not enough rights to send text messages"}, "insufficient-rights"),
-        (400, {"parameters": {"migrate_to_chat_id": -100123}}, "chat-migrated"),
-        (401, {"description": "Unauthorized"}, "bot-token-rejected"),
-        (404, {"description": "Not Found"}, "bot-endpoint-not-found"),
-        (429, {"description": "Too Many Requests: retry later"}, "rate-limited"),
-        (400, {"description": 123}, "api-error"),
-        (500, {"description": "private provider detail"}, "api-error"),
+        (400, {"description": "Bad Request: can't parse entities at byte offset 12"}, "invalid-html", False),
+        (400, {"description": "Bad Request: message is too long"}, "message-too-long", False),
+        (
+            400,
+            {"description": "Bad Request: not enough rights to send text messages"},
+            "insufficient-rights",
+            True,
+        ),
+        (400, {"parameters": {"migrate_to_chat_id": -100123}}, "chat-migrated", True),
+        (401, {"description": "Unauthorized"}, "bot-token-rejected", True),
+        (404, {"description": "Not Found"}, "bot-endpoint-not-found", True),
+        (429, {"description": "Too Many Requests: retry later"}, "rate-limited", False),
+        (400, {"description": 123}, "api-error", False),
+        (500, {"description": "private provider detail"}, "api-error", False),
     ),
 )
 async def test_telegram_error_classification(
     status_code: int,
     payload: dict[str, object],
     expected_reason: str,
+    expected_channel_unavailable: bool,
 ) -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(status_code, json=payload))
     ) as client:
         publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-        with pytest.raises(DeliveryError, match=expected_reason):
+        with pytest.raises(DeliveryError, match=expected_reason) as caught:
             await publisher.publish(RenderedMessage("Body", 4))
+
+    assert caught.value.channel_unavailable is expected_channel_unavailable
 
 
 async def test_telegram_malformed_error_response_uses_status_classification() -> None:

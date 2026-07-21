@@ -26,6 +26,8 @@ def api_call_extensions(
     response_error_handled: bool = False,
 ) -> dict[str, object]:
     """Attach non-sensitive API identity to an HTTPX request."""
+    if not isinstance(response_error_handled, bool):
+        raise TypeError("response_error_handled must be a bool")
     if _SAFE_LABEL.fullmatch(provider) is None:
         raise ValueError("API provider must be a lowercase kebab-case label")
     if _SAFE_LABEL.fullmatch(operation) is None:

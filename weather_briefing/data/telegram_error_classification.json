@@ -10,10 +10,23 @@
     "message text is empty": "empty-message",
     "too many requests": "rate-limited"
   },
+  "parameter_reasons": {
+    "migrate_to_chat_id": "chat-migrated"
+  },
   "status_reasons": {
     "401": "bot-token-rejected",
     "403": "forbidden",
     "404": "bot-endpoint-not-found",
     "429": "rate-limited"
-  }
+  },
+  "channel_unavailable_reasons": [
+    "bot-blocked",
+    "bot-endpoint-not-found",
+    "bot-token-rejected",
+    "chat-migrated",
+    "chat-not-found",
+    "forbidden",
+    "insufficient-rights",
+    "user-deactivated"
+  ]
 }
