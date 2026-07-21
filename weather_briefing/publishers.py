@@ -17,7 +17,6 @@ from .render import MessageRenderer
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 _SAFE_DELIVERY_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
-telegram_error_classification()
 
 
 class Publisher(Protocol):
@@ -136,6 +135,7 @@ class TelegramPublisher:
         diagnostics: RenderedTextDiagnostics | None = None,
     ) -> None:
         """Configure Telegram delivery and optional sensitive-text diagnostics."""
+        telegram_error_classification()
         self._client = client
         self._url = f"https://api.telegram.org/bot{token}/sendMessage"
         self._chat_id = chat_id

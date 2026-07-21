@@ -12,6 +12,7 @@ from weather_briefing.publishers import (
     TelegramPublisher,
     _split_message,
 )
+from weather_briefing.reference_data import ReferenceDataError
 from weather_briefing.render import PlainTextRenderer
 
 
@@ -66,6 +67,17 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
     assert unrestricted.briefing_limit(5000) == 5000
     assert telegram_like.briefing_limit(5000) == 4096
     assert telegram_like.briefing_limit(3500) == 3500
+
+
+async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:
+    def fail_validation() -> None:
+        raise ReferenceDataError("invalid Telegram metadata")
+
+    monkeypatch.setattr("weather_briefing.publishers.telegram_error_classification", fail_validation)
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ReferenceDataError, match="invalid Telegram metadata"):
+            TelegramPublisher(client, "runtime-token", "runtime-chat")
 
 
 @pytest.mark.parametrize("reason", (None, 7, "private detail\nforged-log-line"))
