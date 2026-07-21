@@ -25,7 +25,7 @@ from .models import (
     Warning,
 )
 from .prompts import SYSTEM_PROMPT
-from .publishers import DeliveryProvider
+from .publishers import DeliveryError, DeliveryProvider
 from .sources import ContextDocumentSource, RSSFeedSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
@@ -223,11 +223,21 @@ class BriefingService:
             else:
                 try:
                     if self._state.task_failure_requires_alert():
-                        await self._ops_delivery.publish_alert(
-                            "天气简报任务执行失败",
-                            "任务执行失败，请检查运行日志、天气 API 及私密源配置。",
-                        )
-                        self._state.mark_task_failure_alerted(current_time)
+                        if (
+                            isinstance(exc, DeliveryError)
+                            and exc.channel_unavailable
+                            and self._ops_delivery is self._delivery
+                        ):
+                            _LOGGER.info(
+                                "Failure alert skipped reason=delivery-channel-unavailable original_reason=%s",
+                                exc.reason,
+                            )
+                        else:
+                            await self._ops_delivery.publish_alert(
+                                "天气简报任务执行失败",
+                                "任务执行失败，请检查运行日志、天气 API 及私密源配置。",
+                            )
+                            self._state.mark_task_failure_alerted(current_time)
                 except Exception:
                     _LOGGER.exception("Failed to publish or record briefing failure alert")
             raise

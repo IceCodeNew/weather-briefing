@@ -68,6 +68,11 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
     assert telegram_like.briefing_limit(3500) == 3500
 
 
+def test_delivery_error_rejects_unsafe_structured_reason() -> None:
+    with pytest.raises(ValueError, match="lowercase kebab-case"):
+        DeliveryError("Delivery failed", reason="private detail\nforged-log-line")
+
+
 def test_split_message_prefers_line_boundary() -> None:
     assert _split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
 
@@ -223,9 +228,11 @@ async def test_telegram_error_logs_safe_api_reason_without_private_response(capl
     assert "Telegram delivery prepared: visible_characters=4 payload_characters=4 chunks=1" in caplog.text
     assert "status_code=400 reason=chat-not-found" in caplog.text
     assert caught.value.__cause__ is None
+    assert caught.value.reason == "chat-not-found"
+    assert caught.value.channel_unavailable is True
 
 
-async def test_telegram_failure_emits_one_warning_with_classification_at_info(caplog) -> None:
+async def test_telegram_failure_emits_one_warning_with_classification(caplog) -> None:
     transport = httpx.MockTransport(lambda _: httpx.Response(400, json={"description": "chat not found"}))
 
     with caplog.at_level("INFO"):
@@ -236,8 +243,8 @@ async def test_telegram_failure_emits_one_warning_with_classification_at_info(ca
 
     warnings = [record for record in caplog.records if record.levelno == 30]
     assert len(warnings) == 1
-    assert warnings[0].name == "weather_briefing.api_client"
-    assert "status_code=400 reason=chat-not-found" in caplog.text
+    assert warnings[0].name == "weather_briefing.publishers"
+    assert warnings[0].getMessage().endswith("status_code=400 reason=chat-not-found")
 
 
 @pytest.mark.parametrize(
@@ -294,8 +301,11 @@ async def test_telegram_request_error_logs_chunk_context_without_private_detail(
 async def test_telegram_rejects_oversized_single_message_before_delivery() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
         publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-        with pytest.raises(DeliveryError, match="exceeds"):
+        with pytest.raises(DeliveryError, match="exceeds") as caught:
             await publisher.publish(RenderedMessage("<b>short markup</b>", 4097), single_message=True)
+
+    assert caught.value.reason == "message-too-long"
+    assert caught.value.channel_unavailable is False
 
 
 async def test_stdout_publisher_outputs_message_body(capsys) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Protocol
@@ -15,6 +16,7 @@ from .reference_data import telegram_error_classification
 from .render import MessageRenderer
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
+_SAFE_DELIVERY_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 class Publisher(Protocol):
@@ -109,6 +111,14 @@ class StdoutPublisher:
 class DeliveryError(RuntimeError):
     """Raised without exposing private delivery endpoint details."""
 
+    def __init__(self, message: str, *, reason: str, channel_unavailable: bool = False) -> None:
+        """Describe a delivery failure using a safe structured reason."""
+        if _SAFE_DELIVERY_REASON.fullmatch(reason) is None:
+            raise ValueError("Delivery error reason must be a lowercase kebab-case label")
+        super().__init__(message)
+        self.reason = reason
+        self.channel_unavailable = channel_unavailable
+
 
 class TelegramPublisher:
     """Publish rendered HTML messages through the Telegram Bot API."""
@@ -137,7 +147,10 @@ class TelegramPublisher:
     ) -> None:
         """Publish one message, splitting it only when allowed."""
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
-            raise DeliveryError("Telegram single message exceeds the platform limit")
+            raise DeliveryError(
+                "Telegram single message exceeds the platform limit",
+                reason="message-too-long",
+            )
         chunks = (message.body,) if single_message else _split_message(message.body, self.MAX_MESSAGE_LENGTH)
         _LOGGER.info(
             "Telegram delivery prepared: visible_characters=%d payload_characters=%d chunks=%d "
@@ -167,12 +180,16 @@ class TelegramPublisher:
                         "link_preview_options": {"is_disabled": True},
                         "disable_notification": silent,
                     },
-                    extensions=api_call_extensions("telegram", "send-message"),
+                    extensions=api_call_extensions(
+                        "telegram",
+                        "send-message",
+                        response_error_handled=True,
+                    ),
                 )
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 reason = _telegram_error_reason(exc.response)
-                _LOGGER.info(
+                _LOGGER.warning(
                     "Telegram delivery rejected index=%d/%d message_visible_characters=%d payload_characters=%d "
                     "status_code=%d reason=%s",
                     index,
@@ -182,7 +199,11 @@ class TelegramPublisher:
                     exc.response.status_code,
                     reason,
                 )
-                raise DeliveryError(f"Telegram delivery failed ({reason})") from None
+                raise DeliveryError(
+                    f"Telegram delivery failed ({reason})",
+                    reason=reason,
+                    channel_unavailable=_telegram_channel_unavailable(reason),
+                ) from None
             except httpx.RequestError as exc:
                 _LOGGER.info(
                     "Telegram delivery request failed index=%d/%d message_visible_characters=%d payload_characters=%d "
@@ -193,7 +214,10 @@ class TelegramPublisher:
                     len(chunk),
                     type(exc).__name__,
                 )
-                raise DeliveryError("Telegram delivery failed (request-error)") from None
+                raise DeliveryError(
+                    "Telegram delivery failed (request-error)",
+                    reason="request-error",
+                ) from None
             _LOGGER.debug(
                 "Telegram chunk accepted: index=%d/%d payload_characters=%d",
                 index,
@@ -242,6 +266,19 @@ def _telegram_error_reason(response: httpx.Response) -> str:
                     return reason
 
     return telegram_error_classification().status_reasons.get(response.status_code, "api-error")
+
+
+def _telegram_channel_unavailable(reason: str) -> bool:
+    return reason in {
+        "bot-blocked",
+        "bot-endpoint-not-found",
+        "bot-token-rejected",
+        "chat-migrated",
+        "chat-not-found",
+        "forbidden",
+        "insufficient-rights",
+        "user-deactivated",
+    }
 
 
 def _split_message(body: str, limit: int) -> tuple[str, ...]:

@@ -25,7 +25,7 @@ from weather_briefing.models import (
     Warning,
     WeatherContextSnapshot,
 )
-from weather_briefing.publishers import DeliveryProvider
+from weather_briefing.publishers import DeliveryError, DeliveryProvider
 from weather_briefing.render import PlainTextRenderer
 from weather_briefing.service import (
     BriefingService,
@@ -206,6 +206,26 @@ class FailOncePublisher(RecordingPublisher):
         if self.attempts == 1:
             raise RuntimeError("delivery unavailable")
         await super().publish(message, single_message=single_message, silent=silent)
+
+
+class UnavailableChannelPublisher(RecordingPublisher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    async def publish(
+        self,
+        message: RenderedMessage,
+        *,
+        single_message: bool = False,
+        silent: bool = False,
+    ) -> None:
+        self.attempts += 1
+        raise DeliveryError(
+            "Telegram delivery failed (chat-not-found)",
+            reason="chat-not-found",
+            channel_unavailable=True,
+        )
 
 
 class FailingVerbatimPublisher(RecordingPublisher):
@@ -1504,6 +1524,38 @@ async def test_task_failure_alert_delivery_failure_is_retried(
 
     assert error.value.__notes__ == ["Briefing run failed"]
     assert "Failed to publish or record briefing failure alert" in caplog.text
+
+
+async def test_task_failure_alert_skips_unavailable_shared_delivery_channel(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = _TestSettings(timezone=timezone, llm_max_attempts=1)
+    publisher = UnavailableChannelPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "unavailable-delivery.sqlite3") as state:
+        service = BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            EmptyContextSource(),
+            RecordingLLM(),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        with (
+            caplog.at_level("INFO", logger="weather_briefing.service"),
+            pytest.raises(DeliveryError, match="chat-not-found") as caught,
+        ):
+            await service.run("briefing", pendulum.datetime(2026, 7, 13, 9, tz=timezone))
+
+    assert caught.value.reason == "chat-not-found"
+    assert publisher.attempts == 1
+    assert "Failure alert skipped reason=delivery-channel-unavailable original_reason=chat-not-found" in caplog.text
 
 
 async def test_failure_recording_error_does_not_mask_task_error(
