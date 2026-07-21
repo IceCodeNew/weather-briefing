@@ -112,7 +112,6 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 ## Verification strategy
 
 - Make verification proportional to the change. Start with focused tests and add direct probes for changed boundaries.
-- On macOS, run Python tests and coverage in the configured native environment. Do not use Docker as a substitute for native tests.
 - Use containers only for container-specific behavior or when a configured hook owns the check.
 - For container and workflow changes, verify observable behavior. Check the final process, runtime user, argument overrides, filesystem contents, or real workflow log.
 - Use mocks and dummy configuration for routine tests. Use real services only for an explicitly requested end-to-end test, and never expose private inputs.
