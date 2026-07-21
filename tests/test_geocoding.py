@@ -1,3 +1,4 @@
+import logging
 import traceback
 from dataclasses import replace
 from pathlib import Path
@@ -671,12 +672,15 @@ async def test_open_meteo_passes_api_key_when_provided() -> None:
     assert result.is_mainland_china is False
 
 
-async def test_open_meteo_handles_empty_results() -> None:
+async def test_open_meteo_handles_empty_results(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="weather_briefing.geocoding")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": []}))
     ) as client:
         with pytest.raises(GeocodingError, match="returned no results"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+    assert "candidate_count=0 outcome=no-results" in caplog.text
 
 
 async def test_open_meteo_handles_results_not_a_list() -> None:
@@ -784,7 +788,12 @@ async def test_forward_geocoding_failure_traceback_omits_private_location_name()
     assert "ConnectError" in rendered_traceback
 
 
-async def test_nominatim_handles_no_matching_results() -> None:
+async def test_nominatim_logs_rejected_candidate_count_without_location_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_name = "Private Plaza"
+    provider_candidate = "Unrelated Provider Candidate"
+    caplog.set_level(logging.INFO, logger="weather_briefing.geocoding")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda _: httpx.Response(
@@ -793,7 +802,7 @@ async def test_nominatim_handles_no_matching_results() -> None:
                     {
                         "lat": "1",
                         "lon": "2",
-                        "display_name": "nothing related to query",
+                        "display_name": provider_candidate,
                         "address": {},
                     }
                 ],
@@ -801,7 +810,11 @@ async def test_nominatim_handles_no_matching_results() -> None:
         )
     ) as client:
         with pytest.raises(GeocodingError, match="returned no result"):
-            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
+            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("example", private_name))
+
+    assert "provider=nominatim location_id=example query_attempt=1 candidate_count=1 outcome=no-match" in caplog.text
+    assert private_name not in caplog.text
+    assert provider_candidate not in caplog.text
 
 
 async def test_nominatim_rate_limits_consecutive_requests(monkeypatch) -> None:
