@@ -35,5 +35,5 @@ ENV PATH="/home/nonroot/app/.venv/bin:${PATH}" \
     TZ=Asia/Shanghai
 
 VOLUME ["/home/nonroot/app/state"]
-ENTRYPOINT ["catatonit", "-g", "--", "/home/nonroot/app/.venv/bin/python3", "-m", "weather_briefing.cli"]
+ENTRYPOINT ["catatonit", "-g", "--", "/home/nonroot/app/.venv/bin/weather-briefing"]
 CMD ["daemon"]
