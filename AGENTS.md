@@ -70,10 +70,13 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 - Keep `README.md` for users. Explain what they must prepare, how to deploy, how to configure the service, and how to operate it.
 - Keep `docs/requirements.md` about user needs and product behavior. Describe the scenarios to solve without class names, protocols, storage details, or other implementation choices.
 - Keep `docs/design.md` as the current technical contract. Explain how the system satisfies the requirements without repeating the requirements or design history.
-- Use `docs/notes.md` only for choices that may look wrong or unnecessarily limited. State why the choice is acceptable, its assumptions, and concrete reasons to revisit it. Do not explain ordinary design choices that are already clear in `design.md`.
+- Use `docs/notes.md` only for choices that may look wrong or unnecessarily limited.
+- Each note must state why the choice is acceptable, its assumptions, and concrete reasons to revisit it. Do not explain ordinary design choices that are already clear in `design.md`.
 - Keep this file for development judgment, workflow constraints, and lessons that future contributors could otherwise miss. Do not duplicate product or system docs.
 - Update the document that owns a changed decision in the same change as the code.
 - Keep prose direct and use established project terms. Do not invent a name when plain language is clearer.
+- Keep each paragraph focused on one idea. Start a new paragraph when the subject, purpose, condition, or consequence changes.
+- Do not hard-wrap prose to a fixed source width. Use paragraph breaks for readability. When content and paragraph cleanup are both needed, review the content first and put paragraph-only cleanup in a final separate commit.
 - Keep local audit-risk documents limited to unresolved or monitored findings. Remove a finding in the change that resolves it, and never commit the local audit file.
 
 ## Engineering judgment
@@ -82,7 +85,8 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 - Keep domain reference data outside implementation code. Geographic bounds, classification tables, and matching patterns belong in validated data files.
 - Treat privacy as broader than secret scanning. Locations, coordinates, private feed URLs, source content, state, and other context can expose a user. Use runtime configuration and public examples in committed code and tests.
 - Keep dependencies minimal and justify every third-party package. Use high-level security interfaces for authentication and cryptography.
-- Before implementing an external protocol, authentication flow, structured-response validator, retry policy, rate limiter, or service client, evaluate the official SDK and mature maintained libraries. Prefer a thin adapter over duplicated infrastructure.
+- Before implementing an external protocol, authentication flow, structured-response validator, retry policy, rate limiter, or service client, evaluate the official SDK and mature maintained libraries.
+- Prefer a thin adapter over duplicated external-service infrastructure.
 - If custom external-service infrastructure is necessary, document the dependency, privacy, observability, or compatibility reason in `docs/notes.md`.
 - Do not replace small domain adapters or suitable standard-library code merely to reduce line count.
 - Prefer timezone-aware Pendulum values. Reject ambiguous timestamps, keep timezone assumptions at provider boundaries, and centralize unavoidable fallback rules.
