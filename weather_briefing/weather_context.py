@@ -50,6 +50,10 @@ class WeatherContextError(RuntimeError):
     """Raised when a weather source is unavailable or violates its contract."""
 
 
+class UnsupportedForecastDateError(WeatherContextError):
+    """Raised when a provider cannot fetch an explicit forecast date."""
+
+
 class _QWeatherResponseError(ValueError):
     """Raised for safe, code-defined QWeather response contract errors."""
 
@@ -100,6 +104,16 @@ class LoggedWeatherContextProvider:
         _LOGGER.info("Weather API call started provider=%s", self._name)
         try:
             snapshot = await fetch_weather_context(self._provider, latitude, longitude, forecast_date)
+        except UnsupportedForecastDateError:
+            with suppress(Exception):
+                _LOGGER.info(
+                    "Weather API call skipped provider=%s duration_ms=%d forecast_date=%s "
+                    "reason=unsupported-forecast-date",
+                    self._name,
+                    _elapsed_milliseconds(started_at),
+                    forecast_date,
+                )
+            raise
         except WeatherContextError as exc:
             _LOGGER.warning(
                 "Weather API call failed provider=%s duration_ms=%d reason=%s",
@@ -706,10 +720,10 @@ async def fetch_weather_context(
     if forecast_date is None:
         return await provider.fetch(latitude, longitude)
     if not isinstance(provider, DatedWeatherContextProvider):
-        raise WeatherContextError(f"{type(provider).__name__} does not support target forecast dates")
+        raise UnsupportedForecastDateError(f"{type(provider).__name__} does not support target forecast dates")
     fetch_for_date = provider.fetch_for_date
     if not callable(fetch_for_date):
-        raise WeatherContextError(f"{type(provider).__name__} does not support target forecast dates")
+        raise UnsupportedForecastDateError(f"{type(provider).__name__} does not support target forecast dates")
     return await fetch_for_date(latitude, longitude, forecast_date)
 
 
