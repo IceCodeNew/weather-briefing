@@ -160,15 +160,15 @@ def test_singapore_and_japan_weather_provider_defaults(monkeypatch) -> None:
     _required_environment(monkeypatch)
     singapore = ResolvedLocation("sg", "Singapore", 1.3, 103.8, "SG", None, "Asia/Singapore", False)
     assert weather_providers_for(singapore, None) == ("open-meteo", "nea-sg")
-    japan_without_office = ResolvedLocation("jp", "Osaka", 34.7, 135.5, "JP", None, "Asia/Tokyo", False)
+    japan_without_office = ResolvedLocation("jp", "Osaka", 1.0, 1.0, "JP", None, "Asia/Tokyo", False)
     assert weather_providers_for(japan_without_office, None) == ("open-meteo",)
-    japan = ResolvedLocation("jp", "Osaka", 34.7, 135.5, "JP", None, "Asia/Tokyo", False, jma_office_code="270000")
+    japan = ResolvedLocation("jp", "Osaka", 1.0, 1.0, "JP", None, "Asia/Tokyo", False, jma_office_code="270000")
     assert weather_providers_for(japan, None) == ("open-meteo", "jma-jp")
     japan_without_country_code = ResolvedLocation(
         "jp-coordinates",
         "Osaka",
-        34.7,
-        135.5,
+        1.0,
+        1.0,
         None,
         None,
         None,
@@ -194,14 +194,14 @@ def test_location_jma_office_code_is_loaded(monkeypatch, tmp_path: Path) -> None
 
 def test_location_models_enforce_jma_office_code_invariant() -> None:
     spec = LocationSpec("jp", "Tokyo", jma_office_code=" 130000 ")
-    resolved = ResolvedLocation("jp", "Tokyo", 35.7, 139.7, "JP", None, "Asia/Tokyo", False, jma_office_code=" 130000 ")
+    resolved = ResolvedLocation("jp", "Tokyo", 1.0, 1.0, "JP", None, "Asia/Tokyo", False, jma_office_code=" 130000 ")
 
     assert spec.jma_office_code == "130000"
     assert resolved.jma_office_code == "130000"
     with pytest.raises(ValueError, match="six digits"):
         LocationSpec("jp", "Tokyo", jma_office_code="１２３４５６")
     with pytest.raises(ValueError, match="six digits"):
-        ResolvedLocation("jp", "Tokyo", 35.7, 139.7, "JP", None, "Asia/Tokyo", False, jma_office_code="１２３４５６")
+        ResolvedLocation("jp", "Tokyo", 1.0, 1.0, "JP", None, "Asia/Tokyo", False, jma_office_code="１２３４５６")
     with pytest.raises(ValueError, match="six digits"):
         normalize_jma_office_code(130000)
 

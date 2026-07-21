@@ -503,7 +503,7 @@ async def test_coordinates_skip_geocoding_and_use_extreme_bounds(
     resolver = CachedLocationResolver(FailingGeocoder(), tmp_path / "cache.json")
 
     beijing = await resolver.resolve(LocationSpec("beijing", "  Beijing  ", 39.9, 116.4))
-    outside = await resolver.resolve(LocationSpec("outside", "Tokyo", 35.7, 139.7, jma_office_code="130000"))
+    outside = await resolver.resolve(LocationSpec("outside", "Tokyo", 1.0, 1.0, jma_office_code="130000"))
     latitude = reference_value("geography.json", "mainland_china_service_bounds", "latitude")
     longitude = reference_value("geography.json", "mainland_china_service_bounds", "longitude")
 

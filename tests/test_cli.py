@@ -1181,8 +1181,8 @@ class TestWeatherContextProvider:
         location = ResolvedLocation(
             "test",
             "Test",
-            35.7,
-            139.7,
+            1.0,
+            1.0,
             country_code,
             None,
             "Asia/Tokyo",
@@ -1200,7 +1200,7 @@ class TestWeatherContextProvider:
 
     async def test_missing_jma_office_rejects_explicit_jma_only(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(weather_providers=("jma-jp",))
-        location = ResolvedLocation("test", "Test", 35.7, 139.7, "JP", None, "Asia/Tokyo", False)
+        location = ResolvedLocation("test", "Test", 1.0, 1.0, "JP", None, "Asia/Tokyo", False)
 
         with pytest.raises(ValueError, match="No configured weather provider"):
             _weather_context_provider(settings, async_client, location)
@@ -1377,8 +1377,8 @@ async def test_explicit_jma_provider_can_be_used_as_primary() -> None:
     location = ResolvedLocation(
         "jp",
         "Tokyo",
-        35.7,
-        139.7,
+        1.0,
+        1.0,
         "JP",
         None,
         "Asia/Tokyo",
@@ -1402,7 +1402,7 @@ async def test_explicit_jma_provider_can_be_used_as_primary() -> None:
     transport = httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
     async with httpx.AsyncClient(transport=transport) as client:
         provider = _weather_context_provider(settings, client, location)
-        snapshot = await provider.fetch_for_date(35.7, 139.7, pendulum.date(2026, 7, 21))
+        snapshot = await provider.fetch_for_date(1.0, 1.0, pendulum.date(2026, 7, 21))
 
     assert provider.weather_metadata.provider_id == "jma-jp"
     assert provider.weather_metadata.language_support.default == "ja"
