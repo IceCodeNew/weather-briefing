@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from dataclasses import asdict, replace
@@ -16,6 +17,27 @@ import httpx
 from .api_client import api_call_extensions
 from .models import LocationResolution, LocationSpec, ResolvedLocation
 from .reference_data import ReferenceDataError, reference_string_tuple, reference_value
+
+_LOGGER = logging.getLogger("weather_briefing.geocoding")
+
+
+def _log_candidate_selection(
+    provider: str,
+    location_id: str,
+    query_attempt: int,
+    candidate_count: int,
+    *,
+    outcome: str,
+) -> None:
+    """Log candidate-selection metadata without exposing provider payloads."""
+    _LOGGER.info(
+        "Geocoding candidate selection provider=%s location_id=%s query_attempt=%d candidate_count=%d outcome=%s",
+        provider,
+        location_id,
+        query_attempt,
+        candidate_count,
+        outcome,
+    )
 
 
 class GeocodingError(RuntimeError):
@@ -107,7 +129,11 @@ class OpenMeteoGeocodingProvider:
             response.raise_for_status()
             payload = response.json()
             results = payload.get("results", [])
-            if not isinstance(results, list) or not results:
+            if not isinstance(results, list):
+                _log_candidate_selection("open-meteo", location.id, 1, 0, outcome="invalid-response")
+                raise GeocodingError(f"Open-Meteo geocoding returned an invalid response for location: {location.id}")
+            if not results:
+                _log_candidate_selection("open-meteo", location.id, 1, 0, outcome="no-results")
                 raise GeocodingError(f"Open-Meteo geocoding returned no results for location: {location.id}")
             result = next(
                 (
@@ -116,6 +142,13 @@ class OpenMeteoGeocodingProvider:
                     if isinstance(item, dict) and _open_meteo_result_matches(location_name, item)
                 ),
                 None,
+            )
+            _log_candidate_selection(
+                "open-meteo",
+                location.id,
+                1,
+                len(results),
+                outcome="matched" if result is not None else "no-match",
             )
             if result is None:
                 raise GeocodingError(f"Open-Meteo geocoding returned no matching result for location: {location.id}")
@@ -168,7 +201,7 @@ class NominatimGeocodingProvider:
         location_name = _required_location_name(location)
         async with self._lock:
             result: dict[str, object] | None = None
-            for query in _nominatim_queries(location_name):
+            for query_attempt, query in enumerate(_nominatim_queries(location_name), start=1):
                 delay = 1.0 - (time.monotonic() - self._last_request_at)
                 if delay > 0:
                     await asyncio.sleep(delay)
@@ -188,6 +221,13 @@ class NominatimGeocodingProvider:
                     response.raise_for_status()
                     results = response.json()
                     if not isinstance(results, list):
+                        _log_candidate_selection(
+                            "nominatim",
+                            location.id,
+                            query_attempt,
+                            0,
+                            outcome="invalid-response",
+                        )
                         continue
                     result = next(
                         (
@@ -196,6 +236,13 @@ class NominatimGeocodingProvider:
                             if isinstance(item, dict) and _nominatim_result_matches(location_name, item)
                         ),
                         None,
+                    )
+                    _log_candidate_selection(
+                        "nominatim",
+                        location.id,
+                        query_attempt,
+                        len(results),
+                        outcome="matched" if result is not None else "no-match" if results else "no-results",
                     )
                     if result is not None:
                         break
@@ -494,16 +541,41 @@ def _nominatim_queries(name: str) -> tuple[str, ...]:
 
 
 def _nominatim_result_matches(name: str, result: dict[str, object]) -> bool:
-    display_name = str(result.get("display_name", "")).casefold()
-    specific_name = _specific_location_name(name)
-    return specific_name.casefold() in display_name
+    return _location_name_matches(name, str(result.get("display_name", "")))
 
 
 def _open_meteo_result_matches(name: str, result: dict[str, object]) -> bool:
     result_description = " ".join(
-        str(result.get(field, "")) for field in ("name", "admin1", "admin2", "admin3", "admin4", "country")
-    ).casefold()
-    return _specific_location_name(name).casefold() in result_description
+        str(value)
+        for field in ("name", "admin1", "admin2", "admin3", "admin4", "country")
+        if (value := result.get(field))
+    )
+    return _location_name_matches(name, result_description)
+
+
+def _location_name_matches(name: str, result_description: str) -> bool:
+    """Match location qualifiers in order while allowing intervening administrative areas."""
+    position = 0
+    normalized_description = result_description.casefold()
+    for component in _location_name_components(name):
+        normalized_component = component.casefold()
+        match = re.compile(rf"(?<!\w){re.escape(normalized_component)}(?!\w)").search(
+            normalized_description,
+            position,
+        )
+        if match is None:
+            return False
+        position = match.end()
+    return True
+
+
+def _location_name_components(name: str) -> tuple[str, ...]:
+    """Return the specific place plus any comma-qualified geographic constraints."""
+    normalized = _normalized_location_name(name)
+    components = tuple(
+        _specific_location_name(component) for component in re.split(r"[,，]", normalized) if component.strip()
+    )
+    return components or (_specific_location_name(normalized),)
 
 
 def _specific_location_name(name: str) -> str:

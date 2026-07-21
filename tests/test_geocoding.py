@@ -1,3 +1,4 @@
+import logging
 import traceback
 from dataclasses import replace
 from pathlib import Path
@@ -13,6 +14,7 @@ from weather_briefing.geocoding import (
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
+    _location_name_matches,
     _mainland_china_rules,
     _specific_location_name,
     possibly_mainland_china,
@@ -179,6 +181,52 @@ async def test_nominatim_normalizes_region_suffix_and_rejects_unrelated_match() 
 
     assert result.latitude == 39.911389
     assert result.longitude == 116.380556
+
+
+async def test_nominatim_accepts_comma_qualified_location_with_intermediate_administrative_areas() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["q"] == "Example Plaza, Exampleland"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "lat": "1.0",
+                    "lon": "2.0",
+                    "display_name": "Example Plaza, Central District, Exampleland",
+                    "address": {"country_code": "ex"},
+                }
+            ],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1").geocode(
+            LocationSpec("example", "Example Plaza, Exampleland")
+        )
+
+    assert result.latitude == 1.0
+    assert result.country_code == "EX"
+
+
+async def test_nominatim_rejects_comma_qualified_location_without_its_country_constraint() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json=[
+                    {
+                        "lat": "1.0",
+                        "lon": "2.0",
+                        "display_name": "Example Plaza, Central District, Differentland",
+                        "address": {"country_code": "dl"},
+                    }
+                ],
+            )
+        )
+    ) as client:
+        with pytest.raises(GeocodingError, match="returned no result"):
+            await NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1").geocode(
+                LocationSpec("example", "Example Plaza, Exampleland")
+            )
 
 
 async def test_nominatim_reverse_geocoder_resolves_name_and_administrative_area() -> None:
@@ -625,20 +673,45 @@ async def test_open_meteo_passes_api_key_when_provided() -> None:
     assert result.is_mainland_china is False
 
 
-async def test_open_meteo_handles_empty_results() -> None:
+async def test_open_meteo_handles_empty_results(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="weather_briefing.geocoding")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": []}))
     ) as client:
         with pytest.raises(GeocodingError, match="returned no results"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
 
+    assert "candidate_count=0 outcome=no-results" in caplog.text
+
 
 async def test_open_meteo_handles_results_not_a_list() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": "not-a-list"}))
     ) as client:
-        with pytest.raises(GeocodingError, match="returned no results"):
+        with pytest.raises(GeocodingError, match="returned an invalid response"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+
+async def test_open_meteo_ignores_null_fields_when_matching_results() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "name": None,
+                            "latitude": 1.0,
+                            "longitude": 2.0,
+                            "country_code": "EX",
+                        }
+                    ]
+                },
+            )
+        )
+    ) as client:
+        with pytest.raises(GeocodingError, match="returned no matching result"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "None"))
 
 
 async def test_open_meteo_handles_no_matching_result() -> None:
@@ -738,7 +811,12 @@ async def test_forward_geocoding_failure_traceback_omits_private_location_name()
     assert "ConnectError" in rendered_traceback
 
 
-async def test_nominatim_handles_no_matching_results() -> None:
+async def test_nominatim_logs_rejected_candidate_count_without_location_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    private_name = "Private Plaza"
+    provider_candidate = "Unrelated Provider Candidate"
+    caplog.set_level(logging.INFO, logger="weather_briefing.geocoding")
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda _: httpx.Response(
@@ -747,7 +825,7 @@ async def test_nominatim_handles_no_matching_results() -> None:
                     {
                         "lat": "1",
                         "lon": "2",
-                        "display_name": "nothing related to query",
+                        "display_name": provider_candidate,
                         "address": {},
                     }
                 ],
@@ -755,7 +833,11 @@ async def test_nominatim_handles_no_matching_results() -> None:
         )
     ) as client:
         with pytest.raises(GeocodingError, match="returned no result"):
-            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("test", "Test"))
+            await NominatimGeocodingProvider(client, user_agent="test").geocode(LocationSpec("example", private_name))
+
+    assert "provider=nominatim location_id=example query_attempt=1 candidate_count=1 outcome=no-match" in caplog.text
+    assert private_name not in caplog.text
+    assert provider_candidate not in caplog.text
 
 
 async def test_nominatim_rate_limits_consecutive_requests(monkeypatch) -> None:
@@ -812,6 +894,22 @@ async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
         )
 
     assert calls == ["中国北京市西城区中南海1号", "中国北京市西城区中南海"]
+
+
+async def test_precision_reducing_provider_keeps_international_trailing_digits() -> None:
+    calls: list[str] = []
+
+    class FailingGeocoder:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            calls.append(_required_test_location_name(location))
+            raise GeocodingError("no match")
+
+    with pytest.raises(GeocodingError, match="No geocoder could resolve location at a safe precision"):
+        await PrecisionReducingGeocodingProvider(FailingGeocoder()).geocode(
+            LocationSpec("example", "Example Street 123")
+        )
+
+    assert calls == ["Example Street 123"]
 
 
 async def test_precision_reducing_provider_preserves_only_safe_cause_type() -> None:
@@ -951,3 +1049,12 @@ def test_specific_location_name_rejects_non_string_suffix(monkeypatch) -> None:
     )
     with pytest.raises(ReferenceDataError, match="suffix characters must be a string"):
         _specific_location_name("北京")
+
+
+def test_location_name_matching_advances_by_normalized_component_length() -> None:
+    assert not _location_name_matches("Straße, e", "Straße")
+
+
+def test_location_name_matching_rejects_qualifier_substrings() -> None:
+    assert not _location_name_matches("Example, Iran", "Example, Tirana")
+    assert _location_name_matches("Example, Iran", "Example, Central District, Iran")
