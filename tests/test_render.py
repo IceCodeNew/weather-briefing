@@ -79,7 +79,7 @@ def test_renderers_fall_back_to_source_id_for_legacy_blank_name() -> None:
 def test_telegram_html_renderer_uses_context_source_name_as_attribution() -> None:
     context = SourceDocument(
         "allergen:open-meteo",
-        "Open-Meteo / CAMS ENSEMBLE 花粉过敏原",
+        "Open-Meteo / CAMS ENSEMBLE pollen allergens",
         "https://open-meteo.com/en/docs/air-quality-api",
         "Pollen data",
     )
@@ -93,14 +93,14 @@ def test_telegram_html_renderer_uses_context_source_name_as_attribution() -> Non
     rendered = TelegramHTMLRenderer().render_briefing(result, (), (context,))
 
     assert (
-        '<a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo / CAMS ENSEMBLE 花粉过敏原</a>'
+        '<a href="https://open-meteo.com/en/docs/air-quality-api">Open-Meteo / CAMS ENSEMBLE pollen allergens</a>'
     ) in rendered.body
 
 
 def test_plain_text_renderer_uses_context_source_name_as_attribution() -> None:
     context = SourceDocument(
         "allergen:open-meteo",
-        "Open-Meteo / CAMS ENSEMBLE 花粉过敏原",
+        "Open-Meteo / CAMS ENSEMBLE pollen allergens",
         "https://open-meteo.com/en/docs/air-quality-api",
         "Pollen data",
     )
@@ -113,7 +113,9 @@ def test_plain_text_renderer_uses_context_source_name_as_attribution() -> None:
 
     rendered = PlainTextRenderer().render_briefing(result, (), (context,))
 
-    assert ("Open-Meteo / CAMS ENSEMBLE 花粉过敏原: https://open-meteo.com/en/docs/air-quality-api") in rendered.body
+    assert (
+        "Open-Meteo / CAMS ENSEMBLE pollen allergens: https://open-meteo.com/en/docs/air-quality-api"
+    ) in rendered.body
 
 
 def test_telegram_html_renders_active_warnings_section() -> None:

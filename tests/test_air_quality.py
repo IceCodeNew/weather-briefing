@@ -35,14 +35,16 @@ async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> N
 
     assert snapshot.aqi == 120
     assert snapshot.aqi_standard == "US EPA"
+    assert snapshot.category == "Unhealthy for sensitive groups"
     assert snapshot.effective_at is not None
     assert snapshot.effective_at.to_iso8601_string() == "2026-07-13T08:00:00+08:00"
     assert snapshot.time_kind is AirQualityTimeKind.OBSERVATION
     assert snapshot.pm25_aqi == 100
     assert snapshot.pm25_concentration is None
+    assert snapshot.output_language == "en"
     document = air_quality_to_document(snapshot)
-    assert "AQI：120（标准：US EPA" in document.content
-    assert "PM2.5 不可用" in document.content
+    assert "AQI: 120 (Standard: US EPA" in document.content
+    assert "PM2.5 concentration: Unavailable" in document.content
     assert "原始浓度" not in document.content
     assert "折算" not in document.content
 

@@ -78,7 +78,7 @@ def test_packaged_reference_data_is_available() -> None:
         96,
         99,
     }
-    assert weather_codes[53] == "中等强度毛毛雨"
+    assert weather_codes[53] == "Moderate drizzle"
     assert localization_table("weather_document")["ja"]["forecast"] == "天気予報"
     assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
     classification = telegram_error_classification()
@@ -90,12 +90,12 @@ def test_packaged_reference_data_is_available() -> None:
     "value",
     (
         {},
-        {"descriptions_zh_CN": {}},
-        {"descriptions_zh_CN": {"unknown": "晴朗"}},
-        {"descriptions_zh_CN": {"00": "晴朗"}},
-        {"descriptions_zh_CN": {"9" * 5_000: "未知"}},
-        {"descriptions_zh_CN": {"0": ""}},
-        {"descriptions_zh_CN": {"0": "晴朗"}, "unknown": {}},
+        {"descriptions_en": {}},
+        {"descriptions_en": {"unknown": "Clear sky"}},
+        {"descriptions_en": {"00": "Clear sky"}},
+        {"descriptions_en": {"9" * 5_000: "Unknown"}},
+        {"descriptions_en": {"0": ""}},
+        {"descriptions_en": {"0": "Clear sky"}, "unknown": {}},
     ),
 )
 def test_open_meteo_weather_codes_reject_invalid_data(monkeypatch, value) -> None:

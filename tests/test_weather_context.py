@@ -533,7 +533,9 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
         ).fetch(52.52, 13.41)
 
     assert len(snapshot.weather_forecast) == 2
-    assert "局部多云" in snapshot.weather_forecast[0]
+    assert snapshot.output_language == "en"
+    assert "Partly cloudy" in snapshot.weather_forecast[0]
+    assert "maximum precipitation probability 10%" in snapshot.weather_forecast[0]
     assert "WMO" not in snapshot.weather_forecast[0]
     assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+02:00"
     assert snapshot.observed_at.timezone_name == "Europe/Berlin"
@@ -544,14 +546,23 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
 
 
 def test_open_meteo_weather_code_uses_readable_description() -> None:
-    assert _open_meteo_weather_description(53) == "中等强度毛毛雨"
+    assert _open_meteo_weather_description(53) == "Moderate drizzle"
+
+
+def test_open_meteo_weather_code_lookup_uses_cached_loader_boundary(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "weather_briefing.weather_context.open_meteo_weather_code_descriptions",
+        lambda: {53: "Reloaded description"},
+    )
+
+    assert _open_meteo_weather_description(53) == "Reloaded description"
 
 
 def test_open_meteo_unknown_weather_code_uses_readable_fallback(caplog) -> None:
     with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
         description = _open_meteo_weather_description(100)
 
-    assert description == "未识别天气现象"
+    assert description == "Unrecognized weather condition"
     assert "Unknown Open-Meteo weather code code=100" in caplog.text
 
 
@@ -559,7 +570,7 @@ def test_open_meteo_invalid_weather_code_uses_readable_fallback(caplog) -> None:
     with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
         description = _open_meteo_weather_description("53")
 
-    assert description == "未识别天气现象"
+    assert description == "Unrecognized weather condition"
     assert "Invalid Open-Meteo weather code value_type=str" in caplog.text
 
 
@@ -615,7 +626,7 @@ async def test_open_meteo_provider_requests_only_selected_future_date() -> None:
         ).fetch_for_date(39.9, 116.3, target_date)
 
     assert len(snapshot.weather_forecast) == 1
-    assert snapshot.weather_forecast[0].startswith("2026-07-15：")
+    assert snapshot.weather_forecast[0].startswith("2026-07-15: ")
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.aqi == 90
     assert snapshot.air_quality.effective_at is not None
@@ -1884,15 +1895,17 @@ async def test_open_meteo_provider_returns_allergen_when_pollen_available() -> N
     assert snapshot.air_quality is not None
     assert snapshot.allergen is not None
     assert snapshot.allergen.source_id == "allergen:open-meteo"
-    assert snapshot.allergen.source_name == "Open-Meteo / CAMS ENSEMBLE 花粉过敏原"
+    assert snapshot.allergen.source_name == "Open-Meteo / CAMS ENSEMBLE pollen allergens"
+    assert snapshot.allergen.output_language == "en"
     level_names = {level.name for level in snapshot.allergen.levels}
-    assert {"桤木", "桦木", "禾本"} == level_names
-    birch = next(level for level in snapshot.allergen.levels if level.name == "桦木")
-    assert birch.category == "中"
+    assert {"Alder", "Birch", "Grass"} == level_names
+    birch = next(level for level in snapshot.allergen.levels if level.name == "Birch")
+    assert birch.category == "Moderate"
     assert birch.concentration == 15
-    assert snapshot.allergen.overall_category == "中"
+    assert snapshot.allergen.overall_category == "Moderate"
     documents = snapshot_to_documents(snapshot)
     assert "allergen:open-meteo" in [doc.id for doc in documents]
+    assert all(doc.language == "en" for doc in documents)
 
 
 async def test_open_meteo_provider_returns_no_allergen_when_pollen_absent() -> None:
@@ -1947,7 +1960,7 @@ async def test_open_meteo_allergen_skips_invalid_pollen_values() -> None:
 
     assert snapshot.allergen is not None
     level_names = {level.name for level in snapshot.allergen.levels}
-    assert level_names == {"禾本"}
+    assert level_names == {"Grass"}
 
 
 async def test_open_meteo_allergen_handles_missing_time_gracefully() -> None:
