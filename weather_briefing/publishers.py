@@ -138,7 +138,7 @@ class TelegramPublisher:
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
             raise DeliveryError("Telegram single message exceeds the platform limit")
         chunks = (message.body,) if single_message else _split_message(message.body, self.MAX_MESSAGE_LENGTH)
-        _LOGGER.debug(
+        _LOGGER.info(
             "Telegram delivery prepared: visible_characters=%d payload_characters=%d chunks=%d single_message=%s",
             message.visible_length,
             len(message.body),
@@ -167,8 +167,30 @@ class TelegramPublisher:
                     extensions=api_call_extensions("telegram", "send-message"),
                 )
                 response.raise_for_status()
-            except httpx.HTTPError:
-                raise DeliveryError("Telegram delivery failed") from None
+            except httpx.HTTPStatusError as exc:
+                reason = _telegram_error_reason(exc.response)
+                _LOGGER.warning(
+                    "Telegram delivery rejected index=%d/%d message_visible_characters=%d payload_characters=%d "
+                    "status_code=%d reason=%s",
+                    index,
+                    len(chunks),
+                    message.visible_length,
+                    len(chunk),
+                    exc.response.status_code,
+                    reason,
+                )
+                raise DeliveryError(f"Telegram delivery failed ({reason})") from None
+            except httpx.RequestError as exc:
+                _LOGGER.warning(
+                    "Telegram delivery request failed index=%d/%d message_visible_characters=%d payload_characters=%d "
+                    "reason=%s",
+                    index,
+                    len(chunks),
+                    message.visible_length,
+                    len(chunk),
+                    type(exc).__name__,
+                )
+                raise DeliveryError("Telegram delivery failed (request-error)") from None
             _LOGGER.debug(
                 "Telegram chunk accepted: index=%d/%d payload_characters=%d",
                 index,
@@ -195,6 +217,44 @@ def _rendered_text_logging_enabled(diagnostics: RenderedTextDiagnostics | None) 
         _LOGGER.warning("Rendered text diagnostic state check failed", exc_info=True)
         return False
     return enabled and _LOGGER.isEnabledFor(logging.DEBUG)
+
+
+def _telegram_error_reason(response: httpx.Response) -> str:
+    """Classify a Telegram API error without logging its response body."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        parameters = payload.get("parameters")
+        if isinstance(parameters, dict) and type(parameters.get("migrate_to_chat_id")) is int:
+            return "chat-migrated"
+
+        description = payload.get("description")
+        if isinstance(description, str):
+            normalized = description.casefold()
+            markers = (
+                ("chat not found", "chat-not-found"),
+                ("bot was blocked by the user", "bot-blocked"),
+                ("user is deactivated", "user-deactivated"),
+                ("not enough rights", "insufficient-rights"),
+                ("have no rights to send a message", "insufficient-rights"),
+                ("can't parse entities", "invalid-html"),
+                ("message is too long", "message-too-long"),
+                ("message text is empty", "empty-message"),
+                ("too many requests", "rate-limited"),
+            )
+            for marker, reason in markers:
+                if marker in normalized:
+                    return reason
+
+    return {
+        401: "bot-token-rejected",
+        403: "forbidden",
+        404: "bot-token-rejected",
+        429: "rate-limited",
+    }.get(response.status_code, "api-error")
 
 
 def _split_message(body: str, limit: int) -> tuple[str, ...]:

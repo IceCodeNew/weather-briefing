@@ -194,17 +194,79 @@ async def test_runtime_diagnostic_failure_does_not_block_delivery(caplog) -> Non
     assert "Rendered text diagnostic state check failed" in caplog.text
 
 
-async def test_telegram_error_does_not_expose_token() -> None:
+async def test_telegram_error_logs_safe_api_reason_without_private_response(caplog) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(500)
+        return httpx.Response(
+            400,
+            json={
+                "ok": False,
+                "error_code": 400,
+                "description": "Bad Request: chat not found; private response detail",
+            },
+        )
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        publisher = TelegramPublisher(client, "private-token", "runtime-chat")
-        with pytest.raises(DeliveryError) as caught:
-            await publisher.publish(RenderedMessage("Body", 4))
+    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            publisher = TelegramPublisher(client, "private-token", "runtime-chat")
+            with pytest.raises(DeliveryError, match="chat-not-found") as caught:  # pragma: no branch
+                await publisher.publish(RenderedMessage("Body", 4))
 
     assert "private-token" not in str(caught.value)
+    assert "runtime-chat" not in caplog.text
+    assert "private response detail" not in caplog.text
+    assert "Telegram delivery prepared: visible_characters=4 payload_characters=4 chunks=1" in caplog.text
+    assert "status_code=400 reason=chat-not-found" in caplog.text
     assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("status_code", "payload", "expected_reason"),
+    (
+        (400, {"description": "Bad Request: can't parse entities at byte offset 12"}, "invalid-html"),
+        (400, {"description": "Bad Request: message is too long"}, "message-too-long"),
+        (400, {"description": "Bad Request: not enough rights to send text messages"}, "insufficient-rights"),
+        (400, {"parameters": {"migrate_to_chat_id": -100123}}, "chat-migrated"),
+        (401, {"description": "Unauthorized"}, "bot-token-rejected"),
+        (429, {"description": "Too Many Requests: retry later"}, "rate-limited"),
+        (400, {"description": 123}, "api-error"),
+        (500, {"description": "private provider detail"}, "api-error"),
+    ),
+)
+async def test_telegram_error_classification(
+    status_code: int,
+    payload: dict[str, object],
+    expected_reason: str,
+) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(status_code, json=payload))
+    ) as client:
+        publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
+        with pytest.raises(DeliveryError, match=expected_reason):
+            await publisher.publish(RenderedMessage("Body", 4))
+
+
+async def test_telegram_malformed_error_response_uses_status_classification() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(403, text="private provider response"))
+    ) as client:
+        publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
+        with pytest.raises(DeliveryError, match="forbidden"):
+            await publisher.publish(RenderedMessage("Body", 4))
+
+
+async def test_telegram_request_error_logs_chunk_context_without_private_detail(caplog) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("private network detail", request=request)
+
+    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
+            with pytest.raises(DeliveryError, match="request-error"):  # pragma: no branch
+                await publisher.publish(RenderedMessage("Body", 4))
+
+    assert "Telegram delivery request failed index=1/1 message_visible_characters=4 payload_characters=4" in caplog.text
+    assert "reason=ConnectError" in caplog.text
+    assert "private network detail" not in caplog.text
 
 
 async def test_telegram_rejects_oversized_single_message_before_delivery() -> None:
