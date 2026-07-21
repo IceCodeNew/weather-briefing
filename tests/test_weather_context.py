@@ -1,4 +1,5 @@
 import base64
+import logging
 from typing import TypeGuard
 
 import httpx
@@ -21,6 +22,7 @@ from weather_briefing.weather_context import (
     OpenMeteoProvider,
     QWeatherJWTAuthenticator,
     QWeatherProvider,
+    UnsupportedForecastDateError,
     WeatherContextError,
     _format_qweather_day,
     _format_qweather_lifestyle,
@@ -832,6 +834,56 @@ async def test_weather_provider_logs_unexpected_error_type_without_message(caplo
     assert "Weather API call failed provider=test-provider" in caplog.text
     assert "reason=RuntimeError" in caplog.text
     assert "sensitive upstream detail" not in caplog.text
+
+
+async def test_logged_provider_logs_unsupported_forecast_date_as_skip(caplog) -> None:
+    class UndatedProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            raise AssertionError("Dated requests must not call the current-weather method")  # pragma: no cover
+
+    provider = LoggedWeatherContextProvider("nea-sg", UndatedProvider())
+
+    with (
+        caplog.at_level("INFO", logger="weather_briefing.weather_context"),
+        pytest.raises(UnsupportedForecastDateError, match="does not support target forecast dates"),
+    ):
+        await provider.fetch(1, 2, forecast_date=pendulum.date(2026, 7, 21))
+
+    assert "Weather API call skipped provider=nea-sg" in caplog.text
+    assert "forecast_date=2026-07-21" in caplog.text
+    assert "reason=unsupported-forecast-date" in caplog.text
+    assert "Weather API call failed provider=nea-sg" not in caplog.text
+
+
+@pytest.mark.parametrize("secondary_failure", ("elapsed", "logger"))
+async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fails(
+    monkeypatch,
+    secondary_failure: str,
+) -> None:
+    class UndatedProvider:
+        async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+            raise AssertionError("Dated requests must not call the current-weather method")  # pragma: no cover
+
+    if secondary_failure == "elapsed":
+
+        def fail_elapsed(started_at: float) -> int:
+            raise RuntimeError("secondary failure")
+
+        monkeypatch.setattr("weather_briefing.weather_context._elapsed_milliseconds", fail_elapsed)
+    else:
+        original_info = logging.getLogger("weather_briefing.weather_context").info
+
+        def fail_skip_log(message: str, *args: object) -> None:
+            if "skipped" in message:
+                raise RuntimeError("secondary failure")
+            original_info(message, *args)
+
+        monkeypatch.setattr("weather_briefing.weather_context._LOGGER.info", fail_skip_log)
+
+    provider = LoggedWeatherContextProvider("nea-sg", UndatedProvider())
+
+    with pytest.raises(UnsupportedForecastDateError, match="does not support target forecast dates"):
+        await provider.fetch(1, 2, forecast_date=pendulum.date(2026, 7, 21))
 
 
 async def test_missing_weather_air_quality_requires_optional_aqicn_configuration() -> None:
