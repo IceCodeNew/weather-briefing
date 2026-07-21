@@ -4,6 +4,8 @@ FROM mirror.gcr.io/icecodexi/bash-toybox:0.8.14@sha256:8dfe2229d2855e09bce8304cd
 FROM gcr.io/distroless/python3-debian13:nonroot@sha256:0e52dfee02b1aba142e77b004f6ea11210b79456b51f10d70e9bd631cbc21d98 AS py-runtime
 # toybox + bash(ash) + catatonit
 COPY --link --from=assets /usr/bin/ /usr/bin/
+# hadolint ignore=DL3022
+COPY --link --from=static-curl /curl /usr/bin/curl
 SHELL ["/usr/bin/bash", "-o", "pipefail", "-c"]
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
