@@ -131,7 +131,7 @@ class OpenMeteoGeocodingProvider:
             results = payload.get("results", [])
             if not isinstance(results, list):
                 _log_candidate_selection("open-meteo", location.id, 1, 0, outcome="invalid-response")
-                raise GeocodingError(f"Open-Meteo geocoding returned no results for location: {location.id}")
+                raise GeocodingError(f"Open-Meteo geocoding returned an invalid response for location: {location.id}")
             if not results:
                 _log_candidate_selection("open-meteo", location.id, 1, 0, outcome="no-results")
                 raise GeocodingError(f"Open-Meteo geocoding returned no results for location: {location.id}")
@@ -546,7 +546,9 @@ def _nominatim_result_matches(name: str, result: dict[str, object]) -> bool:
 
 def _open_meteo_result_matches(name: str, result: dict[str, object]) -> bool:
     result_description = " ".join(
-        str(result.get(field, "")) for field in ("name", "admin1", "admin2", "admin3", "admin4", "country")
+        str(value)
+        for field in ("name", "admin1", "admin2", "admin3", "admin4", "country")
+        if (value := result.get(field))
     )
     return _location_name_matches(name, result_description)
 
@@ -556,10 +558,14 @@ def _location_name_matches(name: str, result_description: str) -> bool:
     position = 0
     normalized_description = result_description.casefold()
     for component in _location_name_components(name):
-        start = normalized_description.find(component.casefold(), position)
-        if start < 0:
+        normalized_component = component.casefold()
+        match = re.compile(rf"(?<!\w){re.escape(normalized_component)}(?!\w)").search(
+            normalized_description,
+            position,
+        )
+        if match is None:
             return False
-        position = start + len(component)
+        position = match.end()
     return True
 
 

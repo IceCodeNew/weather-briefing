@@ -14,6 +14,7 @@ from weather_briefing.geocoding import (
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
+    _location_name_matches,
     _mainland_china_rules,
     _specific_location_name,
     possibly_mainland_china,
@@ -687,8 +688,30 @@ async def test_open_meteo_handles_results_not_a_list() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"results": "not-a-list"}))
     ) as client:
-        with pytest.raises(GeocodingError, match="returned no results"):
+        with pytest.raises(GeocodingError, match="returned an invalid response"):
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+
+async def test_open_meteo_ignores_null_fields_when_matching_results() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "name": None,
+                            "latitude": 1.0,
+                            "longitude": 2.0,
+                            "country_code": "EX",
+                        }
+                    ]
+                },
+            )
+        )
+    ) as client:
+        with pytest.raises(GeocodingError, match="returned no matching result"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "None"))
 
 
 async def test_open_meteo_handles_no_matching_result() -> None:
@@ -873,6 +896,22 @@ async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
     assert calls == ["中国北京市西城区中南海1号", "中国北京市西城区中南海"]
 
 
+async def test_precision_reducing_provider_keeps_international_trailing_digits() -> None:
+    calls: list[str] = []
+
+    class FailingGeocoder:
+        async def geocode(self, location: LocationSpec) -> ResolvedLocation:
+            calls.append(_required_test_location_name(location))
+            raise GeocodingError("no match")
+
+    with pytest.raises(GeocodingError, match="No geocoder could resolve location at a safe precision"):
+        await PrecisionReducingGeocodingProvider(FailingGeocoder()).geocode(
+            LocationSpec("example", "Example Street 123")
+        )
+
+    assert calls == ["Example Street 123"]
+
+
 async def test_precision_reducing_provider_preserves_only_safe_cause_type() -> None:
     class FailingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
@@ -1010,3 +1049,12 @@ def test_specific_location_name_rejects_non_string_suffix(monkeypatch) -> None:
     )
     with pytest.raises(ReferenceDataError, match="suffix characters must be a string"):
         _specific_location_name("北京")
+
+
+def test_location_name_matching_advances_by_normalized_component_length() -> None:
+    assert not _location_name_matches("Straße, e", "Straße")
+
+
+def test_location_name_matching_rejects_qualifier_substrings() -> None:
+    assert not _location_name_matches("Example, Iran", "Example, Tirana")
+    assert _location_name_matches("Example, Iran", "Example, Central District, Iran")
