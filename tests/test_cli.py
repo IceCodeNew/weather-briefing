@@ -1205,6 +1205,28 @@ class TestWeatherContextProvider:
         with pytest.raises(ValueError, match="No configured weather provider"):
             _weather_context_provider(settings, async_client, location)
 
+    @pytest.mark.parametrize(
+        ("country_code", "reason"),
+        ((None, "missing-country-code"), ("JP", "known-non-singapore-country")),
+    )
+    async def test_unavailable_nea_skips_explicit_supplement(
+        self,
+        async_client: httpx.AsyncClient,
+        caplog,
+        country_code: str | None,
+        reason: str,
+    ) -> None:
+        settings = _make_fake_settings(weather_providers=("open-meteo", "nea-sg"))
+        location = ResolvedLocation("test", "Test", 1.0, 1.0, country_code, None, None, False)
+
+        with caplog.at_level(logging.WARNING, logger="weather_briefing"):
+            provider = _weather_context_provider(settings, async_client, location)
+
+        assert provider.weather_metadata.provider_id == "open-meteo"
+        assert provider.supplements == ()
+        assert provider.supplement_metadata == ()
+        assert f"Skipping explicit NEA provider reason={reason}" in caplog.text
+
     async def test_qweather_configured(self, async_client: httpx.AsyncClient, caplog) -> None:
         key = b"fake-private-key-content"
         settings = _make_fake_settings(

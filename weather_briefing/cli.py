@@ -485,6 +485,13 @@ def _weather_context_provider(
     location: ResolvedLocation,
 ) -> CapabilityProviderSet:
     names = weather_providers_for(location, settings.weather_providers)
+    if (
+        settings.weather_providers is not None
+        and WeatherProviderName.NEA_SINGAPORE in settings.weather_providers
+        and WeatherProviderName.NEA_SINGAPORE not in names
+    ):
+        reason = "missing-country-code" if location.country_code is None else "known-non-singapore-country"
+        _LOGGER.warning("Skipping explicit NEA provider reason=%s", reason)
     jma_available = location.jma_office_code is not None and location.country_code in {None, "JP"}
     if settings.weather_providers is not None and WeatherProviderName.JMA_JAPAN in names and not jma_available:
         reason = "missing-jma-office-code" if location.jma_office_code is None else "known-non-japan-country"

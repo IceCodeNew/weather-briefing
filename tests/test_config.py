@@ -132,8 +132,19 @@ def test_programmatic_weather_order_cannot_bypass_local_supplement_constraint(lo
 
 def test_multiple_local_supplements_can_follow_primary_providers() -> None:
     providers = ("open-meteo", "nea-sg", "jma-jp")
+    singapore = replace(_resolved_location(mainland=False), country_code="SG")
 
-    assert weather_providers_for(_resolved_location(mainland=False), providers) == providers
+    assert weather_providers_for(singapore, providers) == providers
+
+
+@pytest.mark.parametrize("country_code", (None, "JP", "US"))
+def test_explicit_nea_provider_is_removed_outside_singapore(country_code: str | None) -> None:
+    location = replace(_resolved_location(mainland=False), country_code=country_code)
+
+    assert weather_providers_for(location, ("open-meteo", "nea-sg")) == ("open-meteo",)
+
+    with pytest.raises(ConfigurationError, match="only available for locations identified as Singapore"):
+        weather_providers_for(location, ("nea-sg",))
 
 
 def test_non_mainland_weather_providers_default_to_open_meteo_only(monkeypatch) -> None:

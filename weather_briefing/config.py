@@ -231,6 +231,11 @@ def weather_providers_for(location: ResolvedLocation, configured: tuple[str, ...
     """Resolve the configured or region-default weather provider order."""
     if configured is not None:
         _validate_weather_provider_order(configured)
+        if location.country_code != "SG" and WeatherProviderName.NEA_SINGAPORE in configured:
+            available = tuple(provider for provider in configured if provider != WeatherProviderName.NEA_SINGAPORE)
+            if not available:
+                raise ConfigurationError("nea-sg is only available for locations identified as Singapore")
+            return available
         return configured
     region = _weather_region(location)
     providers = reference_string_tuple("provider_defaults.json", "weather_provider_order", region)
