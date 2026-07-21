@@ -104,9 +104,9 @@ RSS 来源可以按地点 ID 限定范围，并配置正文清洗规则。`verba
 
 和风天气使用 `QWeatherJWTAuthenticator` 签发短期 JWT。认证输入包括项目 ID、凭据 ID、专属 API Host 和 Base64 编码的 Ed25519 私钥。实现不支持用长期 API Key 代替该流程。
 
-`OpenMeteoProvider` 提供全球天气，并从独立接口读取空气质量和欧洲花粉数据。适配器在生成来源正文前把 WMO 天气代码转换为可读的中文天气现象；未知代码保留为“未识别天气现象”并写入安全日志。公开接口适用于非商业使用，没有 SLA；Base URL 和可选 API Key 可以替换。
+`OpenMeteoProvider` 提供全球天气，并从独立接口读取空气质量和欧洲花粉数据。Open-Meteo API 返回语言中立的结构化数据，适配器把天气、空气质量和花粉统一转换为固定 `en` 来源正文。WMO 天气代码映射在模块加载时完成验证，未知代码保留为 “Unrecognized weather condition” 并写入安全日志。`SourceDocument` 记录英文来源语言，模型按地点配置的目标语言生成最终简报。公开接口适用于非商业使用，没有 SLA；Base URL 和可选 API Key 可以替换。
 
-`AQICNProvider` 只在最终天气结果缺少空气质量时补充当前观测。它不参与未来日期查询，也不把 PM2.5 单项 AQI 换算为浓度。
+`AQICNProvider` 只在最终天气结果缺少空气质量时补充当前观测。AQICN 的结构化数据也统一转换为固定 `en` 来源正文。它不参与未来日期查询，也不把 PM2.5 单项 AQI 换算为浓度。
 
 `NEASingaporeNowcastProvider` 只提供新加坡两小时预报。`JMAJapanForecastProvider` 只提供地点所配置预报区的日本本地预报。它们没有完整天气服务所需的全部数据，因此与 Open-Meteo 组合，而不是作为完整天气 fallback。
 

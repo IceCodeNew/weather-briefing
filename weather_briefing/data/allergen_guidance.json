@@ -1,37 +1,37 @@
 {
   "pollen_types": {
-    "alder": "桤木",
-    "birch": "桦木",
-    "grass": "禾本",
-    "mugwort": "蒿属",
-    "olive": "橄榄",
-    "ragweed": "豚草"
+    "alder": "Alder",
+    "birch": "Birch",
+    "grass": "Grass",
+    "mugwort": "Mugwort",
+    "olive": "Olive",
+    "ragweed": "Ragweed"
   },
   "bands": [
     {
       "maximum_concentration": 0,
-      "category": "无",
-      "guidance": "花粉浓度极低，过敏体质人群一般无需因花粉调整户外活动。"
+      "category": "None",
+      "guidance": "Pollen concentrations are negligible; no activity changes are generally needed."
     },
     {
       "maximum_concentration": 10,
-      "category": "低",
-      "guidance": "花粉浓度较低，少数极度敏感者可做适当防护。"
+      "category": "Low",
+      "guidance": "Pollen concentrations are low; highly sensitive people may take routine precautions."
     },
     {
       "maximum_concentration": 30,
-      "category": "中",
-      "guidance": "花粉浓度中等，过敏体质人群户外活动后建议清洗面部和鼻腔。"
+      "category": "Moderate",
+      "guidance": "Pollen concentrations are moderate; sensitive people should wash their face and nose after outdoor activity."
     },
     {
       "maximum_concentration": 100,
-      "category": "高",
-      "guidance": "花粉浓度较高，花粉过敏者应减少户外活动，外出佩戴口罩。"
+      "category": "High",
+      "guidance": "Pollen concentrations are high; people with pollen allergies should limit outdoor activity and wear a mask outside."
     },
     {
       "maximum_concentration": null,
-      "category": "极高",
-      "guidance": "花粉浓度很高，花粉过敏者应尽量避免外出，关好门窗并使用空气净化设备。"
+      "category": "Very high",
+      "guidance": "Pollen concentrations are very high; people with pollen allergies should avoid going outside, close windows, and use air filtration."
     }
   ]
 }

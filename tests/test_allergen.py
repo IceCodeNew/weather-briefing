@@ -13,28 +13,28 @@ from weather_briefing.reference_data import ReferenceDataError
 
 def test_allergen_guidance_zero_is_none() -> None:
     category, guidance = allergen_guidance(0)
-    assert category == "无"
+    assert category == "None"
     assert guidance
 
 
 def test_allergen_guidance_low_band() -> None:
     category, _ = allergen_guidance(5)
-    assert category == "低"
+    assert category == "Low"
 
 
 def test_allergen_guidance_moderate_band() -> None:
     category, _ = allergen_guidance(20)
-    assert category == "中"
+    assert category == "Moderate"
 
 
 def test_allergen_guidance_high_band() -> None:
     category, _ = allergen_guidance(50)
-    assert category == "高"
+    assert category == "High"
 
 
 def test_allergen_guidance_extreme_band() -> None:
     category, _ = allergen_guidance(500)
-    assert category == "极高"
+    assert category == "Very high"
 
 
 @pytest.mark.parametrize("concentration", [-1, float("nan"), float("inf"), float("-inf")])

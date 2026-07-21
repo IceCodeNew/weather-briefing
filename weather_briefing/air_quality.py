@@ -91,7 +91,7 @@ class AQICNProvider:
             pm25_unit=None,
             category=category,
             health_guidance=guidance,
-            output_language="zh-CN",
+            output_language="en",
         )
 
 

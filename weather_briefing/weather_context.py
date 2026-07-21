@@ -46,10 +46,11 @@ QWEATHER_LANGUAGE_SUPPORT = LanguageSupport(
     supported=("zh-CN", "zh-TW", "en", "ja"),
     api_codes=(("zh-CN", "zh"), ("zh-TW", "zh-hant"), ("en", "en"), ("ja", "ja")),
 )
-OPEN_METEO_LANGUAGE_SUPPORT = LanguageSupport.fixed("zh-CN")
+OPEN_METEO_LANGUAGE_SUPPORT = LanguageSupport.fixed("en")
 
 _WEATHER_DOCUMENT_LABELS = localization_table("weather_document")
 _QWEATHER_FORMATS = localization_table("qweather")
+open_meteo_weather_code_descriptions()
 
 
 class WeatherContextError(RuntimeError):
@@ -672,7 +673,7 @@ class OpenMeteoProvider:
                 )
         return AllergenSnapshot(
             source_id="allergen:open-meteo",
-            source_name="Open-Meteo / CAMS ENSEMBLE 花粉过敏原",
+            source_name="Open-Meteo / CAMS ENSEMBLE pollen allergens",
             source_url="https://open-meteo.com/en/docs/air-quality-api",
             observed_at=observed_at,
             levels=tuple(levels),
@@ -1025,18 +1026,19 @@ def _float_value(value: object) -> float:
 
 def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:
     return (
-        f"{_open_meteo_daily_value(daily, 'time', index)}："
-        f"{_open_meteo_weather_description(_open_meteo_daily_value(daily, 'weather_code', index))}，"
+        f"{_open_meteo_daily_value(daily, 'time', index)}: "
+        f"{_open_meteo_weather_description(_open_meteo_daily_value(daily, 'weather_code', index))}, "
         f"{_open_meteo_daily_value(daily, 'temperature_2m_min', index)}~"
-        f"{_open_meteo_daily_value(daily, 'temperature_2m_max', index)}℃，"
-        f"体感{_open_meteo_daily_value(daily, 'apparent_temperature_min', index)}~"
-        f"{_open_meteo_daily_value(daily, 'apparent_temperature_max', index)}℃，"
-        f"预计降水{_open_meteo_daily_value(daily, 'precipitation_sum', index)}毫米，"
-        f"最高降水概率{_open_meteo_daily_value(daily, 'precipitation_probability_max', index)}%，"
-        f"最大风速{_open_meteo_daily_value(daily, 'wind_speed_10m_max', index)}千米/小时，"
-        f"最大阵风{_open_meteo_daily_value(daily, 'wind_gusts_10m_max', index)}千米/小时，"
-        f"主导风向{_open_meteo_daily_value(daily, 'wind_direction_10m_dominant', index)}°，"
-        f"最高紫外线指数{_open_meteo_daily_value(daily, 'uv_index_max', index)}"
+        f"{_open_meteo_daily_value(daily, 'temperature_2m_max', index)} °C, "
+        f"feels like {_open_meteo_daily_value(daily, 'apparent_temperature_min', index)}~"
+        f"{_open_meteo_daily_value(daily, 'apparent_temperature_max', index)} °C, "
+        f"expected precipitation {_open_meteo_daily_value(daily, 'precipitation_sum', index)} mm, "
+        f"maximum precipitation probability "
+        f"{_open_meteo_daily_value(daily, 'precipitation_probability_max', index)}%, "
+        f"maximum wind speed {_open_meteo_daily_value(daily, 'wind_speed_10m_max', index)} km/h, "
+        f"maximum gust {_open_meteo_daily_value(daily, 'wind_gusts_10m_max', index)} km/h, "
+        f"dominant wind direction {_open_meteo_daily_value(daily, 'wind_direction_10m_dominant', index)}°, "
+        f"maximum UV index {_open_meteo_daily_value(daily, 'uv_index_max', index)}"
     )
 
 
@@ -1048,4 +1050,4 @@ def _open_meteo_weather_description(value: object) -> str:
         _LOGGER.warning("Unknown Open-Meteo weather code code=%d", value)
     else:
         _LOGGER.warning("Invalid Open-Meteo weather code value_type=%s", type(value).__name__)
-    return "未识别天气现象"
+    return "Unrecognized weather condition"

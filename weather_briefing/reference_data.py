@@ -144,11 +144,11 @@ def reference_string_tuple(filename: str, *path: str) -> tuple[str, ...]:
 
 @cache
 def open_meteo_weather_code_descriptions() -> Mapping[int, str]:
-    """Return validated Chinese descriptions for Open-Meteo WMO weather codes."""
+    """Return validated English descriptions for Open-Meteo WMO weather codes."""
     value = load_reference_data("open_meteo_weather_codes.json")
-    descriptions = value.get("descriptions_zh_CN")
-    if set(value) != {"descriptions_zh_CN"} or not isinstance(descriptions, dict) or not descriptions:
-        raise ReferenceDataError("Open-Meteo weather codes must contain Chinese descriptions")
+    descriptions = value.get("descriptions_en")
+    if set(value) != {"descriptions_en"} or not isinstance(descriptions, dict) or not descriptions:
+        raise ReferenceDataError("Open-Meteo weather codes must contain English descriptions")
 
     validated: dict[int, str] = {}
     for code, description in descriptions.items():

@@ -50,7 +50,7 @@ def test_weather_provider_language_metadata_distinguishes_selectable_and_fixed_s
     assert QWEATHER_LANGUAGE_SUPPORT.select("ja") == "ja"
     assert QWEATHER_LANGUAGE_SUPPORT.api_code("ja") == "ja"
     assert OPEN_METEO_LANGUAGE_SUPPORT.selectable is False
-    assert OPEN_METEO_LANGUAGE_SUPPORT.default == "zh-CN"
+    assert OPEN_METEO_LANGUAGE_SUPPORT.default == "en"
 
 
 @pytest.mark.parametrize(
