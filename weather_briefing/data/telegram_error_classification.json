@@ -1,0 +1,19 @@
+{
+  "description_markers": {
+    "chat not found": "chat-not-found",
+    "bot was blocked by the user": "bot-blocked",
+    "user is deactivated": "user-deactivated",
+    "not enough rights": "insufficient-rights",
+    "have no rights to send a message": "insufficient-rights",
+    "can't parse entities": "invalid-html",
+    "message is too long": "message-too-long",
+    "message text is empty": "empty-message",
+    "too many requests": "rate-limited"
+  },
+  "status_reasons": {
+    "401": "bot-token-rejected",
+    "403": "forbidden",
+    "404": "bot-endpoint-not-found",
+    "429": "rate-limited"
+  }
+}
