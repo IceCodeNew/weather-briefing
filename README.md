@@ -41,13 +41,13 @@ export ROOT_DIR="${HOME}/weather-briefing"
 mkdir -p "${ROOT_DIR}/state"
 cp env.example "${ROOT_DIR}/.env"
 cp locations.example.json "${ROOT_DIR}/locations.json"
-sudo chown -R 65532:65532 "${ROOT_DIR}"
-chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
 ```
 
-填写 `.env` 和 `locations.json` 后启动服务：
+填写 `.env` 和 `locations.json`。配置完成后收紧文件权限并启动服务：
 
 ```sh
+sudo chown -R 65532:65532 "${ROOT_DIR}"
+chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
 WEATHER_BRIEFING_VERSION="1.2.1"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
 docker pull "${IMAGE}"
@@ -125,7 +125,11 @@ docker exec weather-briefing \
 docker exec weather-briefing weather-briefing run briefing --run-now
 ```
 
-应用把运行日志写到标准错误。普通日志不记录凭据、坐标、正文或私密 URL。如需临时查看完整渲染正文，先启用 `DEBUG`，再限时打开诊断：
+应用把运行日志写到标准错误。普通日志不记录凭据、坐标、正文或私密 URL。
+
+如需临时查看完整渲染正文，先在 `.env` 中设置 `DEBUG=true`，再按上面的启动命令重新创建容器。`docker restart` 不会重新读取 `--env-file`。
+
+新容器启动后，限时打开诊断：
 
 ```sh
 docker exec weather-briefing \

@@ -123,7 +123,7 @@ Before pushing commits, ensure all local checks and tests pass. Run the reposito
 
 ```bash
 prek run --all-files
-uv run --with pytest --with pytest-cov -- pytest --cov --cov-branch --cov-report=xml
+uv run pytest --cov --cov-branch --cov-report=xml
 ```
 
 - Hooks do not compare coverage. Check it separately and do not push commits whose coverage is lower than `master`.
