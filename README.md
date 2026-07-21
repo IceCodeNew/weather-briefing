@@ -42,7 +42,7 @@ cp env.example "${ROOT_DIR}/.env"
 cp locations.example.json "${ROOT_DIR}/locations.json"
 printf '[]\n' >"${ROOT_DIR}/rss-sources.json"
 chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
-chown -R 65532:65532 "${ROOT_DIR}"
+sudo chown -R 65532:65532 "${ROOT_DIR}"
 ```
 
 填写 `.env` 和 `locations.json` 后启动服务：
@@ -65,7 +65,7 @@ docker run -d \
   "${IMAGE}" daemon
 ```
 
-容器以非特权用户运行。宿主机挂载目录必须允许容器用户写入 `state/`。升级时修改镜像版本，删除旧容器，再用相同配置重新创建。
+容器以 UID/GID 65532 的非特权用户运行。上面的 `chown` 通常需要 root 或 sudo 权限。宿主机挂载目录必须允许这个用户写入 `state/`。无法使用 sudo 时，请用主机提供的权限管理方式让 UID 65532 可以写入该目录。升级时修改镜像版本，删除旧容器，再用相同配置重新创建。
 
 ## 配置地点
 
@@ -82,11 +82,11 @@ docker run -d \
 程序会根据地点选择默认天气来源：
 
 - 中国大陆：和风天气优先，Open-Meteo 备用；
-- 新加坡：NEA 两小时预报在对应时段优先，Open-Meteo 补齐其他数据；
-- 日本：配置 JMA office code 后，JMA 预报在对应范围内优先，Open-Meteo 补齐其他数据；
+- 新加坡：先读取 Open-Meteo 完整天气，再追加 NEA 两小时预报；
+- 日本：先读取 Open-Meteo 完整天气；配置 JMA office code 后，再追加 JMA 预报；
 - 其他地区：Open-Meteo。
 
-也可以用 `WEATHER_PROVIDERS` 明确指定顺序。完整天气服务应排在只提供局部信息的服务之前。这个顺序决定程序如何取得完整数据，不代表后面的当地官方资料可信度较低。
+也可以用 `WEATHER_PROVIDERS` 明确指定调用顺序。完整天气服务应排在只提供局部信息的服务之前。这个顺序只决定程序如何取得数据。NEA 或 JMA 与 Open-Meteo 在同一时间和地区发生内容冲突时，简报优先采用当地官方机构的最新资料，并保留冲突来源供用户核验。
 
 ## 配置模型与投递
 
