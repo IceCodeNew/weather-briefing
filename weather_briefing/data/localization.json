@@ -1,0 +1,233 @@
+{
+  "aliases": {
+    "briefing": {
+      "zh": "zh-CN",
+      "zh-Hans": "zh-CN",
+      "zh-Hant": "zh-TW"
+    }
+  },
+  "tables": {
+    "air_quality": {
+      "en": {
+        "aqi": "AQI: {aqi} (Standard: {standard}; Category: {category})",
+        "aqi_summary": "AQI: {aqi} ({category})",
+        "forecast": "Forecast",
+        "forecast_time": "Forecast period",
+        "health": "Health guidance: {guidance}",
+        "observation": "Observation",
+        "observation_time": "Observed at",
+        "pm25": "PM2.5 concentration: {concentration}",
+        "pm25_aqi": "PM2.5 sub-index AQI: {value} (Standard: {standard})",
+        "pm25_summary": "PM2.5 sub-index AQI: {value}; concentration: {concentration}",
+        "separator": ": ",
+        "time_kind": "Time type: {kind}",
+        "unavailable": "Unavailable"
+      },
+      "ja": {
+        "aqi": "AQI：{aqi}（基準：{standard}、区分：{category}）",
+        "aqi_summary": "AQI：{aqi}（{category}）",
+        "forecast": "予報",
+        "forecast_time": "予報期間",
+        "health": "健康上の注意：{guidance}",
+        "observation": "観測",
+        "observation_time": "観測時刻",
+        "pm25": "PM2.5 濃度：{concentration}",
+        "pm25_aqi": "PM2.5 個別 AQI：{value}（基準：{standard}）",
+        "pm25_summary": "PM2.5 個別 AQI：{value}、濃度：{concentration}",
+        "separator": "：",
+        "time_kind": "時刻種別：{kind}",
+        "unavailable": "利用不可"
+      },
+      "zh-CN": {
+        "aqi": "AQI：{aqi}（标准：{standard}；类别：{category}）",
+        "aqi_summary": "AQI：{aqi}（{category}）",
+        "forecast": "预报",
+        "forecast_time": "预报时段",
+        "health": "健康提示：{guidance}",
+        "observation": "观测",
+        "observation_time": "观测时间",
+        "pm25": "PM2.5 {concentration}",
+        "pm25_aqi": "PM2.5 单项 AQI：{value}（标准：{standard}）",
+        "pm25_summary": "PM2.5 单项 AQI：{value}；浓度：{concentration}",
+        "separator": "：",
+        "time_kind": "时间类型：{kind}",
+        "unavailable": "不可用"
+      },
+      "zh-TW": {
+        "aqi": "AQI：{aqi}（標準：{standard}；類別：{category}）",
+        "aqi_summary": "AQI：{aqi}（{category}）",
+        "forecast": "預報",
+        "forecast_time": "預報時段",
+        "health": "健康提示：{guidance}",
+        "observation": "觀測",
+        "observation_time": "觀測時間",
+        "pm25": "PM2.5 {concentration}",
+        "pm25_aqi": "PM2.5 單項 AQI：{value}（標準：{standard}）",
+        "pm25_summary": "PM2.5 單項 AQI：{value}；濃度：{concentration}",
+        "separator": "：",
+        "time_kind": "時間類型：{kind}",
+        "unavailable": "無法取得"
+      }
+    },
+    "allergen": {
+      "en": {
+        "allergens": "Pollen allergens",
+        "count": "Pollen type count",
+        "health": "Health guidance",
+        "level": "- {name}: {concentration:g} grains/m³ ({category})",
+        "observed_at": "Observed at",
+        "overall": "Overall level",
+        "separator": ": ",
+        "unavailable": "Unavailable"
+      },
+      "ja": {
+        "allergens": "花粉アレルゲン",
+        "count": "花粉種類数",
+        "health": "健康上の注意",
+        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
+        "observed_at": "観測時刻",
+        "overall": "総合レベル",
+        "separator": "：",
+        "unavailable": "利用不可"
+      },
+      "zh-CN": {
+        "allergens": "花粉过敏原",
+        "count": "花粉类型数",
+        "health": "健康提示",
+        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
+        "observed_at": "观测时间",
+        "overall": "总体等级",
+        "separator": "：",
+        "unavailable": "不可用"
+      },
+      "zh-TW": {
+        "allergens": "花粉過敏原",
+        "count": "花粉類型數",
+        "health": "健康提示",
+        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
+        "observed_at": "觀測時間",
+        "overall": "整體等級",
+        "separator": "：",
+        "unavailable": "無法取得"
+      }
+    },
+    "briefing": {
+      "en": {
+        "advice": "Advice",
+        "attribution": "(Sources: {sources})",
+        "detail_separator": ": ",
+        "disasters": "Natural disaster updates",
+        "html_source_separator": ", ",
+        "plain_source_separator": "; ",
+        "status_close": ")",
+        "status_open": " (",
+        "warnings": "Weather warnings",
+        "weather": "Weather information"
+      },
+      "ja": {
+        "advice": "生活上の注意",
+        "attribution": "（出典：{sources}）",
+        "detail_separator": "：",
+        "disasters": "自然災害情報",
+        "html_source_separator": "、",
+        "plain_source_separator": "；",
+        "status_close": "）",
+        "status_open": "（",
+        "warnings": "気象警報",
+        "weather": "気象情報"
+      },
+      "zh-CN": {
+        "advice": "生活建议",
+        "attribution": "（来源：{sources}）",
+        "detail_separator": "：",
+        "disasters": "自然灾害动态",
+        "html_source_separator": "、",
+        "plain_source_separator": "；",
+        "status_close": "）",
+        "status_open": "（",
+        "warnings": "气象预警",
+        "weather": "天气信息"
+      },
+      "zh-TW": {
+        "advice": "生活建議",
+        "attribution": "（來源：{sources}）",
+        "detail_separator": "：",
+        "disasters": "自然災害動態",
+        "html_source_separator": "、",
+        "plain_source_separator": "；",
+        "status_close": "）",
+        "status_open": "（",
+        "warnings": "氣象警報",
+        "weather": "天氣資訊"
+      }
+    },
+    "qweather": {
+      "en": {
+        "day": "{date}: {day} to {night}; {minimum}-{maximum} °C; {wind}, force {scale}; relative humidity {humidity}%; forecast precipitation {precipitation} mm",
+        "lifestyle": "{name} ({category}): {text}",
+        "no_details": "No detailed advice",
+        "unknown": "Unknown"
+      },
+      "ja": {
+        "day": "{date}：{day}から{night}、{minimum}～{maximum}℃、{wind}{scale}級、相対湿度{humidity}%、予想降水量{precipitation}mm",
+        "lifestyle": "{name}（{category}）：{text}",
+        "no_details": "詳しいアドバイスはありません",
+        "unknown": "不明"
+      },
+      "zh-CN": {
+        "day": "{date}：{day}转{night}，{minimum}~{maximum}℃，{wind}{scale}级，相对湿度{humidity}%，预计降水量{precipitation}毫米",
+        "lifestyle": "{name}（{category}）：{text}",
+        "no_details": "无详细建议",
+        "unknown": "未知"
+      },
+      "zh-TW": {
+        "day": "{date}：{day}轉{night}，{minimum}~{maximum}℃，{wind}{scale}級，相對濕度{humidity}%，預計降水量{precipitation}毫米",
+        "lifestyle": "{name}（{category}）：{text}",
+        "no_details": "無詳細建議",
+        "unknown": "未知"
+      }
+    },
+    "weather_document": {
+      "en": {
+        "forecast": "Weather forecast",
+        "lifestyle": "Lifestyle and travel indices",
+        "lifestyle_count": "Lifestyle and travel index count",
+        "section_separator": ":",
+        "separator": ": ",
+        "summary": "Weather summary",
+        "unavailable": "Unavailable",
+        "updated_at": "Updated at"
+      },
+      "ja": {
+        "forecast": "天気予報",
+        "lifestyle": "生活・外出指数",
+        "lifestyle_count": "生活・外出指数の件数",
+        "section_separator": "：",
+        "separator": "：",
+        "summary": "天気概要",
+        "unavailable": "利用不可",
+        "updated_at": "更新時刻"
+      },
+      "zh-CN": {
+        "forecast": "天气预报",
+        "lifestyle": "生活与出行指数",
+        "lifestyle_count": "生活与出行指数项数",
+        "section_separator": "：",
+        "separator": "：",
+        "summary": "天气概览",
+        "unavailable": "不可用",
+        "updated_at": "更新时间"
+      },
+      "zh-TW": {
+        "forecast": "天氣預報",
+        "lifestyle": "生活與出行指數",
+        "lifestyle_count": "生活與出行指數項數",
+        "section_separator": "：",
+        "separator": "：",
+        "summary": "天氣概覽",
+        "unavailable": "無法取得",
+        "updated_at": "更新時間"
+      }
+    }
+  }
+}

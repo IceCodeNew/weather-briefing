@@ -7,50 +7,9 @@ from math import isfinite
 
 from .languages import localized_labels
 from .models import AllergenSnapshot, SourceDocument
-from .reference_data import ReferenceDataError, reference_value
+from .reference_data import ReferenceDataError, localization_table, reference_value
 
-_ALLERGEN_FORMATS = {
-    "zh-CN": {
-        "separator": "：",
-        "unavailable": "不可用",
-        "observed_at": "观测时间",
-        "allergens": "花粉过敏原",
-        "overall": "总体等级",
-        "health": "健康提示",
-        "count": "花粉类型数",
-        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
-    },
-    "zh-TW": {
-        "separator": "：",
-        "unavailable": "無法取得",
-        "observed_at": "觀測時間",
-        "allergens": "花粉過敏原",
-        "overall": "整體等級",
-        "health": "健康提示",
-        "count": "花粉類型數",
-        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
-    },
-    "en": {
-        "separator": ": ",
-        "unavailable": "Unavailable",
-        "observed_at": "Observed at",
-        "allergens": "Pollen allergens",
-        "overall": "Overall level",
-        "health": "Health guidance",
-        "count": "Pollen type count",
-        "level": "- {name}: {concentration:g} grains/m³ ({category})",
-    },
-    "ja": {
-        "separator": "：",
-        "unavailable": "利用不可",
-        "observed_at": "観測時刻",
-        "allergens": "花粉アレルゲン",
-        "overall": "総合レベル",
-        "health": "健康上の注意",
-        "count": "花粉種類数",
-        "level": "- {name}：{concentration:g} 粒/m³（{category}）",
-    },
-}
+_ALLERGEN_FORMATS = localization_table("allergen")
 
 
 def allergen_guidance(concentration: float) -> tuple[str, str]:

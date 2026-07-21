@@ -1,13 +1,39 @@
+from copy import deepcopy
+from types import MappingProxyType
+from typing import TypeGuard
+
 import pytest
 
 from weather_briefing.air_quality import health_guidance
 from weather_briefing.reference_data import (
     ReferenceDataError,
     load_reference_data,
+    localization_table,
     reference_string,
     reference_string_tuple,
     reference_value,
 )
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _mutable_localization_data() -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    value = deepcopy(load_reference_data("localization.json"))
+    tables = value["tables"]
+    aliases = value["aliases"]
+    assert _is_string_object_dict(tables)
+    assert _is_string_object_dict(aliases)
+    return value, tables, aliases
+
+
+def _localization_language(tables: dict[str, object], table_name: str, language: str) -> dict[str, object]:
+    table = tables[table_name]
+    assert _is_string_object_dict(table)
+    labels = table[language]
+    assert _is_string_object_dict(labels)
+    return labels
 
 
 def test_packaged_reference_data_is_available() -> None:
@@ -19,6 +45,8 @@ def test_packaged_reference_data_is_available() -> None:
     assert reference_string_tuple("content_cleaning.json", "default_remove_selectors")
     assert reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")
     assert reference_string("provider_defaults.json", "qweather_allergen_index_type") == "7"
+    assert localization_table("weather_document")["ja"]["forecast"] == "天気予報"
+    assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
 
 
 def test_air_quality_guidance_covers_values_above_last_bounded_band() -> None:
@@ -80,3 +108,135 @@ def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:
 
     with pytest.raises(ReferenceDataError, match="must be an object"):
         load_reference_data("test.json")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ({"tables": [], "aliases": {}}, "every supported table"),
+        ({"tables": {}, "aliases": {}}, "every supported table"),
+        (
+            {
+                "tables": {
+                    name: {} for name in ("air_quality", "allergen", "briefing", "qweather", "weather_document")
+                },
+                "aliases": {},
+            },
+            "every supported language",
+        ),
+    ],
+)
+def test_localization_table_rejects_incomplete_data(monkeypatch, value, message) -> None:
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match=message):
+        localization_table("briefing")
+
+
+def test_localization_table_rejects_missing_fields(monkeypatch) -> None:
+    value, tables, _ = _mutable_localization_data()
+    english = _localization_language(tables, "briefing", "en")
+    del english["weather"]
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Invalid localization fields: briefing:en"):
+        localization_table("briefing")
+
+
+def test_localization_table_rejects_unknown_alias_target(monkeypatch) -> None:
+    value, _, aliases = _mutable_localization_data()
+    briefing = aliases["briefing"]
+    assert _is_string_object_dict(briefing)
+    briefing["zh-Hans"] = "missing"
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Invalid localization alias: briefing:zh-Hans"):
+        localization_table("briefing")
+
+
+def test_localization_table_rejects_whitespace_values(monkeypatch) -> None:
+    value, tables, _ = _mutable_localization_data()
+    _localization_language(tables, "briefing", "en")["weather"] = "   "
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Invalid localization fields: briefing:en"):
+        localization_table("briefing")
+
+
+def test_localization_tables_are_immutable() -> None:
+    localization_table.cache_clear()
+    table = localization_table("briefing")
+
+    assert isinstance(table, MappingProxyType)
+    assert isinstance(table["en"], MappingProxyType)
+    assert isinstance(table["zh-Hans"], MappingProxyType)
+    assert localization_table("briefing")["en"]["weather"] == "Weather information"
+    assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
+
+
+@pytest.mark.parametrize("aliases", ([], {"unknown": {}}))
+def test_localization_table_rejects_invalid_alias_root(monkeypatch, aliases) -> None:
+    value, _, _ = _mutable_localization_data()
+    value["aliases"] = aliases
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="every supported table"):
+        localization_table("briefing")
+
+
+def test_localization_table_rejects_unknown_table() -> None:
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Unknown localization table: missing"):
+        localization_table("missing")
+
+
+def test_localization_table_rejects_non_object_table(monkeypatch) -> None:
+    value, tables, _ = _mutable_localization_data()
+    tables["briefing"] = []
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Unknown localization table: briefing"):
+        localization_table("briefing")
+
+
+def test_localization_table_rejects_non_object_labels(monkeypatch) -> None:
+    value, tables, _ = _mutable_localization_data()
+    briefing = tables["briefing"]
+    assert _is_string_object_dict(briefing)
+    briefing["en"] = []
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Invalid localization fields: briefing:en"):
+        localization_table("briefing")
+
+
+def test_localization_table_rejects_non_object_table_aliases(monkeypatch) -> None:
+    value, _, aliases = _mutable_localization_data()
+    aliases["briefing"] = []
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Localization aliases must be an object: briefing"):
+        localization_table("briefing")
+
+
+@pytest.mark.parametrize(
+    ("alias", "target"),
+    ((7, "zh-CN"), ("ZH", "zh-CN"), ("bad_tag", "zh-CN"), ("fr", 7), ("en", "en")),
+)
+def test_localization_table_rejects_invalid_aliases(monkeypatch, alias, target) -> None:
+    value, _, aliases = _mutable_localization_data()
+    aliases["briefing"] = {alias: target}
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    localization_table.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Invalid localization alias: briefing"):
+        localization_table("briefing")
