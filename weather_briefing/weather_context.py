@@ -50,6 +50,7 @@ OPEN_METEO_LANGUAGE_SUPPORT = LanguageSupport.fixed("zh-CN")
 
 _WEATHER_DOCUMENT_LABELS = localization_table("weather_document")
 _QWEATHER_FORMATS = localization_table("qweather")
+_OPEN_METEO_WEATHER_CODES = open_meteo_weather_code_descriptions()
 
 
 class WeatherContextError(RuntimeError):
@@ -1041,9 +1042,8 @@ def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:
 
 
 def _open_meteo_weather_description(value: object) -> str:
-    descriptions = open_meteo_weather_code_descriptions()
-    if type(value) is int and value in descriptions:
-        return descriptions[value]
+    if type(value) is int and value in _OPEN_METEO_WEATHER_CODES:
+        return _OPEN_METEO_WEATHER_CODES[value]
     if type(value) is int:
         _LOGGER.warning("Unknown Open-Meteo weather code code=%d", value)
     else:
