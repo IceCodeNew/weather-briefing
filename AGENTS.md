@@ -84,6 +84,7 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 - Design extension boundaries before adding provider-specific behavior. Keep core data platform-neutral and vendor or delivery syntax in adapters. Prefer composition and thin subclasses to copied request logic or growing conditionals.
 - Keep domain reference data outside implementation code. Geographic bounds, classification tables, and matching patterns belong in validated data files.
 - Treat privacy as broader than secret scanning. Locations, coordinates, private feed URLs, source content, state, and other context can expose a user. Use runtime configuration and public examples in committed code and tests.
+- Never commit real credentials, locations, coordinates, private source URLs, generated content, or runtime state. Keep them in runtime configuration and ignored state paths.
 - Keep dependencies minimal and justify every third-party package. Use high-level security interfaces for authentication and cryptography.
 - Before implementing an external protocol, authentication flow, structured-response validator, retry policy, rate limiter, or service client, evaluate the official SDK and mature maintained libraries.
 - Prefer a thin adapter over duplicated external-service infrastructure.
