@@ -19,6 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # renovate: datasource=github-releases depName=static-curl packageName=stunnel/static-curl
+  CURL_VERSION: "8.21.0"
   WEATHER_BRIEFING_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/weather-briefing
 
 jobs:
@@ -45,12 +47,27 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - name: Install static curl
+        # Cache writes only run for trusted master or release tag pushes.
+        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # zizmor: ignore[cache-poisoning] v4.2.1
+        with:
+          mise_toml: |
+            [tools]
+            "github:stunnel/static-curl" = { version = "${{ env.CURL_VERSION }}", matching = "musl" }
+      - name: Prepare static curl build context
+        id: static-curl-context
+        run: |
+          context_path="$HOME/static-curl-context"
+          mkdir -p "${context_path}"
+          cp "$(mise which curl)" "${context_path}/curl"
+          echo "path=${context_path}" >> "$GITHUB_OUTPUT"
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           file: Dockerfile
           platforms: ${{ matrix.platform }}
+          build-contexts: static-curl=${{ steps.static-curl-context.outputs.path }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=min,scope=${{ matrix.platform }}
           outputs: |
@@ -63,6 +80,8 @@ jobs:
           docker pull "${test_image}" || true
           docker image inspect "${test_image}"
           docker run --rm --pull=never "${test_image}" --help
+          docker run --rm --pull=never --entrypoint /usr/bin/curl "${test_image}" --version \
+            | grep -F "curl ${CURL_VERSION}"
 
       - name: Export digest
         env:
