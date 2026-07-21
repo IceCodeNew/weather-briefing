@@ -143,6 +143,30 @@ def reference_string_tuple(filename: str, *path: str) -> tuple[str, ...]:
 
 
 @cache
+def open_meteo_weather_code_descriptions() -> Mapping[int, str]:
+    """Return validated Chinese descriptions for Open-Meteo WMO weather codes."""
+    value = load_reference_data("open_meteo_weather_codes.json")
+    descriptions = value.get("descriptions_zh_CN")
+    if set(value) != {"descriptions_zh_CN"} or not isinstance(descriptions, dict) or not descriptions:
+        raise ReferenceDataError("Open-Meteo weather codes must contain Chinese descriptions")
+
+    validated: dict[int, str] = {}
+    for code, description in descriptions.items():
+        if (
+            not isinstance(code, str)
+            or not code.isascii()
+            or not code.isdigit()
+            or str(int(code)) != code
+            or not 0 <= int(code) <= 99
+            or not isinstance(description, str)
+            or not description.strip()
+        ):
+            raise ReferenceDataError("Open-Meteo weather codes must map numeric codes to descriptions")
+        validated[int(code)] = description
+    return MappingProxyType(validated)
+
+
+@cache
 def telegram_error_classification() -> TelegramErrorClassification:
     """Return validated Telegram API error classification data."""
     value = load_reference_data("telegram_error_classification.json")
