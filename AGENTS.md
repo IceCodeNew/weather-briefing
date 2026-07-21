@@ -77,6 +77,7 @@ Usage notes:
 - Do not retain compatibility paths for abandoned internal formats unless the current requirements explicitly require them.
 - Treat persistence, counters, telemetry, and alert bookkeeping performed while handling an error as secondary operations. Their failure must not replace the original business exception, and logic must not rely on state that was not recorded successfully.
 - Validate configuration at its input boundary without coercing invalid scalar types into strings or other superficially valid values. Reject unknown values for application-owned fixed choices early, while leaving third-party dynamic provider namespaces to their owning SDK instead of duplicating a whitelist.
+- When an implicit behavior becomes configurable, define the product-wide default deliberately and update existing deployment examples to state their intended legacy behavior explicitly. Do not make a regional example's value the global default by accident.
 - Do not use `typing.cast()` in application or test code. Model type boundaries with protocols, typed test doubles, or runtime narrowing instead of suppressing type mismatches.
 - Keep code comments concise and in English.
 - Preserve compatibility between build and runtime environments rather than assuming copied artifacts are portable across distributions or interpreter builds.
@@ -85,6 +86,7 @@ Usage notes:
 
 - When a tool appears missing, check less-obvious environment managers and project activation mechanisms such as Nix, mise, asdf, or direnv before proposing installation.
 - Run installed tools directly from the configured environment. In particular, use the mise-installed `openskills` binary instead of launching it through `npx` or `uvx`.
+- Use the authenticated host `gh` CLI for live GitHub review, check, and merge state when requested; do not substitute stale local refs or sandbox-limited network results for the remote source of truth.
 - Do not install tools, create substitute environments, or download workaround caches without user approval. If the configured toolchain is broken, stop and let the user repair it.
 - Preserve unexpected staged, unstaged, and untracked user work. Re-check repository state when it changes during a task rather than assuming the earlier snapshot is still current.
 
@@ -95,21 +97,25 @@ Usage notes:
 - A feature should satisfy the current design when first introduced. Amend later corrections into that original commit instead of preserving `fix`, `fixup!`, cleanup, or compatibility commits. A deliberate cross-cutting refactor may remain separate when that history is meaningful.
 - Keep packaging and deployment commits after the application behavior they package.
 - During a history rewrite, validate the repository at each meaningful snapshot and remove temporary branches, handoff files, and TODO files when finished.
+- Do not infer a repository-wide prohibition from a branch-protection or pre-commit hook failure. Inspect the actual rule, report it precisely, and continue the requested branch-and-pull-request workflow when that workflow remains valid.
 - For stacked pull requests, do not repeatedly rebase and push downstream branches while an upstream pull request is still under review. Use the wait time to inspect and fix downstream feedback locally without pushing. After the upstream pull request is merged, rebase the remaining stack in dependency order, validate every layer, then push each rewritten branch once.
 - Do not push, force-push, or open a pull request without explicit user approval.
 
 ## Pull request review workflow
 
 - Run proportional local verification, then manually review the complete diff before creating or updating a pull request. Fix every known issue and repeat both steps until they are clean.
+- Treat coverage, Ruff check, and Ruff format as local pre-review gates. Run them before every review-triggering push and fix their failures locally; do not consume scarce reviewer runs on defects these checks can detect.
+- Follow the reviewer sequence explicitly selected for the current task. Do not request a superseded reviewer merely because an older default remains in prior instructions, and do not trigger duplicate reviews while one for the same head is pending.
+- When Qodo is selected, keep the pull request in draft and comment `/agentic_review`. Mark it ready only after Qodo has reviewed the exact current head and has no unadjudicated findings. If the ready transition triggers CodeRabbit, do not request CodeRabbit separately.
+- When CodeRabbit is selected, wait for its complete review and inline threads unless it explicitly reports a rate limit. A rate-limit response counts as the end of that review attempt when the task's workflow says so; silence, a pending check, or a summary without inline-thread inspection does not.
 - Treat a successful reviewer check as evidence that a bot finished, not evidence that its findings are clean. Before declaring a pull request review-complete, ready to merge, or merged safely:
   - record the current `headRefOid` and confirm every requested review was generated for that exact commit;
   - query GitHub review threads with thread-aware GraphQL data and inspect `isResolved` and `isOutdated`; flat comments and aggregate badges are insufficient;
   - read the latest-head section of edited or cumulative bot summaries instead of relying on their top-level bug count, crossed-out history, or an earlier review result;
   - fix every valid finding and request a new review for the new head, or record a concrete technical rationale for rejecting the finding and close the thread before merging.
 - Do not merge with an unresolved actionable review thread or an unadjudicated latest-head finding, including an item labelled optional or informational. When a finding is intentionally rejected, make the capability or behavior contract explicit in code or the owning architecture documentation when ambiguity caused the finding.
-- Open the pull request as a draft and request a GitHub Copilot review. Address valid feedback, then repeat local verification, manual review, and Copilot review until no known issue remains.
-- Only after that loop is clean, mark the pull request ready for review. Treat the automatic CodeRabbit run triggered by the ready pull request as the code-review stage; do not start a duplicate CodeRabbit CLI review or manually request another CodeRabbit run.
-- After each ready-state update, wait for both CodeRabbit and GitHub Copilot to finish and make all feedback available before fixing or pushing anything. Evaluate their findings together, fix every valid issue in one batch, revalidate, push once, and repeat the two-reviewer wait. Run the `autofix` skill only after both reviews have completed.
+- Do not merge merely because the latest summary says there are no actionable comments. Perform one final latest-head GraphQL audit immediately before merging, and explicitly account for every remaining bug-classified comment, including comments left on an earlier head.
+- Batch all valid feedback available for a head, fix it locally, rerun the complete local gates, and push once. While that review is running, inspect downstream pull requests and prepare their fixes locally, but do not push or rebase those branches until their upstream dependency is merged and the stack can be advanced once in order.
 
 ## Verification strategy
 
