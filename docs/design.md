@@ -104,7 +104,7 @@ RSS 来源可以按地点 ID 限定范围，并配置正文清洗规则。`verba
 
 和风天气使用 `QWeatherJWTAuthenticator` 签发短期 JWT。认证输入包括项目 ID、凭据 ID、专属 API Host 和 Base64 编码的 Ed25519 私钥。实现不支持用长期 API Key 代替该流程。
 
-`OpenMeteoProvider` 提供全球天气，并从独立接口读取空气质量和欧洲花粉数据。公开接口适用于非商业使用，没有 SLA；Base URL 和可选 API Key 可以替换。
+`OpenMeteoProvider` 提供全球天气，并从独立接口读取空气质量和欧洲花粉数据。适配器在生成来源正文前把 WMO 天气代码转换为可读的中文天气现象；未知代码保留为“未识别天气现象”并写入安全日志。公开接口适用于非商业使用，没有 SLA；Base URL 和可选 API Key 可以替换。
 
 `AQICNProvider` 只在最终天气结果缺少空气质量时补充当前观测。它不参与未来日期查询，也不把 PM2.5 单项 AQI 换算为浓度。
 

@@ -9,6 +9,7 @@ from weather_briefing.reference_data import (
     ReferenceDataError,
     load_reference_data,
     localization_table,
+    open_meteo_weather_code_descriptions,
     reference_string,
     reference_string_tuple,
     reference_value,
@@ -46,11 +47,63 @@ def test_packaged_reference_data_is_available() -> None:
     assert reference_string_tuple("content_cleaning.json", "default_remove_selectors")
     assert reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")
     assert reference_string("provider_defaults.json", "qweather_allergen_index_type") == "7"
+    weather_codes = open_meteo_weather_code_descriptions()
+    assert set(weather_codes) == {
+        0,
+        1,
+        2,
+        3,
+        45,
+        48,
+        51,
+        53,
+        55,
+        56,
+        57,
+        61,
+        63,
+        65,
+        66,
+        67,
+        71,
+        73,
+        75,
+        77,
+        80,
+        81,
+        82,
+        85,
+        86,
+        95,
+        96,
+        99,
+    }
+    assert weather_codes[53] == "中等强度毛毛雨"
     assert localization_table("weather_document")["ja"]["forecast"] == "天気予報"
     assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
     classification = telegram_error_classification()
     assert ("chat not found", "chat-not-found") in classification.description_markers
     assert classification.status_reasons[401] == "bot-token-rejected"
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        {},
+        {"descriptions_zh_CN": {}},
+        {"descriptions_zh_CN": {"unknown": "晴朗"}},
+        {"descriptions_zh_CN": {"00": "晴朗"}},
+        {"descriptions_zh_CN": {"9" * 5_000: "未知"}},
+        {"descriptions_zh_CN": {"0": ""}},
+        {"descriptions_zh_CN": {"0": "晴朗"}, "unknown": {}},
+    ),
+)
+def test_open_meteo_weather_codes_reject_invalid_data(monkeypatch, value) -> None:
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    open_meteo_weather_code_descriptions.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match="Open-Meteo weather codes"):
+        open_meteo_weather_code_descriptions()
 
 
 def test_air_quality_guidance_covers_values_above_last_bounded_band() -> None:

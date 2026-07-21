@@ -27,6 +27,7 @@ from weather_briefing.weather_context import (
     _format_qweather_day,
     _format_qweather_lifestyle,
     _open_meteo_daily_peak_values,
+    _open_meteo_weather_description,
     snapshot_to_documents,
 )
 
@@ -532,13 +533,34 @@ async def test_open_meteo_provider_returns_global_weather_and_air_quality() -> N
         ).fetch(52.52, 13.41)
 
     assert len(snapshot.weather_forecast) == 2
-    assert "WMO天气代码2" in snapshot.weather_forecast[0]
+    assert "局部多云" in snapshot.weather_forecast[0]
+    assert "WMO" not in snapshot.weather_forecast[0]
     assert snapshot.observed_at.to_iso8601_string() == "2026-07-13T08:00:00+02:00"
     assert snapshot.observed_at.timezone_name == "Europe/Berlin"
     assert snapshot.air_quality is not None
     assert snapshot.air_quality.source_name == "Open-Meteo"
     assert snapshot.air_quality.aqi_standard == "U.S. AQI"
     assert snapshot.air_quality.pm25_concentration == 9.5
+
+
+def test_open_meteo_weather_code_uses_readable_description() -> None:
+    assert _open_meteo_weather_description(53) == "中等强度毛毛雨"
+
+
+def test_open_meteo_unknown_weather_code_uses_readable_fallback(caplog) -> None:
+    with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+        description = _open_meteo_weather_description(100)
+
+    assert description == "未识别天气现象"
+    assert "Unknown Open-Meteo weather code code=100" in caplog.text
+
+
+def test_open_meteo_invalid_weather_code_uses_readable_fallback(caplog) -> None:
+    with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+        description = _open_meteo_weather_description("53")
+
+    assert description == "未识别天气现象"
+    assert "Invalid Open-Meteo weather code value_type=str" in caplog.text
 
 
 async def test_open_meteo_provider_requests_only_selected_future_date() -> None:

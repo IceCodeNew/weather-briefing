@@ -28,7 +28,13 @@ from .models import (
     SourceDocument,
     WeatherContextSnapshot,
 )
-from .reference_data import ReferenceDataError, localization_table, reference_string, reference_string_tuple
+from .reference_data import (
+    ReferenceDataError,
+    localization_table,
+    open_meteo_weather_code_descriptions,
+    reference_string,
+    reference_string_tuple,
+)
 from .time_utils import (
     datetime_timezone_specifier,
     parse_datetime_with_default_timezone,
@@ -1020,7 +1026,7 @@ def _float_value(value: object) -> float:
 def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:
     return (
         f"{_open_meteo_daily_value(daily, 'time', index)}："
-        f"WMO天气代码{_open_meteo_daily_value(daily, 'weather_code', index)}，"
+        f"{_open_meteo_weather_description(_open_meteo_daily_value(daily, 'weather_code', index))}，"
         f"{_open_meteo_daily_value(daily, 'temperature_2m_min', index)}~"
         f"{_open_meteo_daily_value(daily, 'temperature_2m_max', index)}℃，"
         f"体感{_open_meteo_daily_value(daily, 'apparent_temperature_min', index)}~"
@@ -1032,3 +1038,14 @@ def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:
         f"主导风向{_open_meteo_daily_value(daily, 'wind_direction_10m_dominant', index)}°，"
         f"最高紫外线指数{_open_meteo_daily_value(daily, 'uv_index_max', index)}"
     )
+
+
+def _open_meteo_weather_description(value: object) -> str:
+    descriptions = open_meteo_weather_code_descriptions()
+    if type(value) is int and value in descriptions:
+        return descriptions[value]
+    if type(value) is int:
+        _LOGGER.warning("Unknown Open-Meteo weather code code=%d", value)
+    else:
+        _LOGGER.warning("Invalid Open-Meteo weather code value_type=%s", type(value).__name__)
+    return "未识别天气现象"
