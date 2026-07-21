@@ -14,17 +14,28 @@ import httpx
 
 _LOGGER = logging.getLogger("weather_briefing.api_client")
 _API_CALL_EXTENSION = "weather_briefing.api_call"
+_RESPONSE_ERROR_HANDLED_EXTENSION = "weather_briefing.response_error_handled"
 _SAFE_LABEL = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _CURRENT_API_CALL: ContextVar[tuple[str, str] | None] = ContextVar("current_api_call", default=None)
 
 
-def api_call_extensions(provider: str, operation: str) -> dict[str, object]:
+def api_call_extensions(
+    provider: str,
+    operation: str,
+    *,
+    response_error_handled: bool = False,
+) -> dict[str, object]:
     """Attach non-sensitive API identity to an HTTPX request."""
+    if not isinstance(response_error_handled, bool):
+        raise TypeError("response_error_handled must be a bool")
     if _SAFE_LABEL.fullmatch(provider) is None:
         raise ValueError("API provider must be a lowercase kebab-case label")
     if _SAFE_LABEL.fullmatch(operation) is None:
         raise ValueError("API operation must be a lowercase kebab-case label")
-    return {_API_CALL_EXTENSION: (provider, operation)}
+    extensions: dict[str, object] = {_API_CALL_EXTENSION: (provider, operation)}
+    if response_error_handled:
+        extensions[_RESPONSE_ERROR_HANDLED_EXTENSION] = True
+    return extensions
 
 
 @contextmanager
@@ -66,9 +77,18 @@ class LoggedAsyncClient(httpx.AsyncClient):
             )
             raise
 
-        if response.is_error:
+        if response.is_error and request.extensions.get(_RESPONSE_ERROR_HANDLED_EXTENSION) is not True:
             _LOGGER.warning(
                 "API call failed provider=%s operation=%s method=%s duration_ms=%d status_code=%d",
+                provider,
+                operation,
+                method,
+                _elapsed_milliseconds(started_at),
+                response.status_code,
+            )
+        elif response.is_error:
+            _LOGGER.info(
+                "API call returned handled error provider=%s operation=%s method=%s duration_ms=%d status_code=%d",
                 provider,
                 operation,
                 method,

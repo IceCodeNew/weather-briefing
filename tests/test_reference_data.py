@@ -38,6 +38,15 @@ def _localization_language(tables: dict[str, object], table_name: str, language:
     return labels
 
 
+def _telegram_classification_data() -> dict[str, object]:
+    return {
+        "description_markers": {"chat not found": "chat-not-found"},
+        "parameter_reasons": {"migrate_to_chat_id": "chat-migrated"},
+        "status_reasons": {"401": "bot-token-rejected"},
+        "channel_unavailable_reasons": ["chat-not-found", "chat-migrated", "bot-token-rejected"],
+    }
+
+
 def test_packaged_reference_data_is_available() -> None:
     assert reference_value("geography.json", "mainland_china_service_bounds", "latitude")
     assert reference_string_tuple(
@@ -83,7 +92,9 @@ def test_packaged_reference_data_is_available() -> None:
     assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
     classification = telegram_error_classification()
     assert ("chat not found", "chat-not-found") in classification.description_markers
+    assert classification.parameter_reasons["migrate_to_chat_id"] == "chat-migrated"
     assert classification.status_reasons[401] == "bot-token-rejected"
+    assert "chat-not-found" in classification.channel_unavailable_reasons
 
 
 @pytest.mark.parametrize(
@@ -149,27 +160,48 @@ def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
 @pytest.mark.parametrize(
     ("value", "message"),
     (
-        ({"description_markers": {}, "status_reasons": {"400": "api-error"}}, "description markers"),
-        ({"description_markers": {"chat not found": "chat-not-found"}, "status_reasons": {}}, "statuses"),
+        ({}, "supported fields"),
+        (_telegram_classification_data() | {"description_markers": {}}, "description markers"),
+        (_telegram_classification_data() | {"status_reasons": {}}, "statuses"),
         (
-            {"description_markers": {"CHAT NOT FOUND": "chat-not-found"}, "status_reasons": {"400": "api-error"}},
+            _telegram_classification_data() | {"description_markers": {"CHAT NOT FOUND": "chat-not-found"}},
             "description markers",
         ),
         (
-            {"description_markers": {"chat not found": "unsafe\nreason"}, "status_reasons": {"400": "api-error"}},
+            _telegram_classification_data() | {"description_markers": {"chat not found": "unsafe\nreason"}},
             "description markers",
         ),
         (
-            {"description_markers": {"chat not found": "chat-not-found"}, "status_reasons": {"invalid": "api-error"}},
+            _telegram_classification_data() | {"parameter_reasons": {}},
+            "parameters",
+        ),
+        (
+            _telegram_classification_data() | {"parameter_reasons": {"migrate_to_chat_id": "unsafe\nreason"}},
+            "parameters",
+        ),
+        (
+            _telegram_classification_data() | {"status_reasons": {"invalid": "api-error"}},
             "statuses",
         ),
         (
-            {
-                "description_markers": {"chat not found": "chat-not-found"},
-                "status_reasons": {"400": "api-error"},
-                "unknown": {},
-            },
-            "supported fields",
+            _telegram_classification_data() | {"channel_unavailable_reasons": []},
+            "channel availability",
+        ),
+        (
+            _telegram_classification_data() | {"channel_unavailable_reasons": ["chat-not-found", "chat-not-found"]},
+            "channel availability",
+        ),
+        (
+            _telegram_classification_data() | {"channel_unavailable_reasons": ["unknown-reason"]},
+            "channel availability",
+        ),
+        (
+            _telegram_classification_data() | {"channel_unavailable_reasons": [7]},
+            "channel availability",
+        ),
+        (
+            _telegram_classification_data() | {"channel_unavailable_reasons": ["unsafe\nreason"]},
+            "channel availability",
         ),
     ),
 )

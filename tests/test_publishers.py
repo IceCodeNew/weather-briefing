@@ -12,6 +12,7 @@ from weather_briefing.publishers import (
     TelegramPublisher,
     _split_message,
 )
+from weather_briefing.reference_data import ReferenceDataError
 from weather_briefing.render import PlainTextRenderer
 
 
@@ -66,6 +67,29 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
     assert unrestricted.briefing_limit(5000) == 5000
     assert telegram_like.briefing_limit(5000) == 4096
     assert telegram_like.briefing_limit(3500) == 3500
+
+
+async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:
+    def fail_validation() -> None:
+        raise ReferenceDataError("invalid Telegram metadata")
+
+    monkeypatch.setattr("weather_briefing.publishers.telegram_error_classification", fail_validation)
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ReferenceDataError, match="invalid Telegram metadata"):
+            TelegramPublisher(client, "runtime-token", "runtime-chat")
+
+
+@pytest.mark.parametrize("reason", (None, 7, "private detail\nforged-log-line"))
+def test_delivery_error_rejects_unsafe_structured_reason(reason) -> None:
+    with pytest.raises(ValueError, match="lowercase kebab-case"):
+        DeliveryError("Delivery failed", reason=reason)
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "true"))
+def test_delivery_error_rejects_non_boolean_channel_availability(value) -> None:
+    with pytest.raises(TypeError, match="channel_unavailable must be a bool"):
+        DeliveryError("Delivery failed", reason="request-error", channel_unavailable=value)
 
 
 def test_split_message_prefers_line_boundary() -> None:
@@ -223,9 +247,11 @@ async def test_telegram_error_logs_safe_api_reason_without_private_response(capl
     assert "Telegram delivery prepared: visible_characters=4 payload_characters=4 chunks=1" in caplog.text
     assert "status_code=400 reason=chat-not-found" in caplog.text
     assert caught.value.__cause__ is None
+    assert caught.value.reason == "chat-not-found"
+    assert caught.value.channel_unavailable is True
 
 
-async def test_telegram_failure_emits_one_warning_with_classification_at_info(caplog) -> None:
+async def test_telegram_failure_emits_one_warning_with_classification(caplog) -> None:
     transport = httpx.MockTransport(lambda _: httpx.Response(400, json={"description": "chat not found"}))
 
     with caplog.at_level("INFO"):
@@ -236,35 +262,43 @@ async def test_telegram_failure_emits_one_warning_with_classification_at_info(ca
 
     warnings = [record for record in caplog.records if record.levelno == 30]
     assert len(warnings) == 1
-    assert warnings[0].name == "weather_briefing.api_client"
-    assert "status_code=400 reason=chat-not-found" in caplog.text
+    assert warnings[0].name == "weather_briefing.publishers"
+    assert warnings[0].getMessage().endswith("status_code=400 reason=chat-not-found")
 
 
 @pytest.mark.parametrize(
-    ("status_code", "payload", "expected_reason"),
+    ("status_code", "payload", "expected_reason", "expected_channel_unavailable"),
     (
-        (400, {"description": "Bad Request: can't parse entities at byte offset 12"}, "invalid-html"),
-        (400, {"description": "Bad Request: message is too long"}, "message-too-long"),
-        (400, {"description": "Bad Request: not enough rights to send text messages"}, "insufficient-rights"),
-        (400, {"parameters": {"migrate_to_chat_id": -100123}}, "chat-migrated"),
-        (401, {"description": "Unauthorized"}, "bot-token-rejected"),
-        (404, {"description": "Not Found"}, "bot-endpoint-not-found"),
-        (429, {"description": "Too Many Requests: retry later"}, "rate-limited"),
-        (400, {"description": 123}, "api-error"),
-        (500, {"description": "private provider detail"}, "api-error"),
+        (400, {"description": "Bad Request: can't parse entities at byte offset 12"}, "invalid-html", False),
+        (400, {"description": "Bad Request: message is too long"}, "message-too-long", False),
+        (
+            400,
+            {"description": "Bad Request: not enough rights to send text messages"},
+            "insufficient-rights",
+            True,
+        ),
+        (400, {"parameters": {"migrate_to_chat_id": -100123}}, "chat-migrated", True),
+        (401, {"description": "Unauthorized"}, "bot-token-rejected", True),
+        (404, {"description": "Not Found"}, "bot-endpoint-not-found", True),
+        (429, {"description": "Too Many Requests: retry later"}, "rate-limited", False),
+        (400, {"description": 123}, "api-error", False),
+        (500, {"description": "private provider detail"}, "api-error", False),
     ),
 )
 async def test_telegram_error_classification(
     status_code: int,
     payload: dict[str, object],
     expected_reason: str,
+    expected_channel_unavailable: bool,
 ) -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(status_code, json=payload))
     ) as client:
         publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-        with pytest.raises(DeliveryError, match=expected_reason):
+        with pytest.raises(DeliveryError, match=expected_reason) as caught:
             await publisher.publish(RenderedMessage("Body", 4))
+
+    assert caught.value.channel_unavailable is expected_channel_unavailable
 
 
 async def test_telegram_malformed_error_response_uses_status_classification() -> None:
@@ -294,8 +328,11 @@ async def test_telegram_request_error_logs_chunk_context_without_private_detail(
 async def test_telegram_rejects_oversized_single_message_before_delivery() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
         publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-        with pytest.raises(DeliveryError, match="exceeds"):
+        with pytest.raises(DeliveryError, match="exceeds") as caught:
             await publisher.publish(RenderedMessage("<b>short markup</b>", 4097), single_message=True)
+
+    assert caught.value.reason == "message-too-long"
+    assert caught.value.channel_unavailable is False
 
 
 async def test_stdout_publisher_outputs_message_body(capsys) -> None:

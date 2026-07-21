@@ -41,6 +41,30 @@ async def test_logged_client_records_http_failure_status(caplog) -> None:
     assert "status_code=503" in caplog.text
 
 
+async def test_logged_client_leaves_handled_response_error_warning_to_adapter(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
+
+    async with LoggedAsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(400))) as client:
+        response = await client.post(
+            "https://example.test/api",
+            extensions=api_call_extensions(
+                "telegram",
+                "send-message",
+                response_error_handled=True,
+            ),
+        )
+
+    assert response.status_code == 400
+    assert "API call returned handled error provider=telegram operation=send-message" in caplog.text
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "true"))
+def test_api_call_extensions_rejects_non_boolean_response_error_ownership(value) -> None:
+    with pytest.raises(TypeError, match="response_error_handled must be a bool"):
+        api_call_extensions("telegram", "send-message", response_error_handled=value)
+
+
 async def test_logged_client_records_exception_type_without_message(caplog) -> None:
     caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
 
