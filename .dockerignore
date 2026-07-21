@@ -2,5 +2,7 @@
 !README.md
 !pyproject.toml
 !uv.lock
+!docker/
+!docker/weather-briefing
 !weather_briefing/
 !weather_briefing/**

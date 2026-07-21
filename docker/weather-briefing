@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+set -e
+
+exec /home/nonroot/app/.venv/bin/weather-briefing "$@"
