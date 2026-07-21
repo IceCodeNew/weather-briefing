@@ -181,6 +181,52 @@ async def test_nominatim_normalizes_region_suffix_and_rejects_unrelated_match() 
     assert result.longitude == 116.380556
 
 
+async def test_nominatim_accepts_comma_qualified_location_with_intermediate_administrative_areas() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["q"] == "Example Plaza, Exampleland"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "lat": "1.0",
+                    "lon": "2.0",
+                    "display_name": "Example Plaza, Central District, Exampleland",
+                    "address": {"country_code": "ex"},
+                }
+            ],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1").geocode(
+            LocationSpec("example", "Example Plaza, Exampleland")
+        )
+
+    assert result.latitude == 1.0
+    assert result.country_code == "EX"
+
+
+async def test_nominatim_rejects_comma_qualified_location_without_its_country_constraint() -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json=[
+                    {
+                        "lat": "1.0",
+                        "lon": "2.0",
+                        "display_name": "Example Plaza, Central District, Differentland",
+                        "address": {"country_code": "dl"},
+                    }
+                ],
+            )
+        )
+    ) as client:
+        with pytest.raises(GeocodingError, match="returned no result"):
+            await NominatimGeocodingProvider(client, user_agent="weather-briefing-test/1").geocode(
+                LocationSpec("example", "Example Plaza, Exampleland")
+            )
+
+
 async def test_nominatim_reverse_geocoder_resolves_name_and_administrative_area() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/reverse"

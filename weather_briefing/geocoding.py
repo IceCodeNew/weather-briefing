@@ -494,16 +494,35 @@ def _nominatim_queries(name: str) -> tuple[str, ...]:
 
 
 def _nominatim_result_matches(name: str, result: dict[str, object]) -> bool:
-    display_name = str(result.get("display_name", "")).casefold()
-    specific_name = _specific_location_name(name)
-    return specific_name.casefold() in display_name
+    return _location_name_matches(name, str(result.get("display_name", "")))
 
 
 def _open_meteo_result_matches(name: str, result: dict[str, object]) -> bool:
     result_description = " ".join(
         str(result.get(field, "")) for field in ("name", "admin1", "admin2", "admin3", "admin4", "country")
-    ).casefold()
-    return _specific_location_name(name).casefold() in result_description
+    )
+    return _location_name_matches(name, result_description)
+
+
+def _location_name_matches(name: str, result_description: str) -> bool:
+    """Match location qualifiers in order while allowing intervening administrative areas."""
+    position = 0
+    normalized_description = result_description.casefold()
+    for component in _location_name_components(name):
+        start = normalized_description.find(component.casefold(), position)
+        if start < 0:
+            return False
+        position = start + len(component)
+    return True
+
+
+def _location_name_components(name: str) -> tuple[str, ...]:
+    """Return the specific place plus any comma-qualified geographic constraints."""
+    normalized = _normalized_location_name(name)
+    components = tuple(
+        _specific_location_name(component) for component in re.split(r"[,，]", normalized) if component.strip()
+    )
+    return components or (_specific_location_name(normalized),)
 
 
 def _specific_location_name(name: str) -> str:
