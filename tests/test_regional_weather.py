@@ -143,13 +143,13 @@ async def test_jma_provider_rejects_invalid_office_code(office_code: str | None)
 async def test_jma_provider_rejects_invalid_responses(payload: object, message: str) -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))) as client:
         with pytest.raises(RegionalWeatherProviderError, match=message):
-            await JMAJapanForecastProvider(client, office_code="130000").fetch(35.7, 139.7)
+            await JMAJapanForecastProvider(client, office_code="130000").fetch(1.0, 1.0)
 
 
 async def test_jma_provider_wraps_transport_errors() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
         with pytest.raises(RegionalWeatherProviderError, match="HTTP 500"):
-            await JMAJapanForecastProvider(client, office_code="130000").fetch(35.7, 139.7)
+            await JMAJapanForecastProvider(client, office_code="130000").fetch(1.0, 1.0)
 
 
 def test_jma_forecast_line_parser_skips_invalid_entries_and_defaults_area_name() -> None:
@@ -213,8 +213,8 @@ async def test_jma_provider_rejects_unavailable_target_date() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))) as client:
         with pytest.raises(RegionalWeatherProviderError, match="no usable entries for 2026-07-21"):
             await JMAJapanForecastProvider(client, office_code="130000").fetch_for_date(
-                35.7,
-                139.7,
+                1.0,
+                1.0,
                 pendulum.date(2026, 7, 21),
             )
 
@@ -243,7 +243,7 @@ async def test_jma_provider_normalizes_forecast_response() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        snapshot = await JMAJapanForecastProvider(client, office_code="130000").fetch(35.7, 139.7)
+        snapshot = await JMAJapanForecastProvider(client, office_code="130000").fetch(1.0, 1.0)
 
     assert snapshot.output_language == "ja"
     assert snapshot.observed_at == pendulum.datetime(2026, 7, 20, 5, tz="Asia/Tokyo")

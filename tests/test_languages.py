@@ -103,8 +103,8 @@ def test_location_and_briefing_models_normalize_language_fields() -> None:
     resolved_location = ResolvedLocation(
         "tokyo",
         "Tokyo",
-        35.7,
-        139.7,
+        1.0,
+        1.0,
         "JP",
         None,
         "Asia/Tokyo",
@@ -125,8 +125,8 @@ def test_location_and_briefing_models_reject_invalid_language_fields() -> None:
         ResolvedLocation(
             "tokyo",
             "Tokyo",
-            35.7,
-            139.7,
+            1.0,
+            1.0,
             "JP",
             None,
             "Asia/Tokyo",
