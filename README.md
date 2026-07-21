@@ -48,7 +48,7 @@ cp locations.example.json "${ROOT_DIR}/locations.json"
 ```sh
 sudo chown -R 65532:65532 "${ROOT_DIR}"
 chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
-WEATHER_BRIEFING_VERSION="2.1.0"
+WEATHER_BRIEFING_VERSION="2.1.1"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
 docker pull "${IMAGE}"
 docker run -d \
