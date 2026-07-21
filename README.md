@@ -69,24 +69,24 @@ docker run -d \
 
 ## 配置地点
 
-每个地点都要有稳定的 `id`，并提供以下任一种信息：
+每个地点都必须填写唯一的 `id`。`id` 用于区分地点，配置后不要随意修改。每个地点还要至少提供以下两项之一：
 
-- `name`；
-- 成对的 `latitude` 和 `longitude`；
-- 名称和坐标。
+- `name`，表示地点名称；
+- 成对的 `latitude` 和 `longitude`，表示经纬度坐标；
+- 地点名称和经纬度坐标。
 
-只填名称时，程序会查询并缓存坐标；只填坐标时，程序会反查地点名。名称和坐标都填写时，不会调用定位服务。
+只填地点名称时，程序会查询并缓存坐标；只填经纬度坐标时，程序会反查地点名称。两项都填写时，不会调用定位服务。
 
 `language` 控制该地点简报的语言，默认是英文 `en`。中国大陆示例显式填写 `zh-CN`，表示简体中文（中国）。日本地点如需 JMA 预报，还要填写当地六位 `jma_office_code`。
 
 程序会根据地点选择默认天气来源：
 
 - 中国大陆：和风天气优先，Open-Meteo 备用；
-- 新加坡：Open-Meteo，并补充 NEA 两小时预报；
-- 日本：Open-Meteo；配置 JMA office code 后补充 JMA 预报；
+- 新加坡：NEA 两小时预报在对应时段优先，Open-Meteo 补齐其他数据；
+- 日本：配置 JMA office code 后，JMA 预报在对应范围内优先，Open-Meteo 补齐其他数据；
 - 其他地区：Open-Meteo。
 
-也可以用 `WEATHER_PROVIDERS` 明确指定顺序。完整天气服务应排在只提供局部信息的服务之前。
+也可以用 `WEATHER_PROVIDERS` 明确指定顺序。完整天气服务应排在只提供局部信息的服务之前。这个顺序决定程序如何取得完整数据，不代表后面的当地官方资料可信度较低。
 
 ## 配置模型与投递
 
@@ -128,18 +128,6 @@ docker exec weather-briefing \
 ```
 
 完整正文日志可能包含位置和来源内容。排障后应立即关闭并妥善保护日志。
-
-## 本地运行
-
-项目支持 Python 3.11–3.14，并使用 uv 管理依赖：
-
-```sh
-uv lock --check
-uv sync --frozen
-cp env.example .env
-cp locations.example.json locations.json
-uv run --frozen weather-briefing run briefing
-```
 
 产品要解决的场景见 [`docs/requirements.md`](docs/requirements.md)。当前实现见 [`docs/design.md`](docs/design.md)。不易理解的技术取舍见 [`docs/notes.md`](docs/notes.md)。
 
