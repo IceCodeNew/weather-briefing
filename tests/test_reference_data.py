@@ -93,6 +93,7 @@ def test_packaged_reference_data_is_available() -> None:
         {"descriptions_zh_CN": {}},
         {"descriptions_zh_CN": {"unknown": "晴朗"}},
         {"descriptions_zh_CN": {"00": "晴朗"}},
+        {"descriptions_zh_CN": {"9" * 5_000: "未知"}},
         {"descriptions_zh_CN": {"0": ""}},
         {"descriptions_zh_CN": {"0": "晴朗"}, "unknown": {}},
     ),

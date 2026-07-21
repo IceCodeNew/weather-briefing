@@ -156,13 +156,15 @@ def open_meteo_weather_code_descriptions() -> Mapping[int, str]:
             not isinstance(code, str)
             or not code.isascii()
             or not code.isdigit()
-            or str(int(code)) != code
-            or not 0 <= int(code) <= 99
+            or len(code) > 2
             or not isinstance(description, str)
             or not description.strip()
         ):
             raise ReferenceDataError("Open-Meteo weather codes must map numeric codes to descriptions")
-        validated[int(code)] = description
+        numeric_code = int(code)
+        if str(numeric_code) != code:
+            raise ReferenceDataError("Open-Meteo weather codes must map numeric codes to descriptions")
+        validated[numeric_code] = description
     return MappingProxyType(validated)
 
 
