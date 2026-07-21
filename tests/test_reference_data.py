@@ -12,6 +12,7 @@ from weather_briefing.reference_data import (
     reference_string,
     reference_string_tuple,
     reference_value,
+    telegram_error_classification,
 )
 
 
@@ -47,6 +48,9 @@ def test_packaged_reference_data_is_available() -> None:
     assert reference_string("provider_defaults.json", "qweather_allergen_index_type") == "7"
     assert localization_table("weather_document")["ja"]["forecast"] == "天気予報"
     assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
+    classification = telegram_error_classification()
+    assert ("chat not found", "chat-not-found") in classification.description_markers
+    assert classification.status_reasons[401] == "bot-token-rejected"
 
 
 def test_air_quality_guidance_covers_values_above_last_bounded_band() -> None:
@@ -87,6 +91,41 @@ def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
 
     with pytest.raises(ReferenceDataError, match="non-empty string"):
         reference_string("provider_defaults.json", "qweather_allergen_index_type")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    (
+        ({"description_markers": {}, "status_reasons": {"400": "api-error"}}, "description markers"),
+        ({"description_markers": {"chat not found": "chat-not-found"}, "status_reasons": {}}, "statuses"),
+        (
+            {"description_markers": {"CHAT NOT FOUND": "chat-not-found"}, "status_reasons": {"400": "api-error"}},
+            "description markers",
+        ),
+        (
+            {"description_markers": {"chat not found": "unsafe\nreason"}, "status_reasons": {"400": "api-error"}},
+            "description markers",
+        ),
+        (
+            {"description_markers": {"chat not found": "chat-not-found"}, "status_reasons": {"invalid": "api-error"}},
+            "statuses",
+        ),
+        (
+            {
+                "description_markers": {"chat not found": "chat-not-found"},
+                "status_reasons": {"400": "api-error"},
+                "unknown": {},
+            },
+            "supported fields",
+        ),
+    ),
+)
+def test_telegram_error_classification_rejects_invalid_data(monkeypatch, value, message) -> None:
+    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    telegram_error_classification.cache_clear()
+
+    with pytest.raises(ReferenceDataError, match=message):
+        telegram_error_classification()
 
 
 def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:

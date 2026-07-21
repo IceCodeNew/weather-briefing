@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import cache
 from importlib import resources
 from pathlib import PurePath
@@ -63,6 +65,7 @@ _LOCALIZATION_FIELDS = {
     ),
 }
 _LOCALIZATION_LANGUAGES = frozenset({"zh-CN", "zh-TW", "en", "ja"})
+_CLASSIFICATION_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def _is_normalized_language(value: object) -> bool:
@@ -84,6 +87,14 @@ def _is_localization_labels(value: object, expected_fields: frozenset[str]) -> T
 
 class ReferenceDataError(RuntimeError):
     """Raised when packaged domain reference data is missing or malformed."""
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramErrorClassification:
+    """Validated Telegram API error-description and status mappings."""
+
+    description_markers: tuple[tuple[str, str], ...]
+    status_reasons: Mapping[int, str]
 
 
 @cache
@@ -129,6 +140,49 @@ def reference_string_tuple(filename: str, *path: str) -> tuple[str, ...]:
         joined_path = ".".join(path)
         raise ReferenceDataError(f"Reference data field must be a non-empty string list: {filename}:{joined_path}")
     return tuple(value)
+
+
+@cache
+def telegram_error_classification() -> TelegramErrorClassification:
+    """Return validated Telegram API error classification data."""
+    value = load_reference_data("telegram_error_classification.json")
+    markers = value.get("description_markers")
+    statuses = value.get("status_reasons")
+    if set(value) != {"description_markers", "status_reasons"}:
+        raise ReferenceDataError("Telegram error classification must contain the supported fields")
+    if not isinstance(markers, dict) or not markers:
+        raise ReferenceDataError("Telegram description markers must map normalized strings to reasons")
+    validated_markers: list[tuple[str, str]] = []
+    for marker, reason in markers.items():
+        if (
+            not isinstance(marker, str)
+            or not marker.strip()
+            or marker != marker.casefold()
+            or not isinstance(reason, str)
+            or _CLASSIFICATION_REASON.fullmatch(reason) is None
+        ):
+            raise ReferenceDataError("Telegram description markers must map normalized strings to reasons")
+        validated_markers.append((marker, reason))
+
+    if not isinstance(statuses, dict) or not statuses:
+        raise ReferenceDataError("Telegram statuses must map HTTP error codes to reasons")
+    validated_statuses: dict[int, str] = {}
+    for status, reason in statuses.items():
+        if (
+            not isinstance(status, str)
+            or not status.isascii()
+            or not status.isdigit()
+            or not 400 <= int(status) <= 599
+            or not isinstance(reason, str)
+            or _CLASSIFICATION_REASON.fullmatch(reason) is None
+        ):
+            raise ReferenceDataError("Telegram statuses must map HTTP error codes to reasons")
+        validated_statuses[int(status)] = reason
+
+    return TelegramErrorClassification(
+        description_markers=tuple(validated_markers),
+        status_reasons=MappingProxyType(validated_statuses),
+    )
 
 
 @cache
