@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from html import escape, unescape
 from typing import Protocol
 
@@ -16,62 +17,9 @@ from .models import (
     RenderedMessage,
     SourceDocument,
 )
+from .reference_data import localization_table
 
-_ZH_CN_BRIEFING_LABELS = {
-    "weather": "天气信息",
-    "warnings": "气象预警",
-    "disasters": "自然灾害动态",
-    "advice": "生活建议",
-    "attribution": "（来源：{sources}）",
-    "html_source_separator": "、",
-    "plain_source_separator": "；",
-    "status_open": "（",
-    "status_close": "）",
-    "detail_separator": "：",
-}
-_ZH_TW_BRIEFING_LABELS = {
-    "weather": "天氣資訊",
-    "warnings": "氣象警報",
-    "disasters": "自然災害動態",
-    "advice": "生活建議",
-    "attribution": "（來源：{sources}）",
-    "html_source_separator": "、",
-    "plain_source_separator": "；",
-    "status_open": "（",
-    "status_close": "）",
-    "detail_separator": "：",
-}
-_BRIEFING_LABELS = {
-    "zh": _ZH_CN_BRIEFING_LABELS,
-    "zh-CN": _ZH_CN_BRIEFING_LABELS,
-    "zh-Hans": _ZH_CN_BRIEFING_LABELS,
-    "zh-TW": _ZH_TW_BRIEFING_LABELS,
-    "zh-Hant": _ZH_TW_BRIEFING_LABELS,
-    "en": {
-        "weather": "Weather information",
-        "warnings": "Weather warnings",
-        "disasters": "Natural disaster updates",
-        "advice": "Advice",
-        "attribution": "(Sources: {sources})",
-        "html_source_separator": ", ",
-        "plain_source_separator": "; ",
-        "status_open": " (",
-        "status_close": ")",
-        "detail_separator": ": ",
-    },
-    "ja": {
-        "weather": "気象情報",
-        "warnings": "気象警報",
-        "disasters": "自然災害情報",
-        "advice": "生活上の注意",
-        "attribution": "（出典：{sources}）",
-        "html_source_separator": "、",
-        "plain_source_separator": "；",
-        "status_open": "（",
-        "status_close": "）",
-        "detail_separator": "：",
-    },
-}
+_BRIEFING_LABELS = localization_table("briefing")
 _BRIEFING_LANGUAGE_SUPPORT = LanguageSupport(
     default="en",
     supported=tuple(_BRIEFING_LABELS),
@@ -211,7 +159,7 @@ def _html_items(
     title: str,
     items: tuple[Conclusion | Advice, ...],
     source_links: dict[str, str],
-    labels: dict[str, str],
+    labels: Mapping[str, str],
 ) -> list[str]:
     if not items:
         return []
@@ -227,7 +175,7 @@ def _plain_items(
     title: str,
     items: tuple[Conclusion | Advice, ...],
     source_references: dict[str, str],
-    labels: dict[str, str],
+    labels: Mapping[str, str],
 ) -> list[str]:
     if not items:
         return []
@@ -240,7 +188,7 @@ def _plain_items(
 def _html_attribution(
     source_ids: tuple[str, ...],
     source_links: dict[str, str],
-    labels: dict[str, str],
+    labels: Mapping[str, str],
 ) -> str:
     sources = labels["html_source_separator"].join(dict.fromkeys(source_links[source_id] for source_id in source_ids))
     return labels["attribution"].format(sources=sources)
@@ -249,7 +197,7 @@ def _html_attribution(
 def _plain_attribution(
     source_ids: tuple[str, ...],
     source_references: dict[str, str],
-    labels: dict[str, str],
+    labels: Mapping[str, str],
 ) -> str:
     sources = labels["plain_source_separator"].join(
         dict.fromkeys(source_references[source_id] for source_id in source_ids)
@@ -257,7 +205,7 @@ def _plain_attribution(
     return labels["attribution"].format(sources=sources)
 
 
-def _briefing_labels(language: str) -> dict[str, str]:
+def _briefing_labels(language: str) -> Mapping[str, str]:
     selected = _BRIEFING_LANGUAGE_SUPPORT.match(language)
     return _BRIEFING_LABELS[selected]
 

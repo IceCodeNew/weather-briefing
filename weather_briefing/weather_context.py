@@ -28,7 +28,7 @@ from .models import (
     SourceDocument,
     WeatherContextSnapshot,
 )
-from .reference_data import ReferenceDataError, reference_string, reference_string_tuple
+from .reference_data import ReferenceDataError, localization_table, reference_string, reference_string_tuple
 from .time_utils import (
     datetime_timezone_specifier,
     parse_datetime_with_default_timezone,
@@ -42,87 +42,8 @@ QWEATHER_LANGUAGE_SUPPORT = LanguageSupport(
 )
 OPEN_METEO_LANGUAGE_SUPPORT = LanguageSupport.fixed("zh-CN")
 
-_WEATHER_DOCUMENT_LABELS = {
-    "zh-CN": {
-        "separator": "：",
-        "section_separator": "：",
-        "unavailable": "不可用",
-        "updated_at": "更新时间",
-        "forecast": "天气预报",
-        "lifestyle": "生活与出行指数",
-        "summary": "天气概览",
-        "lifestyle_count": "生活与出行指数项数",
-    },
-    "zh-TW": {
-        "separator": "：",
-        "section_separator": "：",
-        "unavailable": "無法取得",
-        "updated_at": "更新時間",
-        "forecast": "天氣預報",
-        "lifestyle": "生活與出行指數",
-        "summary": "天氣概覽",
-        "lifestyle_count": "生活與出行指數項數",
-    },
-    "en": {
-        "separator": ": ",
-        "section_separator": ":",
-        "unavailable": "Unavailable",
-        "updated_at": "Updated at",
-        "forecast": "Weather forecast",
-        "lifestyle": "Lifestyle and travel indices",
-        "summary": "Weather summary",
-        "lifestyle_count": "Lifestyle and travel index count",
-    },
-    "ja": {
-        "separator": "：",
-        "section_separator": "：",
-        "unavailable": "利用不可",
-        "updated_at": "更新時刻",
-        "forecast": "天気予報",
-        "lifestyle": "生活・外出指数",
-        "summary": "天気概要",
-        "lifestyle_count": "生活・外出指数の件数",
-    },
-}
-
-_QWEATHER_FORMATS = {
-    "zh-CN": {
-        "day": (
-            "{date}：{day}转{night}，{minimum}~{maximum}℃，{wind}{scale}级，"
-            "相对湿度{humidity}%，预计降水量{precipitation}毫米"
-        ),
-        "lifestyle": "{name}（{category}）：{text}",
-        "unknown": "未知",
-        "no_details": "无详细建议",
-    },
-    "zh-TW": {
-        "day": (
-            "{date}：{day}轉{night}，{minimum}~{maximum}℃，{wind}{scale}級，"
-            "相對濕度{humidity}%，預計降水量{precipitation}毫米"
-        ),
-        "lifestyle": "{name}（{category}）：{text}",
-        "unknown": "未知",
-        "no_details": "無詳細建議",
-    },
-    "en": {
-        "day": (
-            "{date}: {day} to {night}; {minimum}-{maximum} °C; {wind}, force {scale}; "
-            "relative humidity {humidity}%; forecast precipitation {precipitation} mm"
-        ),
-        "lifestyle": "{name} ({category}): {text}",
-        "unknown": "Unknown",
-        "no_details": "No detailed advice",
-    },
-    "ja": {
-        "day": (
-            "{date}：{day}から{night}、{minimum}～{maximum}℃、{wind}{scale}級、"
-            "相対湿度{humidity}%、予想降水量{precipitation}mm"
-        ),
-        "lifestyle": "{name}（{category}）：{text}",
-        "unknown": "不明",
-        "no_details": "詳しいアドバイスはありません",
-    },
-}
+_WEATHER_DOCUMENT_LABELS = localization_table("weather_document")
+_QWEATHER_FORMATS = localization_table("qweather")
 
 
 class WeatherContextError(RuntimeError):

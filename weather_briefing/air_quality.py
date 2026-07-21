@@ -11,71 +11,10 @@ import pendulum
 from .api_client import api_call_extensions
 from .languages import localized_labels
 from .models import AirQualitySnapshot, AirQualityTimeKind, SourceDocument
-from .reference_data import ReferenceDataError, reference_value
+from .reference_data import ReferenceDataError, localization_table, reference_value
 from .time_utils import parse_datetime_with_default_timezone
 
-_AIR_QUALITY_FORMATS = {
-    "zh-CN": {
-        "separator": "：",
-        "unavailable": "不可用",
-        "forecast_time": "预报时段",
-        "observation_time": "观测时间",
-        "observation": "观测",
-        "forecast": "预报",
-        "time_kind": "时间类型：{kind}",
-        "aqi": "AQI：{aqi}（标准：{standard}；类别：{category}）",
-        "aqi_summary": "AQI：{aqi}（{category}）",
-        "pm25_aqi": "PM2.5 单项 AQI：{value}（标准：{standard}）",
-        "pm25_summary": "PM2.5 单项 AQI：{value}；浓度：{concentration}",
-        "pm25": "PM2.5 {concentration}",
-        "health": "健康提示：{guidance}",
-    },
-    "zh-TW": {
-        "separator": "：",
-        "unavailable": "無法取得",
-        "forecast_time": "預報時段",
-        "observation_time": "觀測時間",
-        "observation": "觀測",
-        "forecast": "預報",
-        "time_kind": "時間類型：{kind}",
-        "aqi": "AQI：{aqi}（標準：{standard}；類別：{category}）",
-        "aqi_summary": "AQI：{aqi}（{category}）",
-        "pm25_aqi": "PM2.5 單項 AQI：{value}（標準：{standard}）",
-        "pm25_summary": "PM2.5 單項 AQI：{value}；濃度：{concentration}",
-        "pm25": "PM2.5 {concentration}",
-        "health": "健康提示：{guidance}",
-    },
-    "en": {
-        "separator": ": ",
-        "unavailable": "Unavailable",
-        "forecast_time": "Forecast period",
-        "observation_time": "Observed at",
-        "observation": "Observation",
-        "forecast": "Forecast",
-        "time_kind": "Time type: {kind}",
-        "aqi": "AQI: {aqi} (Standard: {standard}; Category: {category})",
-        "aqi_summary": "AQI: {aqi} ({category})",
-        "pm25_aqi": "PM2.5 sub-index AQI: {value} (Standard: {standard})",
-        "pm25_summary": "PM2.5 sub-index AQI: {value}; concentration: {concentration}",
-        "pm25": "PM2.5 concentration: {concentration}",
-        "health": "Health guidance: {guidance}",
-    },
-    "ja": {
-        "separator": "：",
-        "unavailable": "利用不可",
-        "forecast_time": "予報期間",
-        "observation_time": "観測時刻",
-        "observation": "観測",
-        "forecast": "予報",
-        "time_kind": "時刻種別：{kind}",
-        "aqi": "AQI：{aqi}（基準：{standard}、区分：{category}）",
-        "aqi_summary": "AQI：{aqi}（{category}）",
-        "pm25_aqi": "PM2.5 個別 AQI：{value}（基準：{standard}）",
-        "pm25_summary": "PM2.5 個別 AQI：{value}、濃度：{concentration}",
-        "pm25": "PM2.5 濃度：{concentration}",
-        "health": "健康上の注意：{guidance}",
-    },
-}
+_AIR_QUALITY_FORMATS = localization_table("air_quality")
 
 
 class AirQualityError(RuntimeError):
