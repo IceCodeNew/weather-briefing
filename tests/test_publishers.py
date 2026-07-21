@@ -231,7 +231,7 @@ async def test_telegram_failure_emits_one_warning_with_classification_at_info(ca
     with caplog.at_level("INFO"):
         async with LoggedAsyncClient(transport=transport) as client:
             publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-            with pytest.raises(DeliveryError, match="chat-not-found"):
+            with pytest.raises(DeliveryError, match="chat-not-found"):  # pragma: no branch
                 await publisher.publish(RenderedMessage("Body", 4))
 
     warnings = [record for record in caplog.records if record.levelno == 30]
