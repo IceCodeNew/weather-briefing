@@ -121,8 +121,11 @@ cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
 ```sh
 # 查看未来某天的预报
 docker exec weather-briefing \
-  weather-briefing run forecast --date 2026-07-23 --run-now
-docker exec weather-briefing weather-briefing run briefing --run-now
+  /home/nonroot/app/.venv/bin/weather-briefing \
+  run forecast --date 2026-07-23 --run-now
+docker exec weather-briefing \
+  /home/nonroot/app/.venv/bin/weather-briefing \
+  run briefing --run-now
 ```
 
 应用把运行日志写到标准错误。普通日志不记录凭据、坐标、正文或私密 URL。
@@ -133,9 +136,11 @@ docker exec weather-briefing weather-briefing run briefing --run-now
 
 ```sh
 docker exec weather-briefing \
-  weather-briefing diagnostics rendered-text enable --for 15m
+  /home/nonroot/app/.venv/bin/weather-briefing \
+  diagnostics rendered-text enable --for 15m
 docker exec weather-briefing \
-  weather-briefing diagnostics rendered-text disable
+  /home/nonroot/app/.venv/bin/weather-briefing \
+  diagnostics rendered-text disable
 ```
 
 完整正文日志可能包含位置和来源内容。排障后应立即关闭并妥善保护日志。

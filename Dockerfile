@@ -30,11 +30,10 @@ RUN uv --no-progress sync --frozen --no-dev --group docker --no-editable
 FROM py-runtime AS final
 COPY --link --from=build --chown=65532:65532 \
     /home/nonroot/app/.venv/ /home/nonroot/app/.venv/
-COPY --link --chmod=755 docker/weather-briefing /usr/local/bin/weather-briefing
 WORKDIR /home/nonroot/app/
 ENV PATH="/home/nonroot/app/.venv/bin:${PATH}" \
     TZ=Asia/Shanghai
 
 VOLUME ["/home/nonroot/app/state"]
-ENTRYPOINT ["catatonit", "-g", "--", "/usr/local/bin/weather-briefing"]
+ENTRYPOINT ["catatonit", "-g", "--", "/home/nonroot/app/.venv/bin/weather-briefing"]
 CMD ["daemon"]
