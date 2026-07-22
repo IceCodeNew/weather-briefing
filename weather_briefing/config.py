@@ -343,8 +343,10 @@ def backfill_location_fields(
             locations_file.truncate()
             locations_file.flush()
             os.fsync(locations_file.fileno())
-    except OSError as exc:
+    except PermissionError as exc:
         raise ConfigurationError(f"{path} must be writable to save resolved location fields") from exc
+    except OSError as exc:
+        raise ConfigurationError(f"Failed to save resolved location fields to {path}: {exc}") from exc
     return True
 
 

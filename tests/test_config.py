@@ -644,6 +644,24 @@ def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: 
         backfill_location_fields(location_file, configured, resolved)
 
 
+def test_backfill_location_fields_reports_non_permission_io_errors(monkeypatch, tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
+
+    def fail_fsync(_fd: int) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "fsync", fail_fsync)
+
+    with pytest.raises(
+        ConfigurationError,
+        match=rf"Failed to save resolved location fields to {location_file}: disk full",
+    ):
+        backfill_location_fields(location_file, configured, resolved)
+
+
 @pytest.mark.parametrize("field", ("id", "name"))
 @pytest.mark.parametrize("value", (1, ["value"], {"value": "nested"}))
 def test_location_string_fields_reject_non_strings(
