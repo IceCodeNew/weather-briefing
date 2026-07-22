@@ -26,11 +26,10 @@
 
 ## 配置入口
 
-运行配置来自环境变量和三个私密 JSON 文件：
+运行配置来自环境变量和两个私密 JSON 文件：
 
 - `BRIEFING_LOCATIONS_FILE` 指向地点文件，默认是 `locations.json`；
-- `RSS_SOURCES_FILE` 指向可选 RSS 文件，默认是 `rss-sources.json`；
-- `CONTEXT_SOURCES_JSON` 直接配置可选 HTTP 上下文来源。
+- `RSS_SOURCES_FILE` 指向可选 RSS 文件，默认是 `rss-sources.json`。
 
 配置在进入业务流程前完成类型、范围和必填校验。应用拥有的固定选项会拒绝未知值。第三方模型名称和厂商参数交给对应 SDK 校验。
 

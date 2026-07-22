@@ -37,20 +37,6 @@ class FeedConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextSourceConfig:
-    """Describe an auxiliary HTTP context source."""
-
-    id: str
-    name: str
-    url: str
-    language: str = "und"
-
-    def __post_init__(self) -> None:
-        """Normalize the declared or undefined source language."""
-        object.__setattr__(self, "language", normalize_language_tag(self.language))
-
-
-@dataclass(frozen=True, slots=True)
 class LocationSpec:
     """Represent the user-provided identity or coordinates of a location."""
 

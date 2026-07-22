@@ -48,7 +48,7 @@ from .regional_weather import (
 from .registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 from .render import PlainTextRenderer, TelegramHTMLRenderer
 from .service import BriefingService
-from .sources import HTTPContextSource, RSSSource
+from .sources import RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from .time_utils import parse_aware_datetime
 from .weather_context import (
@@ -288,17 +288,12 @@ async def run(
         delivery = _delivery_provider(settings, client, diagnostics)
         llm_provider = _llm_provider(settings, diagnostics)
         stack.push_async_callback(llm_provider.aclose)
-        nominatim_provider = NominatimGeocodingProvider(
-            client,
-            base_url=settings.nominatim_base_url,
-            user_agent=settings.geocoding_user_agent,
-        )
+        nominatim_provider = NominatimGeocodingProvider(client)
         resolver = CachedLocationResolver(
             PrecisionReducingGeocodingProvider(
                 FallbackGeocodingProvider(
                     OpenMeteoGeocodingProvider(
                         client,
-                        base_url=settings.geocoding_base_url,
                         api_key=settings.geocoding_api_key,
                     ),
                     nominatim_provider,
@@ -339,7 +334,6 @@ async def run(
                         retry_min_seconds=settings.rss_retry_min_seconds,
                         retry_max_seconds=settings.rss_retry_max_seconds,
                     ),
-                    HTTPContextSource(client),
                     llm_provider,
                     delivery,
                     delivery,
@@ -613,7 +607,6 @@ def _build_weather_provider(
     if name == WeatherProviderName.NEA_SINGAPORE:
         return NEASingaporeNowcastProvider(
             client,
-            base_url=settings.nea_base_url,
             api_key=settings.nea_api_key,
         )
     if name == WeatherProviderName.JMA_JAPAN:
@@ -642,13 +635,12 @@ def _build_qweather(
             lifetime_seconds=settings.qweather_jwt_lifetime_seconds,
         ),
         base_url=base_url,
-        index_types=settings.qweather_index_types,
         output_language=output_language,
     )
 
 
 def _build_nea(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
-    return NEASingaporeNowcastProvider(client, base_url=settings.nea_base_url, api_key=settings.nea_api_key)
+    return NEASingaporeNowcastProvider(client, api_key=settings.nea_api_key)
 
 
 def _build_jma(
@@ -661,7 +653,6 @@ def _build_jma(
         raise ValueError("JMA provider requires locations.json jma_office_code")
     return JMAJapanForecastProvider(
         client,
-        base_url=settings.jma_base_url,
         office_code=office_code,
     )
 
@@ -669,8 +660,6 @@ def _build_jma(
 def _build_open_meteo(settings: Settings, client: httpx.AsyncClient) -> WeatherContextProvider:
     return OpenMeteoProvider(
         client,
-        weather_base_url=settings.open_meteo_weather_base_url,
-        air_quality_base_url=settings.open_meteo_air_quality_base_url,
         api_key=settings.open_meteo_api_key,
     )
 
@@ -681,7 +670,6 @@ def _aqicn_provider(settings: Settings, client: httpx.AsyncClient) -> AirQuality
     return AQICNProvider(
         client,
         token=settings.aqicn_api_token,
-        base_url=settings.aqicn_base_url,
     )
 
 

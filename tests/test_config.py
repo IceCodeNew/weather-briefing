@@ -3,11 +3,9 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from dotenv import dotenv_values
 
 from weather_briefing.config import ConfigurationError, Settings, weather_providers_for
 from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
-from weather_briefing.reference_data import reference_string_tuple
 
 
 def _required_environment(monkeypatch) -> None:
@@ -49,7 +47,6 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert settings.llm_provider == "deepseek"
     assert settings.llm_base_url is None
     assert settings.llm_max_attempts == 3
-    assert settings.qweather_index_types == ("1", "3", "6", "7", "8", "15")
     assert settings.qweather_jwt_lifetime_seconds == 900
     assert settings.llm_history_max_documents == 8
     assert settings.llm_history_max_characters == 16_000
@@ -82,16 +79,6 @@ def test_llm_history_character_limit_rejects_unsafe_values(monkeypatch, value: s
 
     with pytest.raises(ConfigurationError, match="LLM_HISTORY_MAX_CHARACTERS"):
         Settings.from_env()
-
-
-def test_environment_example_preserves_default_qweather_indices() -> None:
-    configured = dotenv_values(Path(__file__).parents[1] / "env.example")["QWEATHER_INDEX_TYPES"]
-
-    assert configured is not None
-    assert tuple(item.strip() for item in configured.split(",")) == reference_string_tuple(
-        "provider_defaults.json",
-        "qweather_lifestyle_index_types",
-    )
 
 
 def test_weather_provider_order_can_be_configured(monkeypatch) -> None:
@@ -598,12 +585,10 @@ def test_env_api_key_with_quotes_is_cleaned(monkeypatch) -> None:
 def test_env_url_with_quotes_is_cleaned(monkeypatch) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("GEOCODING_API_KEY", "'geocoding-key'")
-    monkeypatch.setenv("GEOCODING_BASE_URL", "'https://geocoding.example.invalid/'")
 
     settings = Settings.from_env()
 
     assert settings.geocoding_api_key == "geocoding-key"
-    assert settings.geocoding_base_url == "https://geocoding.example.invalid"
 
 
 def test_env_numeric_with_quotes_is_parsed(monkeypatch) -> None:
@@ -901,80 +886,6 @@ class TestConfigErrorPaths:
         monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "rss-sources.json"))
 
         with pytest.raises(ConfigurationError, match="longitude is out of range"):
-            Settings.from_env()
-
-    def test_invalid_context_sources_json_raises_error(self, monkeypatch) -> None:
-        _required_environment(monkeypatch)
-        monkeypatch.setenv("CONTEXT_SOURCES_JSON", "not-json")
-
-        with pytest.raises(ConfigurationError, match="CONTEXT_SOURCES_JSON must contain valid JSON"):
-            Settings.from_env()
-
-    def test_context_sources_not_array_raises_error(self, monkeypatch) -> None:
-        _required_environment(monkeypatch)
-        monkeypatch.setenv("CONTEXT_SOURCES_JSON", '{"key":"value"}')
-
-        with pytest.raises(ConfigurationError, match="CONTEXT_SOURCES_JSON must be a JSON array"):
-            Settings.from_env()
-
-    def test_context_source_not_object_includes_index_in_error(self, monkeypatch) -> None:
-        _required_environment(monkeypatch)
-        monkeypatch.setenv("CONTEXT_SOURCES_JSON", "[1]")
-
-        with pytest.raises(ConfigurationError, match=r"CONTEXT_SOURCES_JSON\[0\] must be a JSON object"):
-            Settings.from_env()
-
-    @pytest.mark.parametrize("field", ("id", "name", "url"))
-    def test_context_source_requires_named_fields(self, monkeypatch, field: str) -> None:
-        _required_environment(monkeypatch)
-        source = {"id": "context", "name": "Context", "url": "https://example.invalid/context"}
-        del source[field]
-        monkeypatch.setenv("CONTEXT_SOURCES_JSON", json.dumps([source]))
-
-        with pytest.raises(ConfigurationError, match=rf"CONTEXT_SOURCES_JSON\[0\]\.{field}"):
-            Settings.from_env()
-
-    def test_context_source_accepts_and_strips_required_strings(self, monkeypatch) -> None:
-        _required_environment(monkeypatch)
-        monkeypatch.setenv(
-            "CONTEXT_SOURCES_JSON",
-            '[{"id":" context ","name":" Context ","url":" https://example.invalid/context "}]',
-        )
-
-        source = Settings.from_env().context_sources[0]
-
-        assert source.id == "context"
-        assert source.name == "Context"
-        assert source.url == "https://example.invalid/context"
-        assert source.language == "und"
-
-    def test_context_source_normalizes_declared_language(self, monkeypatch) -> None:
-        _required_environment(monkeypatch)
-        monkeypatch.setenv(
-            "CONTEXT_SOURCES_JSON",
-            '[{"id":"context","name":"Context","url":"https://example.invalid/context","language":"EN-us"}]',
-        )
-
-        assert Settings.from_env().context_sources[0].language == "en-US"
-
-    @pytest.mark.parametrize("language", ("english", 1, None))
-    def test_context_source_rejects_invalid_language(self, monkeypatch, language: object) -> None:
-        _required_environment(monkeypatch)
-        monkeypatch.setenv(
-            "CONTEXT_SOURCES_JSON",
-            json.dumps(
-                [
-                    {
-                        "id": "context",
-                        "name": "Context",
-                        "url": "https://example.invalid/context",
-                        "language": language,
-                    }
-                ]
-            ),
-        )
-
-        with pytest.raises(ConfigurationError, match=r"CONTEXT_SOURCES_JSON\[0\]\.language"):
             Settings.from_env()
 
     def test_invalid_timezone_raises_error(self, monkeypatch) -> None:

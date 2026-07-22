@@ -18,7 +18,6 @@ from .models import (
     AdviceTopic,
     Article,
     BriefingResult,
-    ContextSourceConfig,
     FeedConfig,
     ResolvedLocation,
     SourceDocument,
@@ -26,7 +25,7 @@ from .models import (
 )
 from .prompts import SYSTEM_PROMPT
 from .publishers import DeliveryError, DeliveryProvider
-from .sources import ContextDocumentSource, RSSFeedSource
+from .sources import RSSFeedSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
 from .weather_context import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
@@ -121,11 +120,6 @@ class BriefingSettings(Protocol):
         ...
 
     @property
-    def context_sources(self) -> tuple[ContextSourceConfig, ...]:
-        """Return configured auxiliary context sources."""
-        ...
-
-    @property
     def rss_stale_hours(self) -> int:
         """Return the RSS staleness threshold in hours."""
         ...
@@ -175,7 +169,6 @@ class BriefingService:
         location: ResolvedLocation,
         state: SQLiteStateStore,
         rss_source: RSSFeedSource,
-        context_source: ContextDocumentSource,
         llm: LLMProvider,
         delivery: DeliveryProvider,
         ops_delivery: DeliveryProvider,
@@ -186,7 +179,6 @@ class BriefingService:
         self._location = location
         self._state = state
         self._rss_source = rss_source
-        self._context_source = context_source
         self._llm = llm
         self._delivery = delivery
         self._ops_delivery = ops_delivery
@@ -338,9 +330,7 @@ class BriefingService:
             article for article in bootstrap_candidates if article.id not in known and article.id not in deferred_ids
         )
         unpublished_articles = _unique_articles((*deferred_articles, *new_articles, *bootstrap_articles))
-        context_items = list(
-            await asyncio.gather(*(self._context_source.fetch(config) for config in self._settings.context_sources))
-        )
+        context_items: list[SourceDocument] = []
         if self._weather_context_provider is not None:
             if isinstance(self._weather_context_provider, CapabilityProviderSet):
                 weather_contexts = await self._weather_context_provider.fetch_all(

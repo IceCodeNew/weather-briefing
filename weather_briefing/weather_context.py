@@ -19,6 +19,7 @@ import pendulum
 from .air_quality import AirQualityError, AirQualityProvider, air_quality_to_document, health_guidance
 from .allergen import allergen_guidance, allergen_to_document, pollen_type_names
 from .api_client import api_call_extensions
+from .data.service_endpoints import OPEN_METEO_AIR_QUALITY_BASE_URL, OPEN_METEO_WEATHER_BASE_URL
 from .languages import LanguageSupport, localized_labels
 from .models import (
     AirQualitySnapshot,
@@ -433,8 +434,8 @@ class OpenMeteoProvider:
         self,
         client: httpx.AsyncClient,
         *,
-        weather_base_url: str = "https://api.open-meteo.com",
-        air_quality_base_url: str = "https://air-quality-api.open-meteo.com",
+        weather_base_url: str = OPEN_METEO_WEATHER_BASE_URL,
+        air_quality_base_url: str = OPEN_METEO_AIR_QUALITY_BASE_URL,
         api_key: str | None = None,
     ) -> None:
         """Configure Open-Meteo weather and air-quality endpoints."""

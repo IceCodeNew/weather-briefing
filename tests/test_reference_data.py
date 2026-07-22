@@ -4,7 +4,9 @@ from typing import TypeGuard
 
 import pytest
 
+from weather_briefing import __version__
 from weather_briefing.air_quality import health_guidance
+from weather_briefing.data.service_endpoints import NOMINATIM_USER_AGENT
 from weather_briefing.reference_data import (
     ReferenceDataError,
     load_reference_data,
@@ -95,6 +97,10 @@ def test_packaged_reference_data_is_available() -> None:
     assert classification.parameter_reasons["migrate_to_chat_id"] == "chat-migrated"
     assert classification.status_reasons[401] == "bot-token-rejected"
     assert "chat-not-found" in classification.channel_unavailable_reasons
+
+
+def test_nominatim_user_agent_identifies_current_version() -> None:
+    assert (f"weather-briefing/{__version__} (+https://github.com/IceCodeNew/weather-briefing)") == NOMINATIM_USER_AGENT
 
 
 @pytest.mark.parametrize(

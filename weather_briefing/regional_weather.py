@@ -8,6 +8,7 @@ import httpx
 import pendulum
 
 from .api_client import api_call_extensions
+from .data.service_endpoints import JMA_FORECAST_BASE_URL, NEA_BASE_URL
 from .languages import LanguageSupport
 from .models import WeatherContextSnapshot, normalize_jma_office_code
 from .time_utils import parse_datetime_with_default_timezone
@@ -32,7 +33,7 @@ class NEASingaporeNowcastProvider:
         self,
         client: httpx.AsyncClient,
         *,
-        base_url: str = "https://api-open.data.gov.sg",
+        base_url: str = NEA_BASE_URL,
         api_key: str | None = None,
     ) -> None:
         """Configure the public NEA real-time API."""
@@ -88,7 +89,7 @@ class JMAJapanForecastProvider:
         self,
         client: httpx.AsyncClient,
         *,
-        base_url: str = "https://www.jma.go.jp/bosai/forecast/data/forecast",
+        base_url: str = JMA_FORECAST_BASE_URL,
         office_code: str | None,
     ) -> None:
         """Configure JMA forecast data for one forecast office."""
