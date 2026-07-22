@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import math
 import os
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +31,8 @@ class ConfigurationError(ValueError):
 
 SUPPORTED_WEATHER_PROVIDERS = frozenset(WeatherProviderName)
 SUPPORTED_PUBLISHERS = frozenset(PublisherName)
+_LOCATION_FILE_LOCK_TIMEOUT_SECONDS = 5.0
+_LOCATION_FILE_LOCK_RETRY_SECONDS = 0.05
 
 
 @overload
@@ -116,16 +121,52 @@ def _boolean(name: str, default: bool) -> bool:
     raise ConfigurationError(f"{name} must be one of: true, false, 1, 0, yes, no")
 
 
-def _json_file(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
+def _json_array(path: Path, content: str) -> list[dict[str, Any]]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = json.loads(content)
+    except json.JSONDecodeError as exc:
         raise ConfigurationError(f"{path} must contain readable JSON") from exc
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ConfigurationError(f"{path} must be a JSON array of objects")
     return value
+
+
+def _json_file(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigurationError(f"{path} must contain readable JSON") from exc
+    return _json_array(path, content)
+
+
+def _lock_location_file(path: Path, file_descriptor: int, operation: int, timeout_action: str) -> None:
+    deadline = time.monotonic() + _LOCATION_FILE_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            fcntl.flock(file_descriptor, operation | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ConfigurationError(f"{path} is locked; cannot {timeout_action}") from exc
+            time.sleep(min(_LOCATION_FILE_LOCK_RETRY_SECONDS, remaining))
+
+
+def _locked_location_json_file(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8") as locations_file:
+            try:
+                _lock_location_file(path, locations_file.fileno(), fcntl.LOCK_SH, "read location configuration")
+            except OSError as exc:
+                raise ConfigurationError(f"Failed to lock location configuration {path} for reading: {exc}") from exc
+            content = locations_file.read()
+    except OSError as exc:
+        raise ConfigurationError(f"{path} must contain readable JSON") from exc
+    return _json_array(path, content)
 
 
 def _optional_string_array(
@@ -233,7 +274,7 @@ def _weather_region(location: ResolvedLocation) -> str:
 
 
 def _locations(path: Path) -> tuple[LocationSpec, ...]:
-    items = _json_file(path)
+    items = _locked_location_json_file(path)
     if not items:
         raise ConfigurationError(f"Configure at least one location in {path}")
     locations: list[LocationSpec] = []
@@ -287,6 +328,79 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
         )
         seen_ids.add(location_id)
     return tuple(locations)
+
+
+def _valid_coordinate(value: object, minimum: float, maximum: float) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and minimum <= value <= maximum
+
+
+def backfill_location_fields(
+    path: Path,
+    configured: tuple[LocationSpec, ...],
+    resolved: tuple[ResolvedLocation, ...],
+) -> bool:
+    """Write exact provider-resolved names or coordinates missing from the location file."""
+    resolved_by_id = {location.id: location for location in resolved if not location.precision_reduced}
+    updates: dict[str, dict[str, str | float]] = {}
+    for location in configured:
+        resolved_location = resolved_by_id.get(location.id)
+        if resolved_location is None:
+            continue
+        fields: dict[str, str | float] = {}
+        if location.name is None:
+            if not isinstance(resolved_location.name, str) or not resolved_location.name.strip():
+                raise ConfigurationError(f"Resolved name for location {location.id} is invalid")
+            fields["name"] = resolved_location.name.strip()
+        if location.latitude is None and location.longitude is None:
+            if not _valid_coordinate(resolved_location.latitude, -90, 90):
+                raise ConfigurationError(f"Resolved latitude for location {location.id} is invalid")
+            if not _valid_coordinate(resolved_location.longitude, -180, 180):
+                raise ConfigurationError(f"Resolved longitude for location {location.id} is invalid")
+            fields["latitude"] = resolved_location.latitude
+            fields["longitude"] = resolved_location.longitude
+        if fields:
+            updates[location.id] = fields
+    if not updates:
+        return False
+
+    try:
+        with path.open("r+", encoding="utf-8") as locations_file:
+            _lock_location_file(
+                path,
+                locations_file.fileno(),
+                fcntl.LOCK_EX,
+                "save resolved location fields",
+            )
+            items = _json_array(path, locations_file.read())
+            changed = False
+            for item in items:
+                location_id = item.get("id")
+                if not isinstance(location_id, str) or location_id not in updates:
+                    continue
+                fields = updates[location_id]
+                if "name" in fields and item.get("name") is None:
+                    item["name"] = fields["name"]
+                    changed = True
+                if "latitude" in fields and item.get("latitude") is None and item.get("longitude") is None:
+                    item["latitude"] = fields["latitude"]
+                    item["longitude"] = fields["longitude"]
+                    changed = True
+            if not changed:
+                return False
+
+            payload = json.dumps(items, ensure_ascii=False, indent=2) + "\n"
+            locations_file.seek(0)
+            locations_file.write(payload)
+            locations_file.truncate()
+            locations_file.flush()
+            os.fsync(locations_file.fileno())
+    except PermissionError as exc:
+        raise ConfigurationError(f"{path} must be writable to save resolved location fields") from exc
+    except OSError as exc:
+        raise ConfigurationError(f"Failed to save resolved location fields to {path}: {exc}") from exc
+    return True
 
 
 def _feeds(path: Path) -> tuple[FeedConfig, ...]:

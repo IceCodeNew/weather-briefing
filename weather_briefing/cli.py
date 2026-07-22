@@ -28,7 +28,7 @@ from .air_quality import (
 )
 from .api_client import LoggedAsyncClient
 from .capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
-from .config import Settings, state_path_from_env, weather_providers_for
+from .config import ConfigurationError, Settings, backfill_location_fields, state_path_from_env, weather_providers_for
 from .geocoding import (
     CachedLocationResolver,
     FallbackGeocodingProvider,
@@ -259,6 +259,20 @@ def _configure_logging(*, debug: bool) -> None:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
+def _save_resolved_location_fields(settings: Settings, locations: tuple[ResolvedLocation, ...]) -> None:
+    try:
+        changed = backfill_location_fields(settings.locations_path, settings.locations, locations)
+    except ConfigurationError as exc:
+        _LOGGER.warning(
+            "Could not save resolved location fields; continuing without updating %s: %s",
+            settings.locations_path,
+            exc,
+        )
+        return
+    if changed:
+        _LOGGER.info("Saved missing resolved fields to the location configuration")
+
+
 async def run(
     kind: str,
     enforce_window: bool,
@@ -268,7 +282,7 @@ async def run(
     run_now: bool = False,
 ) -> None:
     """Compose dependencies and execute one task across configured locations."""
-    settings = Settings.from_env()
+    settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     if forecast_date is not None and kind != "forecast":
         raise ValueError("--date is only supported for run forecast")
@@ -304,6 +318,8 @@ async def run(
         )
         _LOGGER.info("Resolving %d location(s)", len(settings.locations))
         resolutions = [await resolver.resolve_with_metadata(location) for location in settings.locations]
+        locations = tuple(resolution.location for resolution in resolutions)
+        await asyncio.to_thread(_save_resolved_location_fields, settings, locations)
         for resolution in resolutions:
             location = resolution.location
             if location.precision_reduced and not resolution.from_cache:
@@ -311,7 +327,6 @@ async def run(
                     "Location match requires confirmation",
                     _precision_reduction_notice(location, settings.locations_path),
                 )
-        locations = tuple(resolution.location for resolution in resolutions)
         for location in locations:
             _LOGGER.info("Processing location %s", location.id)
             _LOGGER.debug("Location %s display name: %s", location.id, location.name)
@@ -699,7 +714,7 @@ def _parse_forecast_date(value: str) -> pendulum.Date:
 
 async def daemon() -> None:
     """Run the in-process forecast and briefing scheduler indefinitely."""
-    settings = Settings.from_env()
+    settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
