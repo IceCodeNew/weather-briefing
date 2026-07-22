@@ -33,7 +33,7 @@ The repository provides the following configuration templates:
 
 ## Using the published image
 
-Docker is the recommended deployment method. The examples below use a fixed-version image from Docker Hub. You can also run the project in other ways, as long as it can run persistently and preserve the configuration and state described above.
+Docker is the recommended deployment method. The examples below use a fixed-version image from Docker Hub. Direct deployment on a POSIX system is also supported if the program can run persistently and preserve the configuration and state described above. Native Windows is not supported.
 
 First, prepare the host directory and configuration files. The default location is under the current user's home directory; change `ROOT_DIR` if you keep application data elsewhere.
 

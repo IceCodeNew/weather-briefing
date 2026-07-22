@@ -57,7 +57,7 @@ RSS 来源可以按地点 ID 限定范围，并配置正文清洗规则。`verba
 
 地点字段补全、失败后继续运行和低精度匹配确认等用户行为见 [`requirements.md`](requirements.md)。
 
-`locations.json` 回写复用配置加载器的名称和坐标校验。事务按地点 ID 合并，只给值为 `null` 的 `name`、`latitude` 和 `longitude` 赋值，保留其他字段。文件使用原挂载点原地更新，以兼容单文件 Docker bind mount。
+`locations.json` 回写复用配置加载器的名称和坐标校验。事务按地点 ID 合并：`name` 为 `null` 时补齐名称，`latitude` 和 `longitude` 均为 `null` 时成对补齐坐标；已有值和其他字段保持不变。文件使用原挂载点原地更新，以兼容单文件 Docker bind mount。
 
 读取地点配置时持有共享锁，读改写事务在同一个文件描述符上持有独占锁，避免读到部分内容或覆盖其他进程的更新。获取锁最多等待 5 秒。CLI 在工作线程中执行这些带锁操作，避免锁等待阻塞异步事件循环。
 
