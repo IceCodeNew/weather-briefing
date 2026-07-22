@@ -282,7 +282,7 @@ async def run(
     run_now: bool = False,
 ) -> None:
     """Compose dependencies and execute one task across configured locations."""
-    settings = Settings.from_env()
+    settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     if forecast_date is not None and kind != "forecast":
         raise ValueError("--date is only supported for run forecast")
@@ -326,7 +326,7 @@ async def run(
                     _precision_reduction_notice(location, settings.locations_path),
                 )
         locations = tuple(resolution.location for resolution in resolutions)
-        _save_resolved_location_fields(settings, locations)
+        await asyncio.to_thread(_save_resolved_location_fields, settings, locations)
         for location in locations:
             _LOGGER.info("Processing location %s", location.id)
             _LOGGER.debug("Location %s display name: %s", location.id, location.name)
@@ -714,7 +714,7 @@ def _parse_forecast_date(value: str) -> pendulum.Date:
 
 async def daemon() -> None:
     """Run the in-process forecast and briefing scheduler indefinitely."""
-    settings = Settings.from_env()
+    settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
