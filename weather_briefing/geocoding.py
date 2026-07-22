@@ -15,6 +15,7 @@ from typing import Any, Protocol
 import httpx
 
 from .api_client import api_call_extensions
+from .data.service_endpoints import NOMINATIM_BASE_URL, NOMINATIM_USER_AGENT, OPEN_METEO_GEOCODING_BASE_URL
 from .models import LocationResolution, LocationSpec, ResolvedLocation
 from .reference_data import ReferenceDataError, reference_string_tuple, reference_value
 
@@ -101,7 +102,7 @@ class OpenMeteoGeocodingProvider:
         self,
         client: httpx.AsyncClient,
         *,
-        base_url: str = "https://geocoding-api.open-meteo.com",
+        base_url: str = OPEN_METEO_GEOCODING_BASE_URL,
         api_key: str | None = None,
     ) -> None:
         """Configure Open-Meteo geocoding access and its optional API key."""
@@ -184,8 +185,8 @@ class NominatimGeocodingProvider:
         self,
         client: httpx.AsyncClient,
         *,
-        user_agent: str,
-        base_url: str = "https://nominatim.openstreetmap.org",
+        user_agent: str = NOMINATIM_USER_AGENT,
+        base_url: str = NOMINATIM_BASE_URL,
     ) -> None:
         """Configure rate-limited Nominatim access with an identifying user agent."""
         if not user_agent.strip():

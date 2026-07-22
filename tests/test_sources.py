@@ -4,8 +4,8 @@ import httpx
 import pendulum
 import pytest
 
-from weather_briefing.models import ContextSourceConfig, FeedConfig, SourceDocument
-from weather_briefing.sources import HTTPContextSource, RSSSource, SourceFetchError, _retry_after_seconds
+from weather_briefing.models import FeedConfig
+from weather_briefing.sources import RSSSource, SourceFetchError, _retry_after_seconds
 
 
 async def test_rss_source_marks_configured_verbatim_article(caplog) -> None:
@@ -256,25 +256,3 @@ async def test_rss_local_offset_is_normalized_then_restored() -> None:
 
     assert articles[0].published_at.to_iso8601_string() == "2026-07-13T03:03:56Z"
     assert articles[0].published_at.in_timezone("Asia/Shanghai").to_iso8601_string() == "2026-07-13T11:03:56+08:00"
-
-
-async def test_http_context_source_fetches_successfully() -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _: httpx.Response(200, text="context data"))
-    ) as client:
-        result = await HTTPContextSource(client).fetch(
-            ContextSourceConfig(id="ctx", name="Context", url="https://example.invalid/ctx", language="en")
-        )
-
-    assert isinstance(result, SourceDocument)
-    assert result.id == "ctx"
-    assert result.content == "context data"
-    assert result.language == "en"
-
-
-async def test_http_context_source_raises_on_http_error() -> None:
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client:
-        with pytest.raises(SourceFetchError, match="Context source"):
-            await HTTPContextSource(client).fetch(
-                ContextSourceConfig(id="ctx", name="Context", url="https://example.invalid/ctx")
-            )

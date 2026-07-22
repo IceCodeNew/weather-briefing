@@ -17,7 +17,6 @@ from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
     Article,
-    ContextSourceConfig,
     FeedConfig,
     RenderedMessage,
     ResolvedLocation,
@@ -42,7 +41,6 @@ from weather_briefing.weather_context import WeatherContextError
 class _TestSettings:
     timezone: pendulum.Timezone
     feeds: tuple[FeedConfig, ...] = ()
-    context_sources: tuple[ContextSourceConfig, ...] = ()
     rss_stale_hours: int = 24
     rss_failure_threshold: int = 3
     warning_retention_hours: int = 12
@@ -94,11 +92,6 @@ class MixedOutcomeRSSSource:
 class FailingWeatherContextProvider:
     async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
         raise WeatherContextError("weather context unavailable")
-
-
-class EmptyContextSource:
-    async def fetch(self, config: ContextSourceConfig) -> SourceDocument:
-        raise AssertionError("No context source should be requested in this test")
 
 
 class StaticWeatherContextProvider:
@@ -567,7 +560,6 @@ async def test_bounded_history_excludes_omitted_sources_from_citation_validation
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -597,7 +589,6 @@ async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Pat
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -628,7 +619,6 @@ async def test_context_budget_alert_delivery_failure_is_retried(tmp_path: Path, 
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -738,7 +728,6 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -767,7 +756,6 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
             location,
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -825,7 +813,6 @@ async def test_forecast_rejects_missing_allergen_advice_when_input_contains_it(t
     settings = _TestSettings(
         timezone=pendulum.timezone("Asia/Shanghai"),
         feeds=(),
-        context_sources=(),
         llm_max_attempts=1,
     )
     delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
@@ -837,7 +824,6 @@ async def test_forecast_rejects_missing_allergen_advice_when_input_contains_it(t
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             MissingAllergenAdviceLLM(),
             delivery,
             delivery,
@@ -862,7 +848,6 @@ async def test_forecast_rejects_allergen_advice_without_allergen_source(tmp_path
     settings = _TestSettings(
         timezone=pendulum.timezone("Asia/Shanghai"),
         feeds=(),
-        context_sources=(),
         llm_max_attempts=1,
     )
     delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
@@ -874,7 +859,6 @@ async def test_forecast_rejects_allergen_advice_without_allergen_source(tmp_path
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             WrongAllergenSourceLLM(),
             delivery,
             delivery,
@@ -893,7 +877,6 @@ async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provi
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -932,7 +915,6 @@ async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provi
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -969,7 +951,6 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -987,7 +968,6 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1010,7 +990,6 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1034,7 +1013,6 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1080,7 +1058,6 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1120,7 +1097,6 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             UnchangedWarningLLM(),
             delivery,
             delivery,
@@ -1184,7 +1160,6 @@ async def test_unknown_resolved_warning_id_is_ignored(tmp_path: Path, caplog: py
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1216,7 +1191,6 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1258,7 +1232,6 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1299,7 +1272,6 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Weather feed", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1317,7 +1289,6 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1350,7 +1321,6 @@ async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1367,7 +1337,6 @@ async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(should_publish=True),
             delivery,
             delivery,
@@ -1401,7 +1370,6 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1420,7 +1388,6 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             ops_delivery,
@@ -1440,7 +1407,6 @@ async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1458,7 +1424,6 @@ async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -1487,7 +1452,6 @@ async def test_task_failure_alert_delivery_failure_is_retried(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1505,7 +1469,6 @@ async def test_task_failure_alert_delivery_failure_is_retried(
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             DeliveryProvider(PlainTextRenderer(), ops_publisher),
@@ -1547,7 +1510,6 @@ async def test_task_failure_alert_skips_unavailable_shared_delivery_channel(
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -1583,7 +1545,6 @@ async def test_failure_recording_error_does_not_mask_task_error(
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -1616,7 +1577,6 @@ async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> N
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1633,7 +1593,6 @@ async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> N
             _location(),
             state,
             StaticRSSSource(verbatim),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -1678,7 +1637,6 @@ async def test_failed_first_verbatim_is_retried_without_republishing_briefing(tm
             _location(),
             state,
             StaticRSSSource(verbatim),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             ops_delivery,
@@ -1737,7 +1695,6 @@ async def test_failed_later_verbatim_retries_only_unacknowledged_item(tmp_path: 
             _location(),
             state,
             StaticRSSSource(first, second),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             ops_delivery,
@@ -1796,7 +1753,6 @@ async def test_verbatim_acknowledgement_failure_keeps_at_least_once_retry(
             _location(),
             state,
             StaticRSSSource(verbatim),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             ops_delivery,
@@ -1851,7 +1807,6 @@ async def test_failed_main_checkpoint_leaves_no_partial_result_state(tmp_path: P
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             ops_delivery,
@@ -1877,7 +1832,6 @@ async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) 
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1895,7 +1849,6 @@ async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) 
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -1921,7 +1874,6 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=1,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -1942,7 +1894,6 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             llm,
             delivery,
             ops_delivery,
@@ -2014,7 +1965,6 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_respo
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -2032,7 +1982,6 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_respo
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -2058,7 +2007,6 @@ async def test_llm_request_failure_does_not_enter_contract_repair(tmp_path: Path
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("feed", "Feed", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -2084,7 +2032,6 @@ async def test_llm_request_failure_does_not_enter_contract_repair(tmp_path: Path
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -2101,7 +2048,6 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
     settings = _TestSettings(
         timezone=timezone,
         feeds=(),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -2135,7 +2081,6 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
             _location(),
             state,
             EmptyRSSSource(),
-            EmptyContextSource(),
             LongLLM(),
             delivery,
             delivery,
@@ -2163,7 +2108,6 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("known-feed", "Known", "https://example.invalid/rss"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -2181,7 +2125,6 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
             _location(),
             state,
             StaticRSSSource(article),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -2200,7 +2143,6 @@ async def test_rss_failure_does_not_crash_forecast_with_weather_context(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("failing-feed", "Failing", "https://example.invalid/feed"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=3,
         warning_retention_hours=12,
@@ -2219,7 +2161,6 @@ async def test_rss_failure_does_not_crash_forecast_with_weather_context(
             _location(),
             state,
             FailingRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             delivery,
@@ -2238,7 +2179,6 @@ async def test_rss_cancellation_aborts_task_without_recording_failure(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("canceled-feed", "Canceled", "https://example.invalid/feed"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=1,
         warning_retention_hours=12,
@@ -2256,7 +2196,6 @@ async def test_rss_cancellation_aborts_task_without_recording_failure(
             _location(),
             state,
             CanceledRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -2283,7 +2222,6 @@ async def test_rss_cancellation_records_other_completed_feed_results(
             FeedConfig("recovered-feed", "Recovered", "https://example.invalid/recovered"),
             FeedConfig("failing-feed", "Failing", "https://example.invalid/failing"),
         ),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=1,
         warning_retention_hours=12,
@@ -2301,7 +2239,6 @@ async def test_rss_cancellation_records_other_completed_feed_results(
             _location(),
             state,
             MixedOutcomeRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             delivery,
@@ -2322,7 +2259,6 @@ async def test_rss_failure_alert_is_sent_after_threshold(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("fail-feed", "Failing", "https://example.invalid/feed"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=2,
         warning_retention_hours=12,
@@ -2343,7 +2279,6 @@ async def test_rss_failure_alert_is_sent_after_threshold(
             _location(),
             state,
             FailingRSSSource(),
-            EmptyContextSource(),
             llm,
             delivery,
             ops_delivery,
@@ -2372,7 +2307,6 @@ async def test_failed_rss_alert_delivery_is_retried(
     settings = _TestSettings(
         timezone=timezone,
         feeds=(FeedConfig("fail-feed", "Failing", "https://example.invalid/feed"),),
-        context_sources=(),
         rss_stale_hours=24,
         rss_failure_threshold=1,
         warning_retention_hours=12,
@@ -2392,7 +2326,6 @@ async def test_failed_rss_alert_delivery_is_retried(
             _location(),
             state,
             FailingRSSSource(),
-            EmptyContextSource(),
             RecordingLLM(),
             delivery,
             ops_delivery,

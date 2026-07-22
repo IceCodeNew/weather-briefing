@@ -9,6 +9,7 @@ import httpx
 import pendulum
 
 from .api_client import api_call_extensions
+from .data.service_endpoints import AQICN_BASE_URL
 from .languages import localized_labels
 from .models import AirQualitySnapshot, AirQualityTimeKind, SourceDocument
 from .reference_data import ReferenceDataError, localization_table, reference_value
@@ -42,12 +43,12 @@ class AQICNProvider:
         client: httpx.AsyncClient,
         *,
         token: str,
-        base_url: str,
+        base_url: str = AQICN_BASE_URL,
     ) -> None:
         """Configure AQICN access with an injected HTTP client and token."""
         self._client = client
         self._token = token
-        self._base_url = base_url
+        self._base_url = base_url.rstrip("/")
 
     async def fetch(
         self,

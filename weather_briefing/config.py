@@ -17,7 +17,7 @@ from soupsieve import SelectorSyntaxError
 from soupsieve import compile as compile_selector
 
 from .languages import normalize_language_tag
-from .models import ContextSourceConfig, FeedConfig, LocationSpec, ResolvedLocation, normalize_jma_office_code
+from .models import FeedConfig, LocationSpec, ResolvedLocation, normalize_jma_office_code
 from .reference_data import reference_string_tuple
 from .registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 
@@ -166,28 +166,6 @@ def _optional_string_field(item: dict[str, Any], field: str, path: str) -> str |
     if value is None:
         return None
     return _required_string_field(item, field, path)
-
-
-def _context_source(item: object, index: int) -> ContextSourceConfig:
-    if not isinstance(item, dict):
-        raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}] must be a JSON object")
-
-    values: dict[str, str] = {}
-    for field in ("id", "name", "url"):
-        value = item.get(field)
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}].{field} must be a non-empty string")
-        values[field] = value.strip()
-    language_value = item.get("language", "und")
-    if not isinstance(language_value, str):
-        raise ConfigurationError(f"CONTEXT_SOURCES_JSON[{index}].language must be a basic BCP 47-like language tag")
-    try:
-        language = normalize_language_tag(language_value)
-    except ValueError as exc:
-        raise ConfigurationError(
-            f"CONTEXT_SOURCES_JSON[{index}].language must be a basic BCP 47-like language tag"
-        ) from exc
-    return ContextSourceConfig(id=values["id"], name=values["name"], url=values["url"], language=language)
 
 
 def _configured_weather_providers() -> tuple[str, ...] | None:
@@ -357,29 +335,19 @@ class Settings:
     timezone: pendulum.Timezone
     locations_path: Path
     locations: tuple[LocationSpec, ...]
-    geocoding_base_url: str
     geocoding_api_key: str | None
-    nominatim_base_url: str
-    geocoding_user_agent: str
     geocoding_cache_path: Path
     rss_sources_path: Path
     feeds: tuple[FeedConfig, ...]
-    context_sources: tuple[ContextSourceConfig, ...]
     weather_providers: tuple[str, ...] | None
     qweather_project_id: str | None
     qweather_credential_id: str | None
     qweather_private_key: str | None
     qweather_jwt_lifetime_seconds: int
     qweather_base_url: str | None
-    qweather_index_types: tuple[str, ...]
-    nea_base_url: str
     nea_api_key: str | None
-    jma_base_url: str
-    open_meteo_weather_base_url: str
-    open_meteo_air_quality_base_url: str
     open_meteo_api_key: str | None
     aqicn_api_token: str | None
-    aqicn_base_url: str
     state_path: Path
     publisher: str
     telegram_bot_token: str | None
@@ -405,14 +373,6 @@ class Settings:
         locations_path = Path(_clean_env(os.getenv("BRIEFING_LOCATIONS_FILE", "locations.json")))
         rss_sources_path = Path(_clean_env(os.getenv("RSS_SOURCES_FILE", "rss-sources.json")))
         feeds = _feeds(rss_sources_path)
-        context_raw = _clean_env(os.getenv("CONTEXT_SOURCES_JSON", "[]"))
-        try:
-            context_items = json.loads(context_raw)
-        except json.JSONDecodeError as exc:
-            raise ConfigurationError("CONTEXT_SOURCES_JSON must contain valid JSON") from exc
-        if not isinstance(context_items, list):
-            raise ConfigurationError("CONTEXT_SOURCES_JSON must be a JSON array of objects")
-        context_sources = tuple(_context_source(item, index) for index, item in enumerate(context_items))
         try:
             timezone = pendulum.timezone(_clean_env(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai")))
         except (ValueError, KeyError) as exc:
@@ -460,56 +420,19 @@ class Settings:
             timezone=timezone,
             locations_path=locations_path,
             locations=locations,
-            geocoding_base_url=_clean_env(
-                os.getenv("GEOCODING_BASE_URL", "https://geocoding-api.open-meteo.com")
-            ).rstrip("/"),
             geocoding_api_key=_clean_env(os.getenv("GEOCODING_API_KEY")) or None,
-            nominatim_base_url=_clean_env(
-                os.getenv("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org")
-            ).rstrip("/"),
-            geocoding_user_agent=_clean_env(
-                os.getenv(
-                    "GEOCODING_USER_AGENT",
-                    "weather-briefing/0.1 (+https://github.com/IceCodeNew/weather-briefing)",
-                )
-            ),
             geocoding_cache_path=Path(_clean_env(os.getenv("GEOCODING_CACHE_PATH", "state/geocoding.json"))),
             rss_sources_path=rss_sources_path,
             feeds=feeds,
-            context_sources=context_sources,
             weather_providers=_configured_weather_providers(),
             qweather_project_id=_clean_env(os.getenv("QWEATHER_PROJECT_ID")) or None,
             qweather_credential_id=_clean_env(os.getenv("QWEATHER_CREDENTIAL_ID")) or None,
             qweather_private_key=_clean_env(os.getenv("QWEATHER_PRIVATE_KEY")) or None,
             qweather_jwt_lifetime_seconds=_bounded_positive_integer("QWEATHER_JWT_LIFETIME_SECONDS", 900, 86_400),
             qweather_base_url=(_clean_env(os.getenv("QWEATHER_API_HOST")) or "").rstrip("/") or None,
-            qweather_index_types=tuple(
-                item.strip()
-                for item in _clean_env(
-                    os.getenv(
-                        "QWEATHER_INDEX_TYPES",
-                        ",".join(reference_string_tuple("provider_defaults.json", "qweather_lifestyle_index_types")),
-                    )
-                ).split(",")
-                if item.strip()
-            ),
-            nea_base_url=_clean_env(os.getenv("NEA_BASE_URL", "https://api-open.data.gov.sg")).rstrip("/"),
             nea_api_key=_clean_env(os.getenv("NEA_API_KEY")) or None,
-            jma_base_url=_clean_env(
-                os.getenv("JMA_BASE_URL", "https://www.jma.go.jp/bosai/forecast/data/forecast")
-            ).rstrip("/"),
-            open_meteo_weather_base_url=_clean_env(
-                os.getenv("OPEN_METEO_WEATHER_BASE_URL", "https://api.open-meteo.com")
-            ).rstrip("/"),
-            open_meteo_air_quality_base_url=_clean_env(
-                os.getenv(
-                    "OPEN_METEO_AIR_QUALITY_BASE_URL",
-                    "https://air-quality-api.open-meteo.com",
-                )
-            ).rstrip("/"),
             open_meteo_api_key=_clean_env(os.getenv("OPEN_METEO_API_KEY")) or None,
             aqicn_api_token=_clean_env(os.getenv("AQICN_API_TOKEN")) or None,
-            aqicn_base_url=_clean_env(os.getenv("AQICN_BASE_URL", "https://api.waqi.info")).rstrip("/"),
             state_path=state_path_from_env(),
             publisher=_publisher(),
             telegram_bot_token=_clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,

@@ -11,7 +11,7 @@ Weather Briefing periodically aggregates weather, air quality, warnings, and opt
 - Persists history, unsent messages, and active warnings so nothing repeats or falls through the cracks.
 - Supports multiple locations and output languages with independent state per location.
 - Composes global and local weather services by region, falling back when a primary source fails.
-- Optionally supplements private RSS or web content; every conclusion retains a verifiable source link.
+- Optionally supplements private RSS content; every conclusion retains a verifiable source link.
 
 ## Prerequisites
 

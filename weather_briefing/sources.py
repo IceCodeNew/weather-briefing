@@ -1,4 +1,4 @@
-"""RSS and auxiliary context source adapters."""
+"""RSS source adapters."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import pendulum
 
 from .api_client import api_call_extensions
 from .content_cleaners import ContentCleaner, ContentCleaningRules, HTMLContentCleaner
-from .models import Article, ContextSourceConfig, FeedConfig, SourceDocument
+from .models import Article, FeedConfig
 
 _LOGGER = logging.getLogger("weather_briefing.sources")
 _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -31,14 +31,6 @@ class RSSFeedSource(Protocol):
 
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         """Fetch articles for one feed configuration."""
-        ...
-
-
-class ContextDocumentSource(Protocol):
-    """Fetch auxiliary context as a citable document."""
-
-    async def fetch(self, config: ContextSourceConfig) -> SourceDocument:
-        """Fetch one configured context document."""
         ...
 
 
@@ -163,29 +155,3 @@ class RSSSource:
                 await asyncio.sleep(max(delay, retry_after or 0.0))
         attempt_label = "attempt" if attempts_made == 1 else "attempts"
         raise SourceFetchError(f"RSS source {config.id} failed after {attempts_made} {attempt_label}") from None
-
-
-class HTTPContextSource:
-    """Fetch auxiliary context documents over HTTP."""
-
-    def __init__(self, client: httpx.AsyncClient) -> None:
-        """Use an injected HTTP client for auxiliary context requests."""
-        self._client = client
-
-    async def fetch(self, config: ContextSourceConfig) -> SourceDocument:
-        """Fetch one context URL without exposing transport details."""
-        try:
-            response = await self._client.get(
-                config.url,
-                extensions=api_call_extensions("http-context", "fetch"),
-            )
-            response.raise_for_status()
-        except httpx.HTTPError:
-            raise SourceFetchError(f"Context source {config.id} failed") from None
-        return SourceDocument(
-            id=config.id,
-            name=config.name,
-            url=config.url,
-            content=response.text,
-            language=config.language,
-        )
