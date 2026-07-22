@@ -318,6 +318,8 @@ async def run(
         )
         _LOGGER.info("Resolving %d location(s)", len(settings.locations))
         resolutions = [await resolver.resolve_with_metadata(location) for location in settings.locations]
+        locations = tuple(resolution.location for resolution in resolutions)
+        await asyncio.to_thread(_save_resolved_location_fields, settings, locations)
         for resolution in resolutions:
             location = resolution.location
             if location.precision_reduced and not resolution.from_cache:
@@ -325,8 +327,6 @@ async def run(
                     "Location match requires confirmation",
                     _precision_reduction_notice(location, settings.locations_path),
                 )
-        locations = tuple(resolution.location for resolution in resolutions)
-        await asyncio.to_thread(_save_resolved_location_fields, settings, locations)
         for location in locations:
             _LOGGER.info("Processing location %s", location.id)
             _LOGGER.debug("Location %s display name: %s", location.id, location.name)

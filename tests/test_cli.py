@@ -961,17 +961,23 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     )
 
     alerts: list[tuple[str, str]] = []
+    events: list[str] = []
 
     class AlertDelivery:
         async def publish_alert(self, title: str, body: str) -> None:
+            events.append("alert")
             alerts.append((title, body))
+
+    def record_backfill(*args: object) -> bool:
+        events.append("backfill")
+        return False
 
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: AlertDelivery())
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: _ClosableLLMProviderStub())
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
-    monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", lambda *args: False)
+    monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", record_backfill)
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
@@ -1018,6 +1024,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     assert len(alerts) == 1
     assert alerts[0][0] == "Location match requires confirmation"
     assert "Confirm that this location is correct" in alerts[0][1]
+    assert events == ["backfill", "alert"]
 
 
 async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:

@@ -129,14 +129,16 @@ RSS 是可选功能，默认不会挂载。需要启用时，参考 [`rss-source
 
 默认时区为 `Asia/Shanghai`。其他地区只需修改 `BRIEFING_TIMEZONE`；上述启动命令会从 `.env` 读取该值，并以 `TZ` 传入容器。
 
-手动执行一次任务：
+每次打开新的 shell 后，先将 `CONTAINER_NAME` 设为实际使用的容器名：
 
 ```sh
+CONTAINER_NAME="weather-briefing"
+
 # 查看未来某天的预报
-docker exec "${CONTAINER_NAME:-weather-briefing}" \
+docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   run forecast --date 2026-07-23 --run-now
-docker exec "${CONTAINER_NAME:-weather-briefing}" \
+docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   run briefing --run-now
 ```
@@ -150,10 +152,19 @@ docker exec "${CONTAINER_NAME:-weather-briefing}" \
 新容器启动后，限时打开诊断：
 
 ```sh
-docker exec "${CONTAINER_NAME:-weather-briefing}" \
+CONTAINER_NAME="weather-briefing"
+
+docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   diagnostics rendered-text enable --for 15m
-docker exec "${CONTAINER_NAME:-weather-briefing}" \
+```
+
+复现问题并完成诊断后，再关闭诊断：
+
+```sh
+CONTAINER_NAME="weather-briefing"
+
+docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   diagnostics rendered-text disable
 ```
