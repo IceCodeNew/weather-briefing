@@ -50,7 +50,7 @@ Fill in `.env` and `locations.json`. Once configured, tighten file permissions a
 sudo chgrp -R 65532 "${ROOT_DIR}"
 find "${ROOT_DIR}" -type d -exec chmod 770 {} +
 find "${ROOT_DIR}" -type f -exec chmod 660 {} +
-WEATHER_BRIEFING_VERSION="2.2.0"
+WEATHER_BRIEFING_VERSION="2.3.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
 TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\r')"
 
