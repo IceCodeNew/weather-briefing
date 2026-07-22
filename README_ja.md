@@ -51,11 +51,13 @@ sudo chown -R 65532:65532 "${ROOT_DIR}"
 chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
+TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env")"
 
 docker pull "${IMAGE}"
 docker run -d \
   --name weather-briefing \
   --restart unless-stopped \
+  --env "TZ=${TZ}" \
   --env-file "${ROOT_DIR}/.env" \
   --mount \
   "type=bind,src=${ROOT_DIR}/locations.json,dst=/home/nonroot/app/locations.json,readonly" \
@@ -123,7 +125,7 @@ cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
 
 常駐スケジューラはデフォルトで毎日 08:00 に天気予報を送信し、09:00&ndash;23:00 の間、天気の変化をチェックします。タイムゾーンとスケジュールは `.env` で調整できます。
 
-デフォルトのタイムゾーンは `Asia/Shanghai` です。日本で使う場合は `TZ` と `BRIEFING_TIMEZONE` の両方を `Asia/Tokyo` に設定してください。
+デフォルトのタイムゾーンは `Asia/Shanghai` です。日本で使う場合は `BRIEFING_TIMEZONE` を `Asia/Tokyo` に変更してください。上記の起動コマンドが `.env` から値を読み取り、同じ値を `TZ` としてコンテナに渡します。
 
 単発のタスクを手動実行するには：
 

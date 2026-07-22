@@ -51,11 +51,13 @@ sudo chown -R 65532:65532 "${ROOT_DIR}"
 chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
+TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env")"
 
 docker pull "${IMAGE}"
 docker run -d \
   --name weather-briefing \
   --restart unless-stopped \
+  --env "TZ=${TZ}" \
   --env-file "${ROOT_DIR}/.env" \
   --mount \
   "type=bind,src=${ROOT_DIR}/locations.json,dst=/home/nonroot/app/locations.json,readonly" \
@@ -123,7 +125,7 @@ cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
 
 常驻调度器默认每天 08:00 发送预报，并在 09:00&ndash;23:00 检查天气变化。具体时区和时间可在 `.env` 中调整。
 
-默认时区为 `Asia/Shanghai`，其他地区请将 `TZ` 和 `BRIEFING_TIMEZONE` 设置为相同的适用时区。
+默认时区为 `Asia/Shanghai`。其他地区只需修改 `BRIEFING_TIMEZONE`；上述启动命令会从 `.env` 读取该值，并以 `TZ` 传入容器。
 
 手动执行一次任务：
 

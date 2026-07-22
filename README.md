@@ -51,11 +51,13 @@ sudo chown -R 65532:65532 "${ROOT_DIR}"
 chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
+TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env")"
 
 docker pull "${IMAGE}"
 docker run -d \
   --name weather-briefing \
   --restart unless-stopped \
+  --env "TZ=${TZ}" \
   --env-file "${ROOT_DIR}/.env" \
   --mount \
   "type=bind,src=${ROOT_DIR}/locations.json,dst=/home/nonroot/app/locations.json,readonly" \
@@ -123,7 +125,7 @@ Then add the following option to the `docker run` command, placing it before `"$
 
 The persistent scheduler sends a daily forecast at 08:00 by default, and checks for weather changes from 09:00&ndash;23:00. You can adjust the timezone and schedule in `.env`.
 
-The default timezone is `Asia/Shanghai`. Change `TZ` and `BRIEFING_TIMEZONE` to the same appropriate value for other regions.
+The default timezone is `Asia/Shanghai`. For other regions, change `BRIEFING_TIMEZONE`; the startup command above reads it from `.env` and passes the same value to the container as `TZ`.
 
 Run a one-off task:
 
