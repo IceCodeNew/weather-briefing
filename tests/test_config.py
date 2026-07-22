@@ -609,15 +609,64 @@ def test_backfill_location_fields_preserves_fields_added_after_configuration_loa
     assert location_file.read_text(encoding="utf-8") == original
 
 
-@pytest.mark.parametrize("name", ("", "   "))
-def test_backfill_location_fields_rejects_invalid_resolved_names(tmp_path: Path, name: str) -> None:
+@pytest.mark.parametrize("name", ("", "   ", None, 123))
+def test_backfill_location_fields_rejects_invalid_resolved_names(tmp_path: Path, name: object) -> None:
     location_file = tmp_path / "locations.json"
     original = '[{"id":"place","latitude":10.0,"longitude":20.0}]'
     location_file.write_text(original, encoding="utf-8")
     configured = (LocationSpec("place", latitude=10.0, longitude=20.0),)
-    resolved = (ResolvedLocation("place", name, 10.0, 20.0, "US", None, None, False),)
+    resolved_record = {
+        "id": "place",
+        "name": name,
+        "latitude": 10.0,
+        "longitude": 20.0,
+        "country_code": "US",
+        "administrative_area": None,
+        "timezone": None,
+        "is_mainland_china": False,
+    }
+    resolved = (ResolvedLocation(**json.loads(json.dumps(resolved_record))),)
 
     with pytest.raises(ConfigurationError, match="Resolved name for location place is invalid"):
+        backfill_location_fields(location_file, configured, resolved)
+
+    assert location_file.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("latitude", "10"),
+        ("latitude", None),
+        ("latitude", True),
+        ("longitude", "20"),
+        ("longitude", None),
+        ("longitude", False),
+    ),
+)
+def test_backfill_location_fields_rejects_non_numeric_resolved_coordinates(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    location_file = tmp_path / "locations.json"
+    original = '[{"id":"place","name":"Place"}]'
+    location_file.write_text(original, encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved_record = {
+        "id": "place",
+        "name": "Place",
+        "latitude": 10.0,
+        "longitude": 20.0,
+        "country_code": "US",
+        "administrative_area": None,
+        "timezone": None,
+        "is_mainland_china": False,
+    }
+    resolved_record[field] = value
+    resolved = (ResolvedLocation(**json.loads(json.dumps(resolved_record))),)
+
+    with pytest.raises(ConfigurationError, match=rf"Resolved {field} for location place is invalid"):
         backfill_location_fields(location_file, configured, resolved)
 
     assert location_file.read_text(encoding="utf-8") == original

@@ -330,6 +330,12 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
     return tuple(locations)
 
 
+def _valid_coordinate(value: object, minimum: float, maximum: float) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(value) and minimum <= value <= maximum
+
+
 def backfill_location_fields(
     path: Path,
     configured: tuple[LocationSpec, ...],
@@ -348,9 +354,9 @@ def backfill_location_fields(
                 raise ConfigurationError(f"Resolved name for location {location.id} is invalid")
             fields["name"] = resolved_location.name.strip()
         if location.latitude is None and location.longitude is None:
-            if not math.isfinite(resolved_location.latitude) or not -90 <= resolved_location.latitude <= 90:
+            if not _valid_coordinate(resolved_location.latitude, -90, 90):
                 raise ConfigurationError(f"Resolved latitude for location {location.id} is invalid")
-            if not math.isfinite(resolved_location.longitude) or not -180 <= resolved_location.longitude <= 180:
+            if not _valid_coordinate(resolved_location.longitude, -180, 180):
                 raise ConfigurationError(f"Resolved longitude for location {location.id} is invalid")
             fields["latitude"] = resolved_location.latitude
             fields["longitude"] = resolved_location.longitude
