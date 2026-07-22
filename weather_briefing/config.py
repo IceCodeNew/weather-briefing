@@ -159,7 +159,10 @@ def _locked_location_json_file(path: Path) -> list[dict[str, Any]]:
         return []
     try:
         with path.open(encoding="utf-8") as locations_file:
-            _lock_location_file(path, locations_file.fileno(), fcntl.LOCK_SH, "read location configuration")
+            try:
+                _lock_location_file(path, locations_file.fileno(), fcntl.LOCK_SH, "read location configuration")
+            except OSError as exc:
+                raise ConfigurationError(f"Failed to lock location configuration {path} for reading: {exc}") from exc
             content = locations_file.read()
     except OSError as exc:
         raise ConfigurationError(f"{path} must contain readable JSON") from exc
@@ -341,7 +344,9 @@ def backfill_location_fields(
             continue
         fields: dict[str, str | float] = {}
         if location.name is None:
-            fields["name"] = resolved_location.name
+            if not isinstance(resolved_location.name, str) or not resolved_location.name.strip():
+                raise ConfigurationError(f"Resolved name for location {location.id} is invalid")
+            fields["name"] = resolved_location.name.strip()
         if location.latitude is None and location.longitude is None:
             if not math.isfinite(resolved_location.latitude) or not -90 <= resolved_location.latitude <= 90:
                 raise ConfigurationError(f"Resolved latitude for location {location.id} is invalid")
