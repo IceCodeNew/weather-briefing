@@ -78,7 +78,7 @@ Every location must have a unique `id`. The `id` distinguishes locations; do not
 
 When only a name is provided, the program will resolve and cache the coordinates. When only coordinates are provided, it will reverse-lookup the name. When both are provided, no geocoding call is made.
 
-`language` controls the briefing language for that location. Supported values are `en` (default), `ja`, `zh-CN`, and `zh-TW`. For locations in Japan that require JMA forecasts, also provide the local six-digit `jma_office_code`.
+`language` controls the briefing language for that location and accepts a basic BCP 47-like tag, defaulting to `en`. Tags are normalized (`ja-jp` becomes `ja-JP`) and passed to the language model. Briefing labels are localized for `en`, `ja`, `zh-CN`, and `zh-TW`; variants use the closest available localization, while unsupported primary languages use English labels. For locations in Japan that require JMA forecasts, also provide the local six-digit `jma_office_code`.
 
 The program selects default weather sources by region:
 
