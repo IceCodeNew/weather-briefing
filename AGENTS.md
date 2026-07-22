@@ -86,6 +86,7 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 - When implicit behavior becomes configurable, choose the product-wide default deliberately. Update regional examples to state their intended old behavior.
 - Do not use `typing.cast()` in application or test code. Model type boundaries with protocols, typed test doubles, or runtime narrowing.
 - Keep comments concise and in English. Do not retain compatibility paths for abandoned internal formats without a current requirement.
+- Write application-owned log messages and operational alerts in English. Keep user-selected output and opaque provider or user data in their original language; do not translate payloads merely for logging.
 - Preserve compatibility between build and runtime environments. Do not assume copied artifacts work across distributions or interpreter builds.
 
 ## Tools and workspace

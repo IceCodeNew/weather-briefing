@@ -313,7 +313,7 @@ async def run(
             location = resolution.location
             if location.precision_reduced and not resolution.from_cache:
                 await delivery.publish_alert(
-                    "位置匹配需要确认",
+                    "Location match requires confirmation",
                     _precision_reduction_notice(location, settings.locations_path),
                 )
         locations = tuple(resolution.location for resolution in resolutions)
@@ -588,11 +588,12 @@ def _location_state_path(base_path: Path, location: ResolvedLocation, location_c
 
 
 def _precision_reduction_notice(location: ResolvedLocation, locations_path: Path) -> str:
-    matched_name = location.matched_name or "未提供匹配名称"
+    matched_name = location.matched_name or "no matched name provided"
     return (
-        f"配置地点“{location.name}”无法直接解析，已降低精度匹配为“{matched_name}”（纬度 "
-        f"{location.latitude:.7f}，经度 {location.longitude:.7f}）。请确认该位置是否正确；确认后将坐标写入 "
-        f"{locations_path}，可避免后续再次查询和猜测。"
+        f'The configured location "{location.name}" could not be resolved exactly and was matched at reduced '
+        f'precision as "{matched_name}" (latitude {location.latitude:.7f}, longitude {location.longitude:.7f}). '
+        f"Confirm that this location is correct. Add the coordinates to {locations_path} to avoid future lookups "
+        "and approximation."
     )
 
 

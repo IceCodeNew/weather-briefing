@@ -234,8 +234,9 @@ class BriefingService:
                             )
                         else:
                             await self._ops_delivery.publish_alert(
-                                "天气简报任务执行失败",
-                                "任务执行失败，请检查运行日志、天气 API 及私密源配置。",
+                                "Weather briefing task failed",
+                                "The task failed. Check the application logs, weather APIs, and private source "
+                                "configuration.",
                             )
                             self._state.mark_task_failure_alerted(current_time)
                 except Exception:
@@ -293,9 +294,9 @@ class BriefingService:
         )
         if rss_failure_alert_ids:
             await self._publish_rss_health_alert(
-                "天气 RSS 源持续获取失败",
-                f"以下 RSS 源已连续至少 {self._settings.rss_failure_threshold} 个调度轮次获取失败："
-                f"{', '.join(rss_failure_alert_ids)}",
+                "Weather RSS sources repeatedly failed",
+                f"The following RSS sources failed for at least {self._settings.rss_failure_threshold} "
+                f"consecutive scheduled runs: {', '.join(rss_failure_alert_ids)}",
                 lambda: self._state.mark_rss_failure_alerted(tuple(rss_failure_alert_ids), now),
             )
         stale = self._state.stale_sources_requiring_alert(
@@ -306,8 +307,9 @@ class BriefingService:
         if stale:
             _LOGGER.warning("Stale RSS source(s): %s", ", ".join(stale))
             await self._publish_rss_health_alert(
-                "天气 RSS 源长时间无更新",
-                f"以下源超过 {self._settings.rss_stale_hours} 小时无新文章：{', '.join(stale)}",
+                "Weather RSS sources have not updated",
+                f"The following sources have no new articles within the configured "
+                f"{self._settings.rss_stale_hours}-hour threshold: {', '.join(stale)}",
                 lambda: self._state.mark_stale_sources_alerted(tuple(stale), now),
             )
         local_now = now.in_timezone(self._settings.timezone)
@@ -519,8 +521,9 @@ class BriefingService:
             if not source_ids:
                 return
             await self._ops_delivery.publish_alert(
-                "天气历史上下文超出 LLM 输入预算",
-                "以下来源的最新值或窗口基线在确定性压缩后仍无法纳入输入：" + ", ".join(source_ids),
+                "Weather history exceeds the LLM input budget",
+                "The latest value or window baseline for the following sources still cannot fit after "
+                "deterministic compaction: " + ", ".join(source_ids),
             )
             self._state.mark_context_budget_alerted(
                 {source_id: fingerprints[source_id] for source_id in source_ids},

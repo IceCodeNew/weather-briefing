@@ -608,7 +608,11 @@ async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Pat
         await service._publish_context_budget_alert((overflow,), now.add(hours=3))
 
     assert len(publisher.messages) == 2
-    assert all("private-source" in message.body for message, _, _ in publisher.messages)
+    assert all(
+        message.body.startswith("Weather history exceeds the LLM input budget")
+        and "deterministic compaction: private-source" in message.body
+        for message, _, _ in publisher.messages
+    )
 
 
 async def test_context_budget_alert_delivery_failure_is_retried(tmp_path: Path, caplog) -> None:
@@ -1465,7 +1469,8 @@ async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
             await service.run("briefing", now)
         assert error.value.__notes__ == ["Briefing run failed"]
         assert len(publisher.messages) == 1
-        assert "任务执行失败" in publisher.messages[0][0].body
+        assert publisher.messages[0][0].body.startswith("Weather briefing task failed")
+        assert "Check the application logs" in publisher.messages[0][0].body
 
         # Second consecutive failure: no new alert
         with pytest.raises(WeatherContextError, match="weather context unavailable") as error:
@@ -1516,7 +1521,8 @@ async def test_task_failure_alert_delivery_failure_is_retried(
         with pytest.raises(WeatherContextError, match="weather context unavailable"):
             await service.run("briefing", now.add(hours=1))
         assert len(ops_publisher.messages) == 1
-        assert "任务执行失败" in ops_publisher.messages[0][0].body
+        assert ops_publisher.messages[0][0].body.startswith("Weather briefing task failed")
+        assert "Check the application logs" in ops_publisher.messages[0][0].body
 
         with pytest.raises(WeatherContextError, match="weather context unavailable"):
             await service.run("briefing", now.add(hours=2))
@@ -1944,7 +1950,8 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
         await service.run("briefing", now)
 
     assert len(ops_publisher.messages) >= 1
-    assert "长时间无更新" in ops_publisher.messages[0][0].body
+    assert ops_publisher.messages[0][0].body.startswith("Weather RSS sources have not updated")
+    assert "no new articles within the configured 1-hour threshold" in ops_publisher.messages[0][0].body
 
 
 class FailingOnceLLM:
@@ -2349,7 +2356,8 @@ async def test_rss_failure_alert_is_sent_after_threshold(
         # Second failure: alert should trigger
         await service.run("briefing", now.add(hours=1))
         assert len(ops_publisher.messages) == 1
-        assert "已连续至少 2 个调度轮次获取失败" in ops_publisher.messages[0][0].body
+        assert ops_publisher.messages[0][0].body.startswith("Weather RSS sources repeatedly failed")
+        assert "failed for at least 2 consecutive scheduled runs" in ops_publisher.messages[0][0].body
 
         # Third failure: no new alert (already alerted)
         await service.run("briefing", now.add(hours=2))
@@ -2400,4 +2408,4 @@ async def test_failed_rss_alert_delivery_is_retried(
         assert state.rss_sources_requiring_failure_alert(("fail-feed",), 1) == []
 
     assert "Failed to publish or record RSS health alert" in caplog.text
-    assert any("持续获取失败" in message.body for message, _, _ in ops_publisher.messages)
+    assert any("Weather RSS sources repeatedly failed" in message.body for message, _, _ in ops_publisher.messages)
