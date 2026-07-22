@@ -28,7 +28,7 @@ from .air_quality import (
 )
 from .api_client import LoggedAsyncClient
 from .capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
-from .config import Settings, backfill_location_fields, state_path_from_env, weather_providers_for
+from .config import ConfigurationError, Settings, backfill_location_fields, state_path_from_env, weather_providers_for
 from .geocoding import (
     CachedLocationResolver,
     FallbackGeocodingProvider,
@@ -259,6 +259,20 @@ def _configure_logging(*, debug: bool) -> None:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
+def _save_resolved_location_fields(settings: Settings, locations: tuple[ResolvedLocation, ...]) -> None:
+    try:
+        changed = backfill_location_fields(settings.locations_path, settings.locations, locations)
+    except ConfigurationError as exc:
+        _LOGGER.warning(
+            "Could not save resolved location fields; continuing without updating %s: %s",
+            settings.locations_path,
+            exc,
+        )
+        return
+    if changed:
+        _LOGGER.info("Saved missing resolved fields to the location configuration")
+
+
 async def run(
     kind: str,
     enforce_window: bool,
@@ -312,8 +326,7 @@ async def run(
                     _precision_reduction_notice(location, settings.locations_path),
                 )
         locations = tuple(resolution.location for resolution in resolutions)
-        if backfill_location_fields(settings.locations_path, settings.locations, locations):
-            _LOGGER.info("Saved missing resolved fields to the location configuration")
+        _save_resolved_location_fields(settings, locations)
         for location in locations:
             _LOGGER.info("Processing location %s", location.id)
             _LOGGER.debug("Location %s display name: %s", location.id, location.name)

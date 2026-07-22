@@ -39,6 +39,7 @@ from weather_briefing.cli import (
     _parse_run_time,
     _precision_reduction_notice,
     _qweather_is_configured,
+    _save_resolved_location_fields,
     _weather_context_provider,
     _weather_provider_metadata,
     build_parser,
@@ -46,7 +47,7 @@ from weather_briefing.cli import (
     main,
     run,
 )
-from weather_briefing.config import Settings
+from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
@@ -61,6 +62,22 @@ class _ClosableLLMProviderStub:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+def test_location_backfill_failure_logs_warning_and_continues(monkeypatch, caplog) -> None:
+    settings = _make_fake_settings(locations=(LocationSpec(id="test", name="Test City"),))
+    location = ResolvedLocation("test", "Test City", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
+
+    def fail_backfill(*_args: object) -> bool:
+        raise ConfigurationError("locations.json is locked")
+
+    monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", fail_backfill)
+
+    with caplog.at_level(logging.WARNING, logger="weather_briefing"):
+        _save_resolved_location_fields(settings, (location,))
+
+    assert "Could not save resolved location fields; continuing without updating" in caplog.text
+    assert "locations.json is locked" in caplog.text
 
 
 def test_configure_logging_is_idempotent_and_updates_level() -> None:
