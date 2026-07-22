@@ -1,4 +1,8 @@
+import fcntl
 import json
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import replace
 from pathlib import Path
 
@@ -574,6 +578,45 @@ def test_backfill_location_fields_preserves_fields_added_after_configuration_loa
 
     assert not changed
     assert location_file.read_text(encoding="utf-8") == original
+
+
+def test_backfill_location_fields_locks_read_modify_write_transaction(tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
+    ready = threading.Event()
+
+    def backfill_after_ready() -> bool:
+        ready.set()
+        return backfill_location_fields(location_file, configured, resolved)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with location_file.open("r+", encoding="utf-8") as locked_file:
+            fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
+            future = executor.submit(backfill_after_ready)
+            assert ready.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=1)
+
+            items = json.load(locked_file)
+            items[0]["custom"] = "concurrent update"
+            locked_file.seek(0)
+            json.dump(items, locked_file)
+            locked_file.truncate()
+            locked_file.flush()
+            os.fsync(locked_file.fileno())
+        assert future.result(timeout=10)
+
+    assert json.loads(location_file.read_text(encoding="utf-8")) == [
+        {
+            "id": "place",
+            "name": "Place",
+            "custom": "concurrent update",
+            "latitude": 10.0,
+            "longitude": 20.0,
+        }
+    ]
 
 
 def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: Path) -> None:

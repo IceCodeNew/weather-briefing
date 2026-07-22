@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -116,16 +117,24 @@ def _boolean(name: str, default: bool) -> bool:
     raise ConfigurationError(f"{name} must be one of: true, false, 1, 0, yes, no")
 
 
-def _json_file(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
+def _json_array(path: Path, content: str) -> list[dict[str, Any]]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = json.loads(content)
+    except json.JSONDecodeError as exc:
         raise ConfigurationError(f"{path} must contain readable JSON") from exc
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ConfigurationError(f"{path} must be a JSON array of objects")
     return value
+
+
+def _json_file(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ConfigurationError(f"{path} must contain readable JSON") from exc
+    return _json_array(path, content)
 
 
 def _optional_string_array(
@@ -312,22 +321,23 @@ def backfill_location_fields(
     if not updates:
         return False
 
-    items = _json_file(path)
-    changed = False
-    for item in items:
-        location_id = item.get("id")
-        if not isinstance(location_id, str) or location_id not in updates:
-            continue
-        for field, value in updates[location_id].items():
-            if item.get(field) is None:
-                item[field] = value
-                changed = True
-    if not changed:
-        return False
-
-    payload = json.dumps(items, ensure_ascii=False, indent=2) + "\n"
     try:
         with path.open("r+", encoding="utf-8") as locations_file:
+            fcntl.flock(locations_file.fileno(), fcntl.LOCK_EX)
+            items = _json_array(path, locations_file.read())
+            changed = False
+            for item in items:
+                location_id = item.get("id")
+                if not isinstance(location_id, str) or location_id not in updates:
+                    continue
+                for field, value in updates[location_id].items():
+                    if item.get(field) is None:
+                        item[field] = value
+                        changed = True
+            if not changed:
+                return False
+
+            payload = json.dumps(items, ensure_ascii=False, indent=2) + "\n"
             locations_file.seek(0)
             locations_file.write(payload)
             locations_file.truncate()
