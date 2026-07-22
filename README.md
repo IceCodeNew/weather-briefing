@@ -129,15 +129,22 @@ By default, the persistent scheduler sends a daily forecast at 08:00 and checks 
 
 The default timezone is `Asia/Shanghai`. For other regions, change `BRIEFING_TIMEZONE`; the startup command above reads it from `.env` and passes the same value to the container as `TZ`.
 
-In each new shell, set `CONTAINER_NAME` to the deployed container name before running a task:
+In each new shell, set `CONTAINER_NAME` to the deployed container name before running a task. Change the value below if you used a custom name:
 
 ```sh
 CONTAINER_NAME="weather-briefing"
+```
+
+Set `FORECAST_DATE` to a future date in the briefing timezone:
+
+```sh
+: "${CONTAINER_NAME:?Set CONTAINER_NAME to the deployed container name}"
+FORECAST_DATE="YYYY-MM-DD"
 
 # View the forecast for a future date
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
-  run forecast --date 2026-07-23 --run-now
+  run forecast --date "${FORECAST_DATE}" --run-now
 # Run an immediate briefing
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
@@ -153,7 +160,7 @@ To temporarily inspect rendered message text, first set `DEBUG=true` in `.env`, 
 After the new container is running, enable diagnostics for a limited time:
 
 ```sh
-CONTAINER_NAME="weather-briefing"
+: "${CONTAINER_NAME:?Set CONTAINER_NAME to the deployed container name}"
 
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
@@ -163,7 +170,7 @@ docker exec "${CONTAINER_NAME}" \
 After reproducing the issue or completing the diagnostic run, disable diagnostics:
 
 ```sh
-CONTAINER_NAME="weather-briefing"
+: "${CONTAINER_NAME:?Set CONTAINER_NAME to the deployed container name}"
 
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \

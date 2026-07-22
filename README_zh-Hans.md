@@ -129,15 +129,22 @@ RSS 是可选功能，默认不会挂载。需要启用时，参考 [`rss-source
 
 默认时区为 `Asia/Shanghai`。其他地区只需修改 `BRIEFING_TIMEZONE`；上述启动命令会从 `.env` 读取该值，并以 `TZ` 传入容器。
 
-每次打开新的 shell 后，先将 `CONTAINER_NAME` 设为实际使用的容器名：
+每次打开新的 shell 后，先将 `CONTAINER_NAME` 设为实际使用的容器名。使用自定义名称时，请修改下面的值：
 
 ```sh
 CONTAINER_NAME="weather-briefing"
+```
+
+将 `FORECAST_DATE` 设为简报时区内的未来日期：
+
+```sh
+: "${CONTAINER_NAME:?Set CONTAINER_NAME to the deployed container name}"
+FORECAST_DATE="YYYY-MM-DD"
 
 # 查看未来某天的预报
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
-  run forecast --date 2026-07-23 --run-now
+  run forecast --date "${FORECAST_DATE}" --run-now
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   run briefing --run-now
@@ -152,7 +159,7 @@ docker exec "${CONTAINER_NAME}" \
 新容器启动后，限时打开诊断：
 
 ```sh
-CONTAINER_NAME="weather-briefing"
+: "${CONTAINER_NAME:?Set CONTAINER_NAME to the deployed container name}"
 
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
@@ -162,7 +169,7 @@ docker exec "${CONTAINER_NAME}" \
 复现问题并完成诊断后，再关闭诊断：
 
 ```sh
-CONTAINER_NAME="weather-briefing"
+: "${CONTAINER_NAME:?Set CONTAINER_NAME to the deployed container name}"
 
 docker exec "${CONTAINER_NAME}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
