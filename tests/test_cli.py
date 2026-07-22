@@ -215,8 +215,8 @@ def test_precision_reduction_notice_uses_english_fallback_for_missing_match() ->
     location = ResolvedLocation(
         "example",
         "Test City",
-        39.911389,
-        116.380556,
+        1.0,
+        1.0,
         "CN",
         "Beijing",
         "Asia/Shanghai",
