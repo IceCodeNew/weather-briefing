@@ -1,10 +1,10 @@
 import fcntl
 import json
+import multiprocessing
 import os
-import threading
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import replace
 from pathlib import Path
+from typing import Protocol
 
 import pytest
 
@@ -16,6 +16,29 @@ from weather_briefing.config import (
     weather_providers_for,
 )
 from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
+
+
+class _ProcessEvent(Protocol):  # pragma: no cover - exercised only in spawned processes
+    def set(self) -> None: ...
+
+
+def _backfill_location_fields_in_process(
+    path: Path,
+    configured: tuple[LocationSpec, ...],
+    resolved: tuple[ResolvedLocation, ...],
+    ready: _ProcessEvent,
+) -> None:  # pragma: no cover - child-process coverage is not combined
+    ready.set()
+    assert backfill_location_fields(path, configured, resolved)
+
+
+def _read_locations_in_process(
+    path: Path,
+    expected: tuple[LocationSpec, ...],
+    ready: _ProcessEvent,
+) -> None:  # pragma: no cover - child-process coverage is not combined
+    ready.set()
+    assert _locations(path) == expected
 
 
 def _required_environment(monkeypatch) -> None:
@@ -620,28 +643,30 @@ def test_backfill_location_fields_locks_read_modify_write_transaction(tmp_path: 
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
     configured = (LocationSpec("place", "Place"),)
     resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
-    ready = threading.Event()
+    process_context = multiprocessing.get_context("spawn")
+    ready = process_context.Event()
+    process = process_context.Process(
+        target=_backfill_location_fields_in_process,
+        args=(location_file, configured, resolved, ready),
+    )
 
-    def backfill_after_ready() -> bool:
-        ready.set()
-        return backfill_location_fields(location_file, configured, resolved)
+    with location_file.open("r+", encoding="utf-8") as locked_file:
+        fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
+        process.start()
+        assert ready.wait(timeout=10)
+        process.join(timeout=1)
+        assert process.is_alive()
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        with location_file.open("r+", encoding="utf-8") as locked_file:
-            fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
-            future = executor.submit(backfill_after_ready)
-            assert ready.wait(timeout=10)
-            with pytest.raises(TimeoutError):
-                future.result(timeout=1)
+        items = json.load(locked_file)
+        items[0]["custom"] = "concurrent update"
+        locked_file.seek(0)
+        json.dump(items, locked_file)
+        locked_file.truncate()
+        locked_file.flush()
+        os.fsync(locked_file.fileno())
 
-            items = json.load(locked_file)
-            items[0]["custom"] = "concurrent update"
-            locked_file.seek(0)
-            json.dump(items, locked_file)
-            locked_file.truncate()
-            locked_file.flush()
-            os.fsync(locked_file.fileno())
-        assert future.result(timeout=10)
+    process.join(timeout=10)
+    assert process.exitcode == 0
 
     assert json.loads(location_file.read_text(encoding="utf-8")) == [
         {
@@ -657,28 +682,26 @@ def test_backfill_location_fields_locks_read_modify_write_transaction(tmp_path: 
 def test_locations_waits_for_locked_writer_before_reading(tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
-    ready = threading.Event()
+    expected = (LocationSpec("place", "Place", 10.0, 20.0),)
+    process_context = multiprocessing.get_context("spawn")
+    ready = process_context.Event()
+    process = process_context.Process(target=_read_locations_in_process, args=(location_file, expected, ready))
 
-    def read_after_ready() -> tuple[LocationSpec, ...]:
-        ready.set()
-        return _locations(location_file)
+    with location_file.open("r+", encoding="utf-8") as locked_file:
+        fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
+        process.start()
+        assert ready.wait(timeout=10)
+        process.join(timeout=1)
+        assert process.is_alive()
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        with location_file.open("r+", encoding="utf-8") as locked_file:
-            fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
-            future = executor.submit(read_after_ready)
-            assert ready.wait(timeout=10)
-            with pytest.raises(TimeoutError):
-                future.result(timeout=1)
+        locked_file.seek(0)
+        locked_file.write('[{"id":"place","name":"Place","latitude":10.0,"longitude":20.0}]')
+        locked_file.truncate()
+        locked_file.flush()
+        os.fsync(locked_file.fileno())
 
-            locked_file.seek(0)
-            locked_file.write('[{"id":"place","name":"Place","latitude":10.0,"longitude":20.0}]')
-            locked_file.truncate()
-            locked_file.flush()
-            os.fsync(locked_file.fileno())
-        locations = future.result(timeout=10)
-
-    assert locations == (LocationSpec("place", "Place", 10.0, 20.0),)
+    process.join(timeout=10)
+    assert process.exitcode == 0
 
 
 def test_locations_rejects_missing_file(tmp_path: Path) -> None:
@@ -713,6 +736,28 @@ def test_backfill_location_fields_times_out_when_file_remains_locked(monkeypatch
 
     with pytest.raises(ConfigurationError, match="is locked; cannot save resolved location fields"):
         backfill_location_fields(location_file, configured, resolved)
+
+
+def test_backfill_location_fields_retries_a_busy_lock(monkeypatch, tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
+    flock = fcntl.flock
+    attempts = 0
+
+    def briefly_busy(file_descriptor: int, operation: int) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise BlockingIOError
+        flock(file_descriptor, operation)
+
+    monkeypatch.setattr(fcntl, "flock", briefly_busy)
+    monkeypatch.setattr("weather_briefing.config._LOCATION_FILE_LOCK_RETRY_SECONDS", 0)
+
+    assert backfill_location_fields(location_file, configured, resolved)
+    assert attempts == 2
 
 
 def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: Path) -> None:
