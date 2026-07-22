@@ -5,5 +5,13 @@
     "language": "zh-CN",
     "latitude": 39.911389,
     "longitude": 116.380556
+  },
+  {
+    "id": "kasumigaseki",
+    "name": "東京都千代田区霞が関",
+    "language": "ja",
+    "jma_office_code": "130000",
+    "latitude": 35.6738,
+    "longitude": 139.7524
   }
 ]
