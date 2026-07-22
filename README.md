@@ -1,40 +1,41 @@
 # Weather Briefing
 
-Weather Briefing 定时汇总天气、空气质量、预警和可选信息源，再通过大语言模型生成带来源链接的 Telegram 简报。
+[English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
-## 核心能力
+Weather Briefing periodically aggregates weather, air quality, warnings, and optional information sources, then generates briefings with source citations via large language models.
 
-- 每天发送天气、空气质量、预警和生活建议。
-- 持续比较天气变化，只在用户可能需要采取行动时提醒。
-- 保存历史、未发送信息和有效预警，避免重复或遗漏重要变化。
-- 支持多个地点和多种输出语言，各地点的状态互不影响。
-- 按地区组合全球与当地天气服务，并在主要来源失败时降级。
-- 可以补充私密 RSS 或网页内容，每条结论都保留可核验的来源链接。
+## Core capabilities
 
-## 部署前准备
+- Delivers daily weather, air quality, warnings, and lifestyle advice.
+- Continuously compares weather changes, alerting only when you may need to act.
+- Persists history, unsent messages, and active warnings so nothing repeats or falls through the cracks.
+- Supports multiple locations and output languages with independent state per location.
+- Composes global and local weather services by region, falling back when a primary source fails.
+- Optionally supplements private RSS or web content; every conclusion retains a verifiable source link.
 
-部署前需要准备：
+## Prerequisites
 
-- 一个能长期运行程序并保存运行状态的环境；
-- 一个投递平台的账号和凭据；当前内置 Telegram，需要 Bot Token 和 Chat ID；
-- 一个受支持的大语言模型账号、模型名称和凭据。可查阅 [any-llm provider 列表](https://docs.mozilla.ai/any-llm/providers)；
-- 至少一个关注地点；
-- 一个可持久保存运行状态和定位结果的目录。
+Before deploying, you will need:
 
-默认天气服务不需要密钥。中国大陆用户如需使用和风天气，还要准备项目 ID、凭据 ID、专属 API Host 和 Base64 编码的 Ed25519 私钥。认证方式见[和风天气 JWT 文档](https://dev.qweather.com/docs/configuration/authentication/#json-web-token)。
+- An environment that can run the program long-term and persist runtime state.
+- A delivery platform account and credentials. Telegram is currently built-in; you will need a Bot Token and Chat ID.
+- A supported large language model account, model name, and credentials. See the [any-llm provider list](https://docs.mozilla.ai/any-llm/providers).
+- At least one location of interest.
+- A directory that can persist runtime state and geocoding results.
 
-仓库提供以下配置模板：
+The default weather services require no API key. Users in mainland China who want QWeather will also need a Project ID, Credential ID, a dedicated API Host, and a Base64-encoded Ed25519 private key. See the [QWeather JWT documentation](https://dev.qweather.com/docs/configuration/authentication/#json-web-token) for authentication details.
 
-- [`env.example`](env.example)：环境变量及用途；
-- [`locations.example.json`](locations.example.json)：关注地点；
-- [`rss-sources.example.json`](rss-sources.example.json)：可选 RSS 来源。
+The repository provides the following configuration templates:
 
-## 使用发布镜像
+- [`env.example`](env.example) &mdash; environment variables and their purposes.
+- [`locations.example.json`](locations.example.json) &mdash; locations of interest.
+- [`rss-sources.example.json`](rss-sources.example.json) &mdash; optional RSS sources.
 
-Docker 只是部署选项。下面的示例使用 Docker Hub 上的固定版本镜像；
-也可以用其他方式运行项目，只要它能长期运行程序并保存上述配置和状态。
+## Using the published image
 
-先创建目录，并复制配置模板：
+Docker is one deployment option. The examples below use a fixed-version image from Docker Hub. You can also run the project in other ways, as long as it can run persistently and preserve the configuration and state described above.
+
+First, create a directory and copy the configuration templates:
 
 ```sh
 export ROOT_DIR="${HOME}/weather-briefing"
@@ -43,17 +44,21 @@ cp env.example "${ROOT_DIR}/.env"
 cp locations.example.json "${ROOT_DIR}/locations.json"
 ```
 
-填写 `.env` 和 `locations.json`。配置完成后收紧文件权限并启动服务：
+Fill in `.env` and `locations.json`. Once configured, tighten file permissions and start the service. The commands below treat GID `65532` as a trusted container service group with write access; do not assign unrelated host users to that group.
 
 ```sh
-sudo chown -R 65532:65532 "${ROOT_DIR}"
-chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
+sudo chgrp -R 65532 "${ROOT_DIR}"
+find "${ROOT_DIR}" -type d -exec chmod 770 {} +
+find "${ROOT_DIR}" -type f -exec chmod 660 {} +
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
+TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\r')"
+
 docker pull "${IMAGE}"
 docker run -d \
   --name weather-briefing \
   --restart unless-stopped \
+  --env "TZ=${TZ:-Asia/Shanghai}" \
   --env-file "${ROOT_DIR}/.env" \
   --mount \
   "type=bind,src=${ROOT_DIR}/locations.json,dst=/home/nonroot/app/locations.json,readonly" \
@@ -62,80 +67,89 @@ docker run -d \
   "${IMAGE}" daemon
 ```
 
-升级时修改镜像版本，删除旧容器，再用相同配置重新创建。
+To upgrade, change the image version, remove the old container, and recreate it with the same configuration.
 
-## 配置地点
+## Configuring locations
 
-每个地点都必须填写唯一的 `id`。`id` 用于区分地点，配置后不要随意修改。每个地点还要至少提供以下两项之一：
+Every location must have a unique `id`. The `id` distinguishes locations; do not change it casually after configuration. Each location must also provide a name, a coordinate pair, or both:
 
-- `name`，表示地点名称；
-- 成对的 `latitude` 和 `longitude`，表示经纬度坐标；
-- 地点名称和经纬度坐标。
+- `name`, the location name;
+- `latitude` and `longitude`, provided together.
 
-只填地点名称时，程序会查询并缓存坐标；只填经纬度坐标时，程序会反查地点名称。两项都填写时，不会调用定位服务。
+When only a name is provided, the program will resolve and cache the coordinates. When only coordinates are provided, it will reverse-lookup the name. When both are provided, no geocoding call is made.
 
-`language` 控制该地点简报的语言，默认是英文 `en`。中国大陆示例显式填写 `zh-CN`，表示简体中文（中国）。日本地点如需 JMA 预报，还要填写当地六位 `jma_office_code`。
+`language` controls the briefing language for that location and accepts a basic BCP 47-like tag, defaulting to `en`. Tags are normalized (`ja-jp` becomes `ja-JP`) and passed to the language model. Briefing labels are localized for `en`, `ja`, `zh-CN`, and `zh-TW`; variants use the closest available localization, while unsupported primary languages use English labels. For locations in Japan that require JMA forecasts, also provide the local six-digit `jma_office_code`.
 
-程序会根据地点选择默认天气来源：
+The program selects default weather sources by region:
 
-- 中国大陆：和风天气优先，Open-Meteo 备用；
-- 新加坡：先读取 Open-Meteo 完整天气，再追加 NEA 两小时预报；
-- 日本：先读取 Open-Meteo 完整天气；配置 JMA office code 后，再追加 JMA 预报；
-- 其他地区：Open-Meteo。
+- Mainland China: QWeather first, Open-Meteo as fallback;
+- Singapore: Open-Meteo full weather, supplemented with NEA two-hour forecasts;
+- Japan: Open-Meteo full weather; when a JMA office code is configured, JMA forecasts are appended;
+- Other regions: Open-Meteo.
 
-也可以用 `WEATHER_PROVIDERS` 明确指定调用顺序。完整天气服务应排在只提供局部信息的服务之前。这个顺序只决定程序如何取得数据。
+You can also set `WEATHER_PROVIDERS` to replace the regional default order. Include `nea-sg` or `jma-jp` explicitly if you still want those regional supplements. Full-weather services should come before services that only provide partial information. This order only affects how the program fetches data.
 
-NEA 或 JMA 与 Open-Meteo 在同一时间和地区发生内容冲突时，简报优先采用当地官方机构的最新资料，并保留冲突来源供用户核验。
+When NEA or JMA content conflicts with Open-Meteo for the same time and region, the briefing prioritizes the latest data from the local official agency and retains conflicting sources for your verification.
 
-## 配置模型与投递
+### JMA office codes
 
-`.env` 中至少要填写：
+See [`docs/jma-office-codes.md`](docs/jma-office-codes.md) for the forecast office codes covering all 47 prefectures and usage instructions.
 
-- `LLM_PROVIDER` 和 `LLM_MODEL`；
-- 对应模型服务要求的凭据；
-- 当前 Telegram 投递所需的 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`。
+## Configuring the model and publisher
 
-首次使用 Telegram 投递时，请先在 Telegram 中打开该机器人并向它发送 `/start` 消息。
-机器人只有在用户主动启动会话后，才能向对应的 Chat ID 发送消息；否则天气简报会因目标会话不可达而投递失败。
+At minimum, fill in the following in `.env`:
 
-模型调用由 any-llm 处理。不同服务需要的凭据变量以 [any-llm provider 文档](https://docs.mozilla.ai/any-llm/providers) 为准。
-官方镜像预装 DeepSeek、OpenAI 和 OpenRouter 所需组件。
+- `LLM_PROVIDER` and `LLM_MODEL`;
+- the credentials required by your chosen model service;
+- for Telegram delivery: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. These are not needed when testing with `PUBLISHER=stdout`.
 
-RSS 是可选功能。启用时，请在私密配置中填写来源名称、URL 和适用地点。
-使用上面的 Docker 示例时，先准备文件：
+When using Telegram for the first time, open the bot in Telegram and send `/start`. The bot can only send messages to a Chat ID after the user has initiated a conversation; otherwise the briefing will fail because the target session is unreachable.
+
+Model calls are handled by any-llm. The credential variables needed by each service follow the [any-llm provider documentation](https://docs.mozilla.ai/any-llm/providers). The official image ships with the components required for DeepSeek, OpenAI, and OpenRouter.
+
+RSS is optional. When enabled, fill in the private configuration with source names, URLs, and applicable locations.
+
+When using the Docker example above, first prepare the file:
 
 ```sh
 cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
+sudo chgrp 65532 "${ROOT_DIR}/rss-sources.json"
+chmod 660 "${ROOT_DIR}/rss-sources.json"
 ```
 
-再把以下选项添加到 `docker run` 命令，并放在 `"${IMAGE}" daemon` 之前：
+Then add the following option to the `docker run` command, placing it before `"${IMAGE}" daemon`:
 
 ```sh
 --mount \
   "type=bind,src=${ROOT_DIR}/rss-sources.json,dst=/home/nonroot/app/rss-sources.json,readonly"
 ```
 
-## 运行与排障
+## Running and troubleshooting
 
-常驻调度器默认每天 08:00 发送预报，并在 09:00–23:00 检查天气变化。具体时区和时间可在 `.env` 中调整。
+The persistent scheduler sends a daily forecast at 08:00 by default, and checks for weather changes from 09:00&ndash;23:00. You can adjust the timezone and schedule in `.env`.
 
-手动执行一次任务：
+The default timezone is `Asia/Shanghai`. For other regions, change `BRIEFING_TIMEZONE`; the startup command above reads it from `.env` and passes the same value to the container as `TZ`.
+
+Run a one-off task:
 
 ```sh
-# 查看未来某天的预报
+# View the forecast for a future date
 docker exec weather-briefing \
   /home/nonroot/app/.venv/bin/weather-briefing \
   run forecast --date 2026-07-23 --run-now
+# Run an immediate briefing
 docker exec weather-briefing \
   /home/nonroot/app/.venv/bin/weather-briefing \
   run briefing --run-now
 ```
 
-应用把运行日志写到标准错误。普通日志不记录凭据、坐标、正文或私密 URL。
+Once verified with stdout, switch `.env` back to `PUBLISHER=telegram`, fill in `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, and recreate the container.
 
-如需临时查看完整渲染正文，先在 `.env` 中设置 `DEBUG=true`，再按上面的启动命令重新创建容器。`docker restart` 不会重新读取 `--env-file`。
+The application writes operational logs to stderr. Normal logs do not record credentials, coordinates, message bodies, or private URLs.
 
-新容器启动后，限时打开诊断：
+To temporarily inspect rendered message text, first set `DEBUG=true` in `.env`, then recreate the container with the start command above. `docker restart` does not re-read `--env-file`.
+
+After the new container is running, enable diagnostics for a limited time:
 
 ```sh
 docker exec weather-briefing \
@@ -146,8 +160,8 @@ docker exec weather-briefing \
   diagnostics rendered-text disable
 ```
 
-完整正文日志可能包含位置和来源内容。排障后应立即关闭并妥善保护日志。
+Diagnostic text may contain location and source content. Disable diagnostics immediately after troubleshooting and protect the logs.
 
-产品要解决的场景见 [`docs/requirements.md`](docs/requirements.md)。当前实现见 [`docs/design.md`](docs/design.md)。不易理解的技术取舍见 [`docs/notes.md`](docs/notes.md)。
+For the scenarios the product addresses, see [`docs/requirements.md`](docs/requirements.md). For the current implementation, see [`docs/design.md`](docs/design.md). For technical tradeoffs that may appear questionable, see [`docs/notes.md`](docs/notes.md).
 
-天气和花粉数据可能来自 Open-Meteo 与 CAMS ENSEMBLE。地点查询可能使用 OpenStreetMap Nominatim，数据版权归其贡献者所有。
+Weather and pollen data may originate from Open-Meteo and CAMS ENSEMBLE. Location queries may use OpenStreetMap Nominatim; data copyright belongs to its contributors.
