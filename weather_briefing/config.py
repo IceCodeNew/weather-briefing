@@ -379,10 +379,14 @@ def backfill_location_fields(
                 location_id = item.get("id")
                 if not isinstance(location_id, str) or location_id not in updates:
                     continue
-                for field, value in updates[location_id].items():
-                    if item.get(field) is None:
-                        item[field] = value
-                        changed = True
+                fields = updates[location_id]
+                if "name" in fields and item.get("name") is None:
+                    item["name"] = fields["name"]
+                    changed = True
+                if "latitude" in fields and item.get("latitude") is None and item.get("longitude") is None:
+                    item["latitude"] = fields["latitude"]
+                    item["longitude"] = fields["longitude"]
+                    changed = True
             if not changed:
                 return False
 
