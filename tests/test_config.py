@@ -586,6 +586,35 @@ def test_backfill_location_fields_preserves_fields_added_after_configuration_loa
     assert location_file.read_text(encoding="utf-8") == original
 
 
+@pytest.mark.parametrize(
+    ("latitude", "longitude", "field"),
+    (
+        (float("nan"), 20.0, "latitude"),
+        (float("inf"), 20.0, "latitude"),
+        (91.0, 20.0, "latitude"),
+        (10.0, float("nan"), "longitude"),
+        (10.0, float("inf"), "longitude"),
+        (10.0, 181.0, "longitude"),
+    ),
+)
+def test_backfill_location_fields_rejects_invalid_resolved_coordinates(
+    tmp_path: Path,
+    latitude: float,
+    longitude: float,
+    field: str,
+) -> None:
+    location_file = tmp_path / "locations.json"
+    original = '[{"id":"place","name":"Place"}]'
+    location_file.write_text(original, encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", latitude, longitude, "US", None, None, False),)
+
+    with pytest.raises(ConfigurationError, match=rf"Resolved {field} for location place is invalid"):
+        backfill_location_fields(location_file, configured, resolved)
+
+    assert location_file.read_text(encoding="utf-8") == original
+
+
 def test_backfill_location_fields_locks_read_modify_write_transaction(tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")

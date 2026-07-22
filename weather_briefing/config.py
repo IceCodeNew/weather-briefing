@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import re
 import time
@@ -342,6 +343,10 @@ def backfill_location_fields(
         if location.name is None:
             fields["name"] = resolved_location.name
         if location.latitude is None and location.longitude is None:
+            if not math.isfinite(resolved_location.latitude) or not -90 <= resolved_location.latitude <= 90:
+                raise ConfigurationError(f"Resolved latitude for location {location.id} is invalid")
+            if not math.isfinite(resolved_location.longitude) or not -180 <= resolved_location.longitude <= 180:
+                raise ConfigurationError(f"Resolved longitude for location {location.id} is invalid")
             fields["latitude"] = resolved_location.latitude
             fields["longitude"] = resolved_location.longitude
         if fields:
