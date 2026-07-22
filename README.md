@@ -47,11 +47,14 @@ cp locations.example.json "${ROOT_DIR}/locations.json"
 Fill in `.env` and `locations.json`. Once configured, tighten file permissions and start the service:
 
 ```sh
-sudo chown -R 65532:65532 "${ROOT_DIR}"
-chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
+sudo chgrp -R 65532 "${ROOT_DIR}"
+chmod 750 "${ROOT_DIR}"
+chmod 770 "${ROOT_DIR}/state"
+chmod 640 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
-TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env")"
+TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\r')"
+TZ="${TZ:-Asia/Shanghai}"
 
 docker pull "${IMAGE}"
 docker run -d \
@@ -86,7 +89,7 @@ The program selects default weather sources by region:
 - Japan: Open-Meteo full weather; when a JMA office code is configured, JMA forecasts are appended;
 - Other regions: Open-Meteo.
 
-You can also set `WEATHER_PROVIDERS` to override the default order. Full-weather services should come before services that only provide partial information. This order only affects how the program fetches data.
+You can also set `WEATHER_PROVIDERS` to replace the regional default order. Include `nea-sg` or `jma-jp` explicitly if you still want those regional supplements. Full-weather services should come before services that only provide partial information. This order only affects how the program fetches data.
 
 When NEA or JMA content conflicts with Open-Meteo for the same time and region, the briefing prioritizes the latest data from the local official agency and retains conflicting sources for your verification.
 
@@ -112,6 +115,8 @@ When using the Docker example above, first prepare the file:
 
 ```sh
 cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
+sudo chgrp 65532 "${ROOT_DIR}/rss-sources.json"
+chmod 640 "${ROOT_DIR}/rss-sources.json"
 ```
 
 Then add the following option to the `docker run` command, placing it before `"${IMAGE}" daemon`:

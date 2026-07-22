@@ -47,11 +47,14 @@ cp locations.example.json "${ROOT_DIR}/locations.json"
 填写 `.env` 和 `locations.json`。配置完成后收紧文件权限并启动服务：
 
 ```sh
-sudo chown -R 65532:65532 "${ROOT_DIR}"
-chmod 600 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
+sudo chgrp -R 65532 "${ROOT_DIR}"
+chmod 750 "${ROOT_DIR}"
+chmod 770 "${ROOT_DIR}/state"
+chmod 640 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
-TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env")"
+TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\r')"
+TZ="${TZ:-Asia/Shanghai}"
 
 docker pull "${IMAGE}"
 docker run -d \
@@ -86,7 +89,7 @@ docker run -d \
 - 日本：先读取 Open-Meteo 完整天气；配置 `jma_office_code` 后，再追加 JMA 预报；
 - 其他地区：Open-Meteo。
 
-也可以用 `WEATHER_PROVIDERS` 明确指定调用顺序。完整天气服务应排在只提供局部信息的服务之前。这个顺序只决定程序如何取得数据。
+也可以用 `WEATHER_PROVIDERS` 替换地区默认调用顺序。如需继续使用当地补充服务，必须显式加入 `nea-sg` 或 `jma-jp`。完整天气服务应排在只提供局部信息的服务之前。这个顺序只决定程序如何取得数据。
 
 NEA 或 JMA 与 Open-Meteo 在同一时间和地区发生内容冲突时，简报优先采用当地官方机构的最新资料，并保留冲突来源供用户核验。
 
@@ -112,6 +115,8 @@ RSS 是可选功能。启用时，请在私密配置中填写来源名称、URL 
 
 ```sh
 cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
+sudo chgrp 65532 "${ROOT_DIR}/rss-sources.json"
+chmod 640 "${ROOT_DIR}/rss-sources.json"
 ```
 
 再把以下选项添加到 `docker run` 命令，并放在 `"${IMAGE}" daemon` 之前：
