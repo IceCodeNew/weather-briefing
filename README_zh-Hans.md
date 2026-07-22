@@ -44,23 +44,21 @@ cp env.example "${ROOT_DIR}/.env"
 cp locations.example.json "${ROOT_DIR}/locations.json"
 ```
 
-填写 `.env` 和 `locations.json`。配置完成后收紧文件权限并启动服务：
+填写 `.env` 和 `locations.json`。配置完成后收紧文件权限并启动服务。以下命令将 GID `65532` 视为具有写权限的受信任容器服务组；不要把无关的宿主用户加入该组。
 
 ```sh
 sudo chgrp -R 65532 "${ROOT_DIR}"
-chmod 750 "${ROOT_DIR}"
-chmod 770 "${ROOT_DIR}/state"
-chmod 640 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
+find "${ROOT_DIR}" -type d -exec chmod 770 {} +
+find "${ROOT_DIR}" -type f -exec chmod 660 {} +
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
 TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\r')"
-TZ="${TZ:-Asia/Shanghai}"
 
 docker pull "${IMAGE}"
 docker run -d \
   --name weather-briefing \
   --restart unless-stopped \
-  --env "TZ=${TZ}" \
+  --env "TZ=${TZ:-Asia/Shanghai}" \
   --env-file "${ROOT_DIR}/.env" \
   --mount \
   "type=bind,src=${ROOT_DIR}/locations.json,dst=/home/nonroot/app/locations.json,readonly" \
@@ -116,7 +114,7 @@ RSS 是可选功能。启用时，请在私密配置中填写来源名称、URL 
 ```sh
 cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
 sudo chgrp 65532 "${ROOT_DIR}/rss-sources.json"
-chmod 640 "${ROOT_DIR}/rss-sources.json"
+chmod 660 "${ROOT_DIR}/rss-sources.json"
 ```
 
 再把以下选项添加到 `docker run` 命令，并放在 `"${IMAGE}" daemon` 之前：

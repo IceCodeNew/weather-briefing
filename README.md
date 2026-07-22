@@ -44,23 +44,21 @@ cp env.example "${ROOT_DIR}/.env"
 cp locations.example.json "${ROOT_DIR}/locations.json"
 ```
 
-Fill in `.env` and `locations.json`. Once configured, tighten file permissions and start the service:
+Fill in `.env` and `locations.json`. Once configured, tighten file permissions and start the service. The commands below treat GID `65532` as a trusted container service group with write access; do not assign unrelated host users to that group.
 
 ```sh
 sudo chgrp -R 65532 "${ROOT_DIR}"
-chmod 750 "${ROOT_DIR}"
-chmod 770 "${ROOT_DIR}/state"
-chmod 640 "${ROOT_DIR}/.env" "${ROOT_DIR}"/*.json
+find "${ROOT_DIR}" -type d -exec chmod 770 {} +
+find "${ROOT_DIR}" -type f -exec chmod 660 {} +
 WEATHER_BRIEFING_VERSION="2.2.0"
 IMAGE="icecodexi/weather-briefing:${WEATHER_BRIEFING_VERSION}"
 TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\r')"
-TZ="${TZ:-Asia/Shanghai}"
 
 docker pull "${IMAGE}"
 docker run -d \
   --name weather-briefing \
   --restart unless-stopped \
-  --env "TZ=${TZ}" \
+  --env "TZ=${TZ:-Asia/Shanghai}" \
   --env-file "${ROOT_DIR}/.env" \
   --mount \
   "type=bind,src=${ROOT_DIR}/locations.json,dst=/home/nonroot/app/locations.json,readonly" \
@@ -116,7 +114,7 @@ When using the Docker example above, first prepare the file:
 ```sh
 cp rss-sources.example.json "${ROOT_DIR}/rss-sources.json"
 sudo chgrp 65532 "${ROOT_DIR}/rss-sources.json"
-chmod 640 "${ROOT_DIR}/rss-sources.json"
+chmod 660 "${ROOT_DIR}/rss-sources.json"
 ```
 
 Then add the following option to the `docker run` command, placing it before `"${IMAGE}" daemon`:
