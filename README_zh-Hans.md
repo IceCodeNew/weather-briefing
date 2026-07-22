@@ -57,7 +57,7 @@ find "${ROOT_DIR}" -type f -exec chmod 660 {} +
 
 WEATHER_BRIEFING_IMAGE="icecodexi/${CONTAINER_NAME}"
 WEATHER_BRIEFING_VERSION="2.3.0"
-TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\r')"
+TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\n\r')"
 docker pull "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}"
 
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
@@ -133,10 +133,10 @@ RSS 是可选功能，默认不会挂载。需要启用时，参考 [`rss-source
 
 ```sh
 # 查看未来某天的预报
-docker exec weather-briefing \
+docker exec "${CONTAINER_NAME:-weather-briefing}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   run forecast --date 2026-07-23 --run-now
-docker exec weather-briefing \
+docker exec "${CONTAINER_NAME:-weather-briefing}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   run briefing --run-now
 ```
@@ -150,10 +150,10 @@ docker exec weather-briefing \
 新容器启动后，限时打开诊断：
 
 ```sh
-docker exec weather-briefing \
+docker exec "${CONTAINER_NAME:-weather-briefing}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   diagnostics rendered-text enable --for 15m
-docker exec weather-briefing \
+docker exec "${CONTAINER_NAME:-weather-briefing}" \
   /home/nonroot/app/.venv/bin/weather-briefing \
   diagnostics rendered-text disable
 ```
