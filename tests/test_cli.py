@@ -850,6 +850,17 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
     llm_provider = _ClosableLLMProviderStub()
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: llm_provider)
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
+    backfills: list[tuple[Path, tuple[LocationSpec, ...], tuple[ResolvedLocation, ...]]] = []
+
+    def record_backfill(
+        path: Path,
+        configured: tuple[LocationSpec, ...],
+        resolved: tuple[ResolvedLocation, ...],
+    ) -> bool:
+        backfills.append((path, configured, resolved))
+        return True
+
+    monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", record_backfill)
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
@@ -892,10 +903,12 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
         assert "Starting briefing run" in stderr
         assert "Runtime diagnostics unavailable; continuing without sensitive rendered text logging" in stderr
         assert "Resolving 1 location(s)" in stderr
+        assert "Saved missing resolved fields to the location configuration" in stderr
         assert "Processing location test" in stderr
         assert ("Location test display name: Test City" in stderr) is debug
         assert "briefing published (14 characters)" in stderr
         assert llm_provider.closed
+        assert backfills == [(settings.locations_path, settings.locations, (location,))]
     finally:
         _LOGGER.handlers.clear()
         _LOGGER.handlers.extend(original_handlers)
@@ -941,6 +954,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: AlertDelivery())
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: _ClosableLLMProviderStub())
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
+    monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", lambda *args: False)
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:
@@ -1007,6 +1021,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: None)
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: _ClosableLLMProviderStub())
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
+    monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", lambda *args: False)
 
     class FakeResolver:
         async def resolve_with_metadata(self, loc: object) -> object:

@@ -289,6 +289,55 @@ def _locations(path: Path) -> tuple[LocationSpec, ...]:
     return tuple(locations)
 
 
+def backfill_location_fields(
+    path: Path,
+    configured: tuple[LocationSpec, ...],
+    resolved: tuple[ResolvedLocation, ...],
+) -> bool:
+    """Write exact provider-resolved names or coordinates missing from the location file."""
+    resolved_by_id = {location.id: location for location in resolved if not location.precision_reduced}
+    updates: dict[str, dict[str, str | float]] = {}
+    for location in configured:
+        resolved_location = resolved_by_id.get(location.id)
+        if resolved_location is None:
+            continue
+        fields: dict[str, str | float] = {}
+        if location.name is None:
+            fields["name"] = resolved_location.name
+        if location.latitude is None and location.longitude is None:
+            fields["latitude"] = resolved_location.latitude
+            fields["longitude"] = resolved_location.longitude
+        if fields:
+            updates[location.id] = fields
+    if not updates:
+        return False
+
+    items = _json_file(path)
+    changed = False
+    for item in items:
+        location_id = item.get("id")
+        if not isinstance(location_id, str) or location_id not in updates:
+            continue
+        for field, value in updates[location_id].items():
+            if item.get(field) is None:
+                item[field] = value
+                changed = True
+    if not changed:
+        return False
+
+    payload = json.dumps(items, ensure_ascii=False, indent=2) + "\n"
+    try:
+        with path.open("r+", encoding="utf-8") as locations_file:
+            locations_file.seek(0)
+            locations_file.write(payload)
+            locations_file.truncate()
+            locations_file.flush()
+            os.fsync(locations_file.fileno())
+    except OSError as exc:
+        raise ConfigurationError(f"{path} must be writable to save resolved location fields") from exc
+    return True
+
+
 def _feeds(path: Path) -> tuple[FeedConfig, ...]:
     feeds: list[FeedConfig] = []
     for index, item in enumerate(_json_file(path)):

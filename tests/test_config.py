@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from weather_briefing.config import ConfigurationError, Settings, weather_providers_for
+from weather_briefing.config import ConfigurationError, Settings, backfill_location_fields, weather_providers_for
 from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
 
 
@@ -497,6 +497,108 @@ def test_location_file_supports_name_coordinates_or_both(monkeypatch, tmp_path: 
     assert settings.locations[0].latitude is None
     assert settings.locations[1].longitude == 116.380556
     assert settings.locations[2].name is None
+
+
+def test_backfill_location_fields_writes_only_missing_user_fields(tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text(
+        json.dumps(
+            [
+                {"id": "name-only", "name": "Named Place", "custom": "preserved"},
+                {"id": "coordinates-only", "latitude": 1.0, "longitude": 2.0},
+                {"id": "complete", "name": "Configured", "latitude": 3.0, "longitude": 4.0},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    configured = (
+        LocationSpec("name-only", "Named Place"),
+        LocationSpec("coordinates-only", latitude=1.0, longitude=2.0),
+        LocationSpec("complete", "Configured", 3.0, 4.0),
+    )
+    resolved = (
+        ResolvedLocation("name-only", "Provider Name", 10.0, 20.0, "US", None, None, False),
+        ResolvedLocation("coordinates-only", "Resolved Name", 1.0, 2.0, "US", None, None, False),
+        ResolvedLocation("complete", "Provider Override", 30.0, 40.0, "US", None, None, False),
+    )
+
+    changed = backfill_location_fields(location_file, configured, resolved)
+
+    assert changed
+    assert json.loads(location_file.read_text(encoding="utf-8")) == [
+        {
+            "id": "name-only",
+            "name": "Named Place",
+            "custom": "preserved",
+            "latitude": 10.0,
+            "longitude": 20.0,
+        },
+        {"id": "coordinates-only", "latitude": 1.0, "longitude": 2.0, "name": "Resolved Name"},
+        {"id": "complete", "name": "Configured", "latitude": 3.0, "longitude": 4.0},
+    ]
+
+
+def test_backfill_location_fields_skips_reduced_precision_matches(tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    original = '[{"id":"place","name":"Specific Place"}]'
+    location_file.write_text(original, encoding="utf-8")
+    configured = (LocationSpec("place", "Specific Place"),)
+    resolved = (
+        ResolvedLocation(
+            "place",
+            "Specific Place",
+            10.0,
+            20.0,
+            "CN",
+            None,
+            None,
+            True,
+            precision_reduced=True,
+        ),
+    )
+
+    changed = backfill_location_fields(location_file, configured, resolved)
+
+    assert not changed
+    assert location_file.read_text(encoding="utf-8") == original
+
+
+def test_backfill_location_fields_preserves_fields_added_after_configuration_load(tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    original = '[{"id":"place","name":"Place","latitude":30.0,"longitude":40.0}]'
+    location_file.write_text(original, encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
+
+    changed = backfill_location_fields(location_file, configured, resolved)
+
+    assert not changed
+    assert location_file.read_text(encoding="utf-8") == original
+
+
+def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
+    original_open = Path.open
+
+    def deny_location_write(
+        path: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ):
+        if path == location_file and mode == "r+":
+            raise PermissionError("read-only mount")
+        return original_open(path, mode, buffering, encoding, errors, newline)
+
+    monkeypatch.setattr(Path, "open", deny_location_write)
+
+    with pytest.raises(ConfigurationError, match="must be writable to save resolved location fields"):
+        backfill_location_fields(location_file, configured, resolved)
 
 
 @pytest.mark.parametrize("field", ("id", "name"))

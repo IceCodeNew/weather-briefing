@@ -28,7 +28,7 @@ from .air_quality import (
 )
 from .api_client import LoggedAsyncClient
 from .capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
-from .config import Settings, state_path_from_env, weather_providers_for
+from .config import Settings, backfill_location_fields, state_path_from_env, weather_providers_for
 from .geocoding import (
     CachedLocationResolver,
     FallbackGeocodingProvider,
@@ -312,6 +312,8 @@ async def run(
                     _precision_reduction_notice(location, settings.locations_path),
                 )
         locations = tuple(resolution.location for resolution in resolutions)
+        if backfill_location_fields(settings.locations_path, settings.locations, locations):
+            _LOGGER.info("Saved missing resolved fields to the location configuration")
         for location in locations:
             _LOGGER.info("Processing location %s", location.id)
             _LOGGER.debug("Location %s display name: %s", location.id, location.name)

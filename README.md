@@ -83,7 +83,7 @@ Every location must have a unique, stable `id`. It separates one location's stat
 - `name`, the location name;
 - `latitude` and `longitude`, provided together.
 
-With only a name, the program resolves and caches its coordinates. With only coordinates, it performs a reverse lookup for the name. When both are present, no geocoding service is called.
+With only a name, the program resolves the coordinates and writes them back to `locations.json`. With only coordinates, it performs a reverse lookup and writes back the readable name. Existing fields are never overwritten. Reduced-precision matches still require confirmation and are not written automatically. When both are present, no geocoding service is called.
 
 `language` controls the briefing language for that location. It accepts a basic BCP 47 language tag and defaults to `en`. Tags are normalized (`ja-jp` becomes `ja-JP`) before being passed to the language model. Briefing labels are available in `en`, `ja`, `zh-CN`, and `zh-TW`; variants use the closest available localization, while unsupported primary languages fall back to English labels. For a location in Japan that needs JMA forecasts, also provide its six-digit `jma_office_code`.
 
