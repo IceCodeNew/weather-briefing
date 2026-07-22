@@ -1,5 +1,11 @@
 # Weather Briefing
 
+[![CI](https://github.com/IceCodeNew/weather-briefing/actions/workflows/ci.yml/badge.svg)](https://github.com/IceCodeNew/weather-briefing/actions/workflows/ci.yml)
+[![Unittest](https://github.com/IceCodeNew/weather-briefing/actions/workflows/unittest.yml/badge.svg)](https://github.com/IceCodeNew/weather-briefing/actions/workflows/unittest.yml)
+[![codecov](https://codecov.io/gh/IceCodeNew/weather-briefing/branch/master/graph/badge.svg?token=JUmxcPx7js)](https://codecov.io/gh/IceCodeNew/weather-briefing)
+![Python Version from PEP 621 TOML](https://img.shields.io/python/required-version-toml?tomlFilePath=https%3A%2F%2Fraw.githubusercontent.com%2FIceCodeNew%2Fweather-briefing%2Frefs%2Fheads%2Fmaster%2Fpyproject.toml)
+[![CodeQL](https://github.com/IceCodeNew/weather-briefing/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/IceCodeNew/weather-briefing/actions/workflows/github-code-scanning/codeql)
+
 [English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
 Weather Briefing periodically gathers weather, air quality, warnings, and optional private RSS content, then uses a large language model to produce a briefing with links to its sources.
