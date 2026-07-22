@@ -208,7 +208,25 @@ def test_precision_reduction_notice_contains_match_coordinates_and_action() -> N
     assert "39.9113890" in notice
     assert "116.3805560" in notice
     assert "locations.json" in notice
-    assert "确认" in notice
+    assert "Confirm that this location is correct" in notice
+
+
+def test_precision_reduction_notice_uses_english_fallback_for_missing_match() -> None:
+    location = ResolvedLocation(
+        "example",
+        "Test City",
+        1.0,
+        1.0,
+        "CN",
+        "Beijing",
+        "Asia/Shanghai",
+        True,
+        precision_reduced=True,
+    )
+
+    notice = _precision_reduction_notice(location, Path("locations.json"))
+
+    assert 'matched at reduced precision as "no matched name provided"' in notice
 
 
 class TestHourInCron:
@@ -977,7 +995,8 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
         logging.root.setLevel(original_root_level)
 
     assert len(alerts) == 1
-    assert "位置匹配需要确认" in alerts[0][0]
+    assert alerts[0][0] == "Location match requires confirmation"
+    assert "Confirm that this location is correct" in alerts[0][1]
 
 
 async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
