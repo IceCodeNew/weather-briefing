@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,8 @@ class ConfigurationError(ValueError):
 
 SUPPORTED_WEATHER_PROVIDERS = frozenset(WeatherProviderName)
 SUPPORTED_PUBLISHERS = frozenset(PublisherName)
+_LOCATION_FILE_LOCK_TIMEOUT_SECONDS = 5.0
+_LOCATION_FILE_LOCK_RETRY_SECONDS = 0.05
 
 
 @overload
@@ -135,6 +138,19 @@ def _json_file(path: Path) -> list[dict[str, Any]]:
     except OSError as exc:
         raise ConfigurationError(f"{path} must contain readable JSON") from exc
     return _json_array(path, content)
+
+
+def _lock_location_file(path: Path, file_descriptor: int) -> None:
+    deadline = time.monotonic() + _LOCATION_FILE_LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ConfigurationError(f"{path} is locked; cannot save resolved location fields") from exc
+            time.sleep(min(_LOCATION_FILE_LOCK_RETRY_SECONDS, remaining))
 
 
 def _optional_string_array(
@@ -323,7 +339,7 @@ def backfill_location_fields(
 
     try:
         with path.open("r+", encoding="utf-8") as locations_file:
-            fcntl.flock(locations_file.fileno(), fcntl.LOCK_EX)
+            _lock_location_file(path, locations_file.fileno())
             items = _json_array(path, locations_file.read())
             changed = False
             for item in items:

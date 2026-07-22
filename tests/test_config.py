@@ -619,6 +619,22 @@ def test_backfill_location_fields_locks_read_modify_write_transaction(tmp_path: 
     ]
 
 
+def test_backfill_location_fields_times_out_when_file_remains_locked(monkeypatch, tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
+
+    def keep_lock_busy(_file_descriptor: int, _operation: int) -> None:
+        raise BlockingIOError
+
+    monkeypatch.setattr(fcntl, "flock", keep_lock_busy)
+    monkeypatch.setattr("weather_briefing.config._LOCATION_FILE_LOCK_TIMEOUT_SECONDS", 0)
+
+    with pytest.raises(ConfigurationError, match="is locked; cannot save resolved location fields"):
+        backfill_location_fields(location_file, configured, resolved)
+
+
 def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
