@@ -48,7 +48,7 @@ touch "${ROOT_DIR}/.env" "${ROOT_DIR}/locations.json"
 
 Use the repository templates to fill in `.env` and `locations.json`. The locations file must contain a valid JSON array and cannot remain empty.
 
-Once configured, tighten file permissions and start the service. The commands below treat GID `65532` as a trusted container service group with write access; do not assign unrelated host users to that group. The container is replaced in place, while bind-mounted configuration and state remain intact.
+Once configured, tighten file permissions and start the service. The commands below treat GID `65532` as a trusted container service group with write access; do not assign unrelated host users to that group.
 
 ```sh
 sudo chgrp -R 65532 "${ROOT_DIR}"
@@ -74,7 +74,7 @@ docker run -d \
   daemon
 ```
 
-To upgrade, change `WEATHER_BRIEFING_VERSION`, then run the pull and startup commands again. The old container is replaced, while configuration, geocoding cache, and runtime state under `${ROOT_DIR}` are preserved.
+To upgrade, change `WEATHER_BRIEFING_VERSION`, then run the pull and startup commands again.
 
 ## Configuring locations
 
@@ -85,7 +85,7 @@ Every location must have a unique, stable `id`. It separates one location's stat
 
 With only a name, the program resolves the coordinates and writes them back to `locations.json`. With only coordinates, it performs a reverse lookup and writes back the readable name. Existing fields are never overwritten. Reduced-precision matches still require confirmation and are not written automatically. When both are present, no geocoding service is called.
 
-`language` controls the briefing language for that location. It accepts a basic BCP 47 language tag and defaults to `en`. Tags are normalized (`ja-jp` becomes `ja-JP`) before being passed to the language model. Briefing labels are available in `en`, `ja`, `zh-CN`, and `zh-TW`; variants use the closest available localization, while unsupported primary languages fall back to English labels. For a location in Japan that needs JMA forecasts, also provide its six-digit `jma_office_code`.
+`language` controls the briefing language for that location. It accepts a basic BCP 47 language tag and defaults to `en`. Tags are normalized (`ja-jp` becomes `ja-JP`) before being passed to the language model. Briefing labels are available in `en`, `ja`, `zh-CN`, and `zh-TW`. For tags that include region or script subtags, the program progressively removes those subtags to find a matching localization and uses English labels if none is found. For a location in Japan that needs JMA forecasts, also provide its six-digit `jma_office_code`.
 
 The program selects default weather sources by region:
 
