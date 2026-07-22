@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from weather_briefing.config import ConfigurationError, Settings, backfill_location_fields, weather_providers_for
+from weather_briefing.config import (
+    ConfigurationError,
+    Settings,
+    _locations,
+    backfill_location_fields,
+    weather_providers_for,
+)
 from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
 
 
@@ -619,6 +625,51 @@ def test_backfill_location_fields_locks_read_modify_write_transaction(tmp_path: 
     ]
 
 
+def test_locations_waits_for_locked_writer_before_reading(tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+    ready = threading.Event()
+
+    def read_after_ready() -> tuple[LocationSpec, ...]:
+        ready.set()
+        return _locations(location_file)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with location_file.open("r+", encoding="utf-8") as locked_file:
+            fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
+            future = executor.submit(read_after_ready)
+            assert ready.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=1)
+
+            locked_file.seek(0)
+            locked_file.write('[{"id":"place","name":"Place","latitude":10.0,"longitude":20.0}]')
+            locked_file.truncate()
+            locked_file.flush()
+            os.fsync(locked_file.fileno())
+        locations = future.result(timeout=10)
+
+    assert locations == (LocationSpec("place", "Place", 10.0, 20.0),)
+
+
+def test_locations_rejects_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="Configure at least one location"):
+        _locations(tmp_path / "missing.json")
+
+
+def test_locations_reports_file_read_errors(monkeypatch, tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+
+    def fail_open(*_args: object, **_kwargs: object) -> None:
+        raise OSError("read failure")
+
+    monkeypatch.setattr(Path, "open", fail_open)
+
+    with pytest.raises(ConfigurationError, match="must contain readable JSON"):
+        _locations(location_file)
+
+
 def test_backfill_location_fields_times_out_when_file_remains_locked(monkeypatch, tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
@@ -640,19 +691,9 @@ def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: 
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
     configured = (LocationSpec("place", "Place"),)
     resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
-    original_open = Path.open
 
-    def deny_location_write(
-        path: Path,
-        mode: str = "r",
-        buffering: int = -1,
-        encoding: str | None = None,
-        errors: str | None = None,
-        newline: str | None = None,
-    ):
-        if path == location_file and mode == "r+":
-            raise PermissionError("read-only mount")
-        return original_open(path, mode, buffering, encoding, errors, newline)
+    def deny_location_write(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("read-only mount")
 
     monkeypatch.setattr(Path, "open", deny_location_write)
 

@@ -140,17 +140,29 @@ def _json_file(path: Path) -> list[dict[str, Any]]:
     return _json_array(path, content)
 
 
-def _lock_location_file(path: Path, file_descriptor: int) -> None:
+def _lock_location_file(path: Path, file_descriptor: int, operation: int, timeout_action: str) -> None:
     deadline = time.monotonic() + _LOCATION_FILE_LOCK_TIMEOUT_SECONDS
     while True:
         try:
-            fcntl.flock(file_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(file_descriptor, operation | fcntl.LOCK_NB)
             return
         except BlockingIOError as exc:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ConfigurationError(f"{path} is locked; cannot save resolved location fields") from exc
+                raise ConfigurationError(f"{path} is locked; cannot {timeout_action}") from exc
             time.sleep(min(_LOCATION_FILE_LOCK_RETRY_SECONDS, remaining))
+
+
+def _locked_location_json_file(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8") as locations_file:
+            _lock_location_file(path, locations_file.fileno(), fcntl.LOCK_SH, "read location configuration")
+            content = locations_file.read()
+    except OSError as exc:
+        raise ConfigurationError(f"{path} must contain readable JSON") from exc
+    return _json_array(path, content)
 
 
 def _optional_string_array(
@@ -258,7 +270,7 @@ def _weather_region(location: ResolvedLocation) -> str:
 
 
 def _locations(path: Path) -> tuple[LocationSpec, ...]:
-    items = _json_file(path)
+    items = _locked_location_json_file(path)
     if not items:
         raise ConfigurationError(f"Configure at least one location in {path}")
     locations: list[LocationSpec] = []
@@ -339,7 +351,12 @@ def backfill_location_fields(
 
     try:
         with path.open("r+", encoding="utf-8") as locations_file:
-            _lock_location_file(path, locations_file.fileno())
+            _lock_location_file(
+                path,
+                locations_file.fileno(),
+                fcntl.LOCK_EX,
+                "save resolved location fields",
+            )
             items = _json_array(path, locations_file.read())
             changed = False
             for item in items:
