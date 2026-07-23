@@ -62,7 +62,7 @@ find "${ROOT_DIR}" -type d -exec chmod 770 {} +
 find "${ROOT_DIR}" -type f -exec chmod 660 {} +
 
 WEATHER_BRIEFING_IMAGE="icecodexi/weather-briefing"
-WEATHER_BRIEFING_VERSION="2.4.0"
+WEATHER_BRIEFING_VERSION="3.0.0"
 TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\n\r')"
 docker pull "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}"
 
