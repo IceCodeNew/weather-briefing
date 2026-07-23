@@ -133,6 +133,8 @@ class Settings:
         bark_encryption_iv = None
         if selected_publisher == "bark":
             bark_device_key = clean_env(os.getenv("BARK_DEVICE_KEY")) or None
+            if bark_device_key is None:
+                raise ConfigurationError("Missing required environment variable: BARK_DEVICE_KEY")
             bark_encryption_key = clean_env(os.getenv("BARK_ENCRYPTION_KEY")) or None
             if bark_encryption_key is not None:
                 try:

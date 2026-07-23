@@ -29,6 +29,7 @@ def _required_environment(monkeypatch) -> None:
 
 def _select_bark(monkeypatch) -> None:
     monkeypatch.setenv("PUBLISHER", "bark")
+    monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
 
 
 def _resolved_location(*, mainland: bool) -> ResolvedLocation:
@@ -1221,6 +1222,13 @@ class TestConfigErrorPaths:
         with pytest.raises(ConfigurationError, match="PUBLISHER must be one of: bark, stdout, telegram"):
             Settings.from_env()
 
+    def test_missing_bark_device_key_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "bark")
+
+        with pytest.raises(ConfigurationError, match="Missing required environment variable: BARK_DEVICE_KEY"):
+            Settings.from_env()
+
     @pytest.mark.parametrize("key", ("short", "a" * 17, "a" * 33))
     def test_invalid_bark_encryption_key_length_raises_error(self, monkeypatch, key: str) -> None:
         _required_environment(monkeypatch)
@@ -1320,7 +1328,6 @@ class TestConfigErrorPaths:
     def test_bark_encryption_key_lengths_are_loaded(self, monkeypatch, key_length: int) -> None:
         _required_environment(monkeypatch)
         _select_bark(monkeypatch)
-        monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
         monkeypatch.setenv("BARK_ENCRYPTION_KEY", "k" * key_length)
         monkeypatch.setenv("BARK_ENCRYPTION_IV", "fixed-iv-123")
 
