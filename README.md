@@ -122,8 +122,6 @@ Bark sends plaintext when the encryption variables are absent. Encryption is rec
 
 To enable it, set both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV`. Follow the official documentation linked from [`env.example`](env.example) to generate the values and configure the Bark app.
 
-For a self-hosted Bark server, set its root URL with `BARK_BASE_URL`; the default is `https://api.day.app`. Bark briefings are limited to 650 visible characters to stay within the APNs payload limit.
-
 Model calls are handled by any-llm. The credential variables needed by each service follow the [any-llm provider documentation](https://docs.mozilla.ai/any-llm/providers). The official image ships with the components required for DeepSeek, OpenAI, and OpenRouter.
 
 RSS is optional and is not mounted by default. To enable RSS, create `rss-sources.json` based on [`rss-sources.example.json`](rss-sources.example.json), then add source names, URLs, and applicable locations. Add the following option to the `docker run` command before the image name:
