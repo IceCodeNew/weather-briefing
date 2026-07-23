@@ -99,9 +99,6 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 
 - Follow Conventional Commits and do not add co-author trailers.
 - Keep pull requests focused. Use several meaningful, dependency-ordered commits when that makes a change easier to review, and include tests with the behavior they cover.
-- Keep follow-up review commits. Never rewrite merged history or rewrite a pull request merely to hide fixes.
-- After upstream changes stabilize, rebase managed downstream pull request branches as needed and validate each rewritten layer before an approved force-push.
-- Do not push, force-push, or open a pull request without explicit approval.
 
 ## Review
 
@@ -126,4 +123,4 @@ uv run --with pytest --with pytest-cov -- pytest --cov --cov-branch --cov-report
 
 - Coverage includes all executable repository code, including tests, and must not fall below `master`.
 - Exclude coverage only when testing adds no behavioral confidence, and explain the reason at the exclusion site.
-- Put unrelated coverage improvements in a separate pull request.
+- Put unrelated changes in separate pull requests.
