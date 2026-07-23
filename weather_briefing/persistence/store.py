@@ -60,8 +60,8 @@ class SQLiteStateStore(HealthStateOperations):
             return set()
         placeholders = ",".join("?" for _ in ids)
         rows = self._connection.execute(
-            f"SELECT id FROM articles WHERE id IN ({placeholders})",
-            ids,  # noqa: S608
+            f"SELECT id FROM articles WHERE id IN ({placeholders})",  # noqa: S608
+            ids,
         )
         return {str(row["id"]) for row in rows}
 
