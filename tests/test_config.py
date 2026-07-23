@@ -65,6 +65,62 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert settings.llm_history_max_characters == 16_000
 
 
+@pytest.mark.parametrize(
+    ("selected_publisher", "briefing_max_characters", "llm_max_output_tokens"),
+    (("bark", 650, 1300), ("stdout", 3500, 7000), ("telegram", 3500, 7000)),
+)
+def test_publisher_selects_generation_defaults(
+    monkeypatch,
+    selected_publisher: str,
+    briefing_max_characters: int,
+    llm_max_output_tokens: int,
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("PUBLISHER", selected_publisher)
+    monkeypatch.delenv("BRIEFING_MAX_CHARACTERS", raising=False)
+    monkeypatch.delenv("LLM_MAX_OUTPUT_TOKENS", raising=False)
+    if selected_publisher == "bark":
+        monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
+
+    settings = Settings.from_env()
+
+    assert settings.briefing_max_characters == briefing_max_characters
+    assert settings.llm_max_output_tokens == llm_max_output_tokens
+
+
+def test_explicit_generation_limits_override_bark_defaults(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    _select_bark(monkeypatch)
+    monkeypatch.setenv("BRIEFING_MAX_CHARACTERS", "500")
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "1536")
+
+    settings = Settings.from_env()
+
+    assert settings.briefing_max_characters == 500
+    assert settings.llm_max_output_tokens == 1536
+
+
+def test_llm_token_default_tracks_explicit_briefing_limit(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    _select_bark(monkeypatch)
+    monkeypatch.setenv("BRIEFING_MAX_CHARACTERS", "500")
+    monkeypatch.delenv("LLM_MAX_OUTPUT_TOKENS", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.briefing_max_characters == 500
+    assert settings.llm_max_output_tokens == 1000
+
+
+def test_bark_briefing_limit_rejects_values_above_platform_limit(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    _select_bark(monkeypatch)
+    monkeypatch.setenv("BRIEFING_MAX_CHARACTERS", "1000")
+
+    with pytest.raises(ConfigurationError, match="BRIEFING_MAX_CHARACTERS cannot exceed 650"):
+        Settings.from_env()
+
+
 def test_llm_history_limits_can_be_configured(monkeypatch) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("LLM_HISTORY_MAX_DOCUMENTS", "6")

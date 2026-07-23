@@ -7,7 +7,7 @@ import logging
 import httpx
 
 from ..api_client import api_call_extensions
-from ..data.bark import BARK_NOTIFICATION_LEVEL
+from ..data.bark import BARK_MAX_MESSAGE_LENGTH, BARK_NOTIFICATION_LEVEL
 from ..data.service_endpoints import BARK_BASE_URL
 from ..models import RenderedMessage
 from .bark_crypto import BarkEncryptor
@@ -20,7 +20,7 @@ class BarkPublisher:
     """Publish messages through Bark, optionally encrypted with AES-GCM."""
 
     # Content must share APNs' 4 KiB payload with Bark metadata.
-    MAX_MESSAGE_LENGTH = 650
+    MAX_MESSAGE_LENGTH = BARK_MAX_MESSAGE_LENGTH
 
     def __init__(
         self,

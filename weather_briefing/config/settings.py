@@ -10,8 +10,10 @@ from urllib.parse import urlsplit
 import pendulum
 from any_llm import AnyLLM
 
+from ..data.bark import BARK_MAX_MESSAGE_LENGTH
 from ..data.service_endpoints import BARK_BASE_URL
 from ..models import FeedConfig, LocationSpec
+from ..registries import PublisherName
 from .base import ConfigurationError
 from .environment import (
     boolean,
@@ -97,7 +99,20 @@ class Settings:
         retry_max = number("RSS_RETRY_MAX_SECONDS", 5)
         if retry_min < 0 or retry_max < retry_min:
             raise ConfigurationError("RSS retry delay range is invalid")
-        briefing_max_characters = positive_integer("BRIEFING_MAX_CHARACTERS", 3500)
+        selected_publisher = publisher()
+        bark_selected = selected_publisher == PublisherName.BARK
+        if bark_selected:
+            briefing_max_characters = bounded_positive_integer(
+                "BRIEFING_MAX_CHARACTERS",
+                BARK_MAX_MESSAGE_LENGTH,
+                BARK_MAX_MESSAGE_LENGTH,
+            )
+        else:
+            briefing_max_characters = positive_integer("BRIEFING_MAX_CHARACTERS", 3500)
+        llm_max_output_tokens = positive_integer(
+            "LLM_MAX_OUTPUT_TOKENS",
+            briefing_max_characters * 2,
+        )
         daily_cron_hour = bounded_integer("GREETING_HOUR", 8, 0, 23)
         daily_cron_minute = bounded_integer("GREETING_MINUTE", 0, 0, 59)
         hourly_cron = cron_hour("BRIEFING_CRON", "9-23")
@@ -125,7 +140,6 @@ class Settings:
             raise ConfigurationError(
                 "RSS sources reference unknown location ids: " + ", ".join(sorted(unknown_feed_locations))
             )
-        selected_publisher = publisher()
         bark_device_key = None
         bark_base_url = BARK_BASE_URL
         bark_group = "weather-briefing"
@@ -180,7 +194,7 @@ class Settings:
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_base_url=llm_base_url.rstrip("/") if llm_base_url else None,
-            llm_max_output_tokens=positive_integer("LLM_MAX_OUTPUT_TOKENS", 8192),
+            llm_max_output_tokens=llm_max_output_tokens,
             llm_max_attempts=positive_integer("LLM_MAX_ATTEMPTS", 3),
             http_timeout_seconds=positive_float("HTTP_TIMEOUT_SECONDS", 30),
             timezone=timezone,
