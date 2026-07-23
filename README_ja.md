@@ -47,12 +47,13 @@ Weather Briefing は、天気・大気質・警報などの情報源を定期的
 CONTAINER_NAME="weather-briefing"
 ROOT_DIR="${HOME}/${CONTAINER_NAME}"
 CONTAINER_ROOT_DIR="/home/nonroot/app"
+CONTAINER_CONFIG_DIR="${CONTAINER_ROOT_DIR}/config"
 
-mkdir -p "${ROOT_DIR}/state"
-touch "${ROOT_DIR}/.env" "${ROOT_DIR}/locations.json"
+mkdir -p "${ROOT_DIR}/config" "${ROOT_DIR}/state"
+touch "${ROOT_DIR}/.env" "${ROOT_DIR}/config/locations.json"
 ```
 
-本プロジェクトのテンプレートを参考に `.env` と `locations.json` を編集します。`locations.json` は有効な JSON 配列にする必要があり、空ファイルのままでは起動できません。
+本プロジェクトのテンプレートを参考に `.env` と `config/locations.json` を編集します。`locations.json` は有効な JSON 配列にする必要があり、空ファイルのままでは起動できません。
 
 設定が完了したらファイルの権限を絞り、サービスを起動します。以下のコマンドは、GID `65532` のグループに設定ファイルと状態ディレクトリへの書き込み権限を与えます。ホスト側で同じ GID のグループを使う場合は、このサービスに関係のないユーザーを所属させないでください。
 
@@ -72,8 +73,9 @@ docker run -d \
   --restart unless-stopped \
   --env "TZ=${TZ:-Asia/Shanghai}" \
   --env-file "${ROOT_DIR}/.env" \
+  --env "BRIEFING_LOCATIONS_FILE=${CONTAINER_CONFIG_DIR}/locations.json" \
   --mount \
-  "type=bind,src=${ROOT_DIR}/locations.json,dst=${CONTAINER_ROOT_DIR}/locations.json" \
+  "type=bind,src=${ROOT_DIR}/config,dst=${CONTAINER_CONFIG_DIR}" \
   --mount \
   "type=bind,src=${ROOT_DIR}/state,dst=${CONTAINER_ROOT_DIR}/state" \
   "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}" \
