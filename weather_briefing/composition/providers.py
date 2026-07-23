@@ -19,7 +19,7 @@ from ..delivery import (
     TelegramHTMLRenderer,
     TelegramPublisher,
 )
-from ..llm import AnyLLMStructuredProvider, any_llm
+from ..llm import AnyLLMStructuredProvider, SensitiveLLMDiagnostics, any_llm
 from ..models import ResolvedLocation
 from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 from ..weather import (
@@ -42,7 +42,7 @@ _LOGGER = logging.getLogger("weather_briefing")
 
 def llm_provider(
     settings: Settings,
-    diagnostics: RenderedTextDiagnostics | None = None,
+    diagnostics: SensitiveLLMDiagnostics | None = None,
 ) -> AnyLLMStructuredProvider:
     """Build the configured any-llm adapter."""
     return any_llm.create_any_llm_provider(
