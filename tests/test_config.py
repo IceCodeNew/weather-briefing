@@ -546,15 +546,17 @@ def test_backfill_location_fields_writes_only_missing_user_fields(tmp_path: Path
     ]
 
 
-def test_backfill_location_fields_preserves_file_permissions(tmp_path: Path) -> None:
+def test_backfill_location_fields_preserves_file_permissions_and_identity(tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
     location_file.chmod(0o600)
+    original_inode = location_file.stat().st_ino
     configured = (LocationSpec("place", "Place"),)
     resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
 
     assert backfill_location_fields(location_file, configured, resolved)
     assert stat.S_IMODE(location_file.stat().st_mode) == 0o600
+    assert location_file.stat().st_ino == original_inode
 
 
 def test_backfill_location_fields_skips_reduced_precision_matches(tmp_path: Path) -> None:
@@ -756,10 +758,10 @@ def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: 
     configured = (LocationSpec("place", "Place"),)
     resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
 
-    def deny_location_write(_path: Path, _mode: int) -> None:
+    def deny_location_write(*_args: object, **_kwargs: object) -> None:
         raise PermissionError("read-only mount")
 
-    monkeypatch.setattr(Path, "chmod", deny_location_write)
+    monkeypatch.setattr(Path, "open", deny_location_write)
 
     with pytest.raises(ConfigurationError, match="must be writable to save resolved location fields"):
         backfill_location_fields(location_file, configured, resolved)
@@ -782,8 +784,9 @@ def test_backfill_location_fields_reports_non_permission_io_errors(monkeypatch, 
     ):
         backfill_location_fields(location_file, configured, resolved)
 
-    assert location_file.read_text(encoding="utf-8") == '[{"id":"place","name":"Place"}]'
-    assert not (tmp_path / ".locations.json.tmp").exists()
+    assert json.loads(location_file.read_text(encoding="utf-8")) == [
+        {"id": "place", "name": "Place", "latitude": 10.0, "longitude": 20.0}
+    ]
 
 
 @pytest.mark.parametrize("field", ("id", "name"))

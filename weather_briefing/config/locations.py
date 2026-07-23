@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 import math
 import os
-import stat
-from contextlib import suppress
 from pathlib import Path
 
 from ..languages import normalize_language_tag
 from ..models import LocationSpec, ResolvedLocation, normalize_jma_office_code
 from .base import ConfigurationError
-from .files import json_file, optional_string_field, required_string_field
+from .files import json_array, json_file, optional_string_field, required_string_field
 
 
 def load_locations(path: Path) -> tuple[LocationSpec, ...]:
@@ -108,37 +106,33 @@ def backfill_location_fields(
     if not updates:
         return False
 
-    temporary = path.with_name(f".{path.name}.tmp")
     try:
-        items = json_file(path)
-        changed = False
-        for item in items:
-            location_id = item.get("id")
-            if not isinstance(location_id, str) or location_id not in updates:
-                continue
-            fields = updates[location_id]
-            if "name" in fields and item.get("name") is None:
-                item["name"] = fields["name"]
-                changed = True
-            if "latitude" in fields and item.get("latitude") is None and item.get("longitude") is None:
-                item["latitude"] = fields["latitude"]
-                item["longitude"] = fields["longitude"]
-                changed = True
-        if not changed:
-            return False
+        with path.open("r+", encoding="utf-8") as locations_file:
+            items = json_array(path, locations_file.read())
+            changed = False
+            for item in items:
+                location_id = item.get("id")
+                if not isinstance(location_id, str) or location_id not in updates:
+                    continue
+                fields = updates[location_id]
+                if "name" in fields and item.get("name") is None:
+                    item["name"] = fields["name"]
+                    changed = True
+                if "latitude" in fields and item.get("latitude") is None and item.get("longitude") is None:
+                    item["latitude"] = fields["latitude"]
+                    item["longitude"] = fields["longitude"]
+                    changed = True
+            if not changed:
+                return False
 
-        payload = json.dumps(items, ensure_ascii=False, indent=2) + "\n"
-        with temporary.open("w", encoding="utf-8") as locations_file:
+            payload = json.dumps(items, ensure_ascii=False, indent=2) + "\n"
+            locations_file.seek(0)
             locations_file.write(payload)
+            locations_file.truncate()
             locations_file.flush()
             os.fsync(locations_file.fileno())
-        temporary.chmod(stat.S_IMODE(path.stat().st_mode))
-        temporary.replace(path)
     except PermissionError as exc:
         raise ConfigurationError(f"{path} must be writable to save resolved location fields") from exc
     except OSError as exc:
         raise ConfigurationError(f"Failed to save resolved location fields to {path}: {exc}") from exc
-    finally:
-        with suppress(OSError):
-            temporary.unlink(missing_ok=True)
     return True

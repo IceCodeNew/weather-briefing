@@ -47,13 +47,12 @@ First, prepare the host directory and configuration files. The default location 
 CONTAINER_NAME="weather-briefing"
 ROOT_DIR="${HOME}/${CONTAINER_NAME}"
 CONTAINER_ROOT_DIR="/home/nonroot/app"
-CONTAINER_CONFIG_DIR="${CONTAINER_ROOT_DIR}/config"
 
-mkdir -p "${ROOT_DIR}/config" "${ROOT_DIR}/state"
-touch "${ROOT_DIR}/.env" "${ROOT_DIR}/config/locations.json"
+mkdir -p "${ROOT_DIR}/state"
+touch "${ROOT_DIR}/.env" "${ROOT_DIR}/locations.json"
 ```
 
-Use the repository templates to fill in `.env` and `config/locations.json`. The locations file must contain a valid JSON array and cannot remain empty.
+Use the repository templates to fill in `.env` and `locations.json`. The locations file must contain a valid JSON array and cannot remain empty.
 
 Once configured, tighten file permissions and start the service. The commands below treat GID `65532` as a trusted container service group with write access; do not assign unrelated host users to that group.
 
@@ -73,9 +72,8 @@ docker run -d \
   --restart unless-stopped \
   --env "TZ=${TZ:-Asia/Shanghai}" \
   --env-file "${ROOT_DIR}/.env" \
-  --env "BRIEFING_LOCATIONS_FILE=${CONTAINER_CONFIG_DIR}/locations.json" \
   --mount \
-  "type=bind,src=${ROOT_DIR}/config,dst=${CONTAINER_CONFIG_DIR}" \
+  "type=bind,src=${ROOT_DIR}/locations.json,dst=${CONTAINER_ROOT_DIR}/locations.json" \
   --mount \
   "type=bind,src=${ROOT_DIR}/state,dst=${CONTAINER_ROOT_DIR}/state" \
   "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}" \
