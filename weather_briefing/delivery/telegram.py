@@ -156,7 +156,7 @@ def split_message(body: str, limit: int) -> tuple[str, ...]:
     chunker = _TelegramHTMLChunker(limit)
     chunker.feed(body)
     chunker.close()
-    return chunker.finish()
+    return chunker.finish() or (body,)
 
 
 class _TelegramHTMLChunker(HTMLParser):
