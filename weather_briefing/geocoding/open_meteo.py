@@ -45,6 +45,9 @@ class OpenMeteoGeocodingProvider:
             )
             response.raise_for_status()
             payload = response.json()
+            if not isinstance(payload, dict):
+                log_candidate_selection("open-meteo", location.id, 1, 0, outcome="invalid-response")
+                raise GeocodingError(f"Open-Meteo geocoding returned an invalid response for location: {location.id}")
             results = payload.get("results", [])
             if not isinstance(results, list):
                 log_candidate_selection("open-meteo", location.id, 1, 0, outcome="invalid-response")

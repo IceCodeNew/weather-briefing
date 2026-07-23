@@ -698,6 +698,12 @@ async def test_open_meteo_handles_results_not_a_list() -> None:
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
 
 
+async def test_open_meteo_handles_non_object_payload() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=[]))) as client:
+        with pytest.raises(GeocodingError, match="returned an invalid response"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+
 async def test_open_meteo_ignores_null_fields_when_matching_results() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
