@@ -33,7 +33,12 @@ def daemon_state_owner(state_database_path: Path) -> Iterator[None]:
 @asynccontextmanager
 async def serialized_state_run(state_database_path: Path) -> AsyncIterator[None]:
     """Serialize complete scheduled and manual business runs."""
-    lock_file = await asyncio.to_thread(_acquire_run_lock, state_database_path)
+    acquisition = asyncio.create_task(asyncio.to_thread(_acquire_run_lock, state_database_path))
+    try:
+        lock_file = await asyncio.shield(acquisition)
+    except asyncio.CancelledError:
+        acquisition.add_done_callback(_close_cancelled_lock_acquisition)
+        raise
     try:
         yield
     finally:
@@ -48,6 +53,14 @@ def _acquire_run_lock(state_database_path: Path) -> TextIO:
         lock_file.close()
         raise
     return lock_file
+
+
+def _close_cancelled_lock_acquisition(acquisition: asyncio.Future[TextIO]) -> None:
+    try:
+        lock_file = acquisition.result()
+    except (Exception, asyncio.CancelledError):
+        return
+    lock_file.close()
 
 
 def _open_lock_file(state_database_path: Path, purpose: str) -> TextIO:

@@ -93,6 +93,43 @@ async def test_serialized_state_run_waits_for_the_active_run(tmp_path: Path) -> 
     assert second_entered.is_set()
 
 
+async def test_serialized_state_run_releases_lock_acquired_after_cancellation(tmp_path: Path) -> None:
+    state_path = tmp_path / "weather.sqlite3"
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def hold_first_lock() -> None:
+        async with serialized_state_run(state_path):
+            first_entered.set()
+            await release_first.wait()
+
+    async def wait_for_lock() -> None:
+        async with serialized_state_run(state_path):
+            pytest.fail("Canceled run entered the critical section")  # pragma: no cover - failure guard
+
+    first_task = asyncio.create_task(hold_first_lock())
+    await first_entered.wait()
+    canceled_task = asyncio.create_task(wait_for_lock())
+    await asyncio.sleep(0.05)
+
+    canceled_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await canceled_task
+
+    release_first.set()
+    await first_task
+    async with asyncio.timeout(1):
+        async with serialized_state_run(state_path):
+            pass
+
+
+async def test_cancelled_lock_cleanup_ignores_acquisition_failure() -> None:
+    acquisition = asyncio.get_running_loop().create_future()
+    acquisition.set_exception(OSError("locking unavailable"))
+
+    locking_module._close_cancelled_lock_acquisition(acquisition)
+
+
 async def test_serialized_state_run_closes_file_when_locking_fails(monkeypatch, tmp_path: Path) -> None:
     lock_file = (tmp_path / "run.lock").open("a+", encoding="utf-8")
 
