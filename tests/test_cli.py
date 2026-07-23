@@ -50,7 +50,7 @@ from weather_briefing.composition.providers import qweather_is_configured as _qw
 from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
-from weather_briefing.registries import PublisherName
+from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from weather_briefing.weather import QWeatherProvider
 
@@ -1365,6 +1365,23 @@ async def test_build_weather_provider_unsupported(async_client: httpx.AsyncClien
     settings = _make_fake_settings()
     with pytest.raises(ValueError, match="Unsupported weather provider"):
         _build_weather_provider("unknown", settings, async_client)
+
+
+@pytest.mark.parametrize("name", tuple(WeatherProviderName))
+async def test_build_weather_provider_dispatch_is_exhaustive(
+    async_client: httpx.AsyncClient,
+    name: WeatherProviderName,
+) -> None:
+    settings = _make_fake_settings(
+        qweather_project_id="project",
+        qweather_credential_id="credential",
+        qweather_private_key=base64.b64encode(b"fake-private-key-content").decode(),
+        qweather_base_url="https://qweather.example.invalid",
+    )
+
+    provider = _build_weather_provider(name, settings, async_client, jma_office_code="130000")
+
+    assert provider is not None
 
 
 async def test_build_open_meteo_returns_provider(async_client: httpx.AsyncClient) -> None:
