@@ -119,7 +119,11 @@ At minimum, configure the following in `.env`:
 
 For private-chat delivery, open the bot in Telegram and send `/start` before the first briefing. A bot can send messages to a private Chat ID only after the user has initiated the conversation. For group delivery, add the bot to the group and grant it permission to send messages.
 
-Bark sends plaintext when the encryption variables are absent; the official alternative for protecting messages is to deploy your own Bark server and set its root URL with `BARK_BASE_URL`. The default is `https://api.day.app`. To enable encryption, set both encryption variables, open Push Encryption in the app, and select AES128, AES192, or AES256 to match the 16, 24, or 32 ASCII-character `BARK_ENCRYPTION_KEY`. Select GCM and noPadding, then save the same key and 12-character `BARK_ENCRYPTION_IV` in the app. Bark requires this IV to remain fixed; reusing an IV with AES-GCM weakens its security, so treat Bark encryption as protection against casual disclosure rather than a strong authenticated channel. CBC and ECB are intentionally unsupported because they do not authenticate the encrypted content. Bark briefings are limited to 650 visible characters so the content and metadata remain within the APNs payload limit.
+Bark sends plaintext when the encryption variables are absent. Encryption is recommended.
+
+To enable it, set both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV`. Follow the official documentation linked from [`env.example`](env.example) to generate the values and configure the Bark app.
+
+For a self-hosted Bark server, set its root URL with `BARK_BASE_URL`; the default is `https://api.day.app`. Bark briefings are limited to 650 visible characters to stay within the APNs payload limit.
 
 `BARK_GROUP` controls notification grouping and defaults to `weather-briefing`. Normal deliveries use Bark's `timeSensitive` level; application-generated silent deliveries use `passive`.
 
