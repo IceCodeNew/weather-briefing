@@ -4,16 +4,18 @@ import httpx
 import pytest
 
 from weather_briefing.api_client import LoggedAsyncClient
-from weather_briefing.models import RenderedMessage
-from weather_briefing.publishers import (
+from weather_briefing.data import resources as data_resources
+from weather_briefing.data.resources import ReferenceDataError
+from weather_briefing.delivery import (
     DeliveryError,
     DeliveryProvider,
+    PlainTextRenderer,
     StdoutPublisher,
     TelegramPublisher,
-    _split_message,
 )
-from weather_briefing.reference_data import ReferenceDataError
-from weather_briefing.render import PlainTextRenderer
+from weather_briefing.delivery.telegram import split_message
+from weather_briefing.delivery.telegram_reference import telegram_error_classification
+from weather_briefing.models import RenderedMessage
 
 
 class NoopPublisher:
@@ -70,13 +72,11 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
 
 
 async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:
-    def fail_validation() -> None:
-        raise ReferenceDataError("invalid Telegram metadata")
-
-    monkeypatch.setattr("weather_briefing.publishers.telegram_error_classification", fail_validation)
+    monkeypatch.setattr(data_resources, "load_reference_data", lambda filename: {})
+    telegram_error_classification.cache_clear()
 
     async with httpx.AsyncClient() as client:
-        with pytest.raises(ReferenceDataError, match="invalid Telegram metadata"):
+        with pytest.raises(ReferenceDataError, match="supported fields"):
             TelegramPublisher(client, "runtime-token", "runtime-chat")
 
 
@@ -93,7 +93,17 @@ def test_delivery_error_rejects_non_boolean_channel_availability(value) -> None:
 
 
 def test_split_message_prefers_line_boundary() -> None:
-    assert _split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
+    assert split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
+
+
+def test_split_message_preserves_markup_without_visible_text() -> None:
+    assert split_message("<b></b>", 3) == ("<b></b>",)
+
+
+@pytest.mark.parametrize(("body", "limit"), (("", 0), ("body", 0), ("body", -1)))
+def test_split_message_rejects_non_positive_limit(body: str, limit: int) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        split_message(body, limit)
 
 
 @pytest.mark.parametrize(
@@ -122,7 +132,7 @@ def test_split_message_balances_html_tags(
     limit: int,
     expected: tuple[str, ...],
 ) -> None:
-    assert _split_message(body, limit) == expected
+    assert split_message(body, limit) == expected
 
 
 async def test_telegram_publisher_uses_runtime_values(caplog) -> None:

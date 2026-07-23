@@ -1,6 +1,7 @@
 import pendulum
 import pytest
 
+from weather_briefing.delivery import PlainTextRenderer, TelegramHTMLRenderer
 from weather_briefing.models import (
     Advice,
     AdviceTopic,
@@ -10,7 +11,6 @@ from weather_briefing.models import (
     SourceDocument,
     Warning,
 )
-from weather_briefing.render import PlainTextRenderer, TelegramHTMLRenderer
 
 
 def test_render_briefing_uses_safe_telegram_html() -> None:
