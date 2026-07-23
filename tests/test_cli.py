@@ -463,7 +463,7 @@ async def test_run_holds_state_lock_while_loading_settings(monkeypatch, tmp_path
 
     monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
-    monkeypatch.setattr("weather_briefing.cli.serialized_state_run", record_state_lock)
+    monkeypatch.setattr("weather_briefing.persistence.locking.serialized_state_run", record_state_lock)
 
     with (
         patch.object(Settings, "from_env", classmethod(load_settings)),
@@ -1559,7 +1559,7 @@ async def test_daemon_schedules_forecast_and_briefing_without_running_either_imm
 
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
     monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
-    monkeypatch.setattr("weather_briefing.cli.serialized_state_run", record_state_lock)
+    monkeypatch.setattr("weather_briefing.persistence.locking.serialized_state_run", record_state_lock)
     monkeypatch.setattr(
         "weather_briefing.cli.AsyncIOScheduler",
         lambda **kw: SimpleNamespace(
