@@ -6,6 +6,7 @@ import sqlite3
 
 import pendulum
 
+from ..time_utils import require_aware_datetime
 from .serialization import _parse_time as parse_time
 from .serialization import _storage_time as storage_time
 
@@ -55,6 +56,7 @@ class HealthStateOperations:
         stale_hours: int,
     ) -> list[str]:
         """Return sources without recent articles inside the threshold."""
+        now = require_aware_datetime(now, context="Stale source check time")
         threshold = now.subtract(hours=stale_hours)
         stale: list[str] = []
         for source_id in source_ids:

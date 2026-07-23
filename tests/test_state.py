@@ -7,7 +7,15 @@ import pendulum
 import pytest
 
 from weather_briefing.models import Article, BriefingRecord, SourceDocument, Warning
+from weather_briefing.persistence.schema import initialize_state
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
+
+
+def test_schema_initializes_with_default_sqlite_rows() -> None:
+    with closing(sqlite3.connect(":memory:")) as connection:
+        initialize_state(connection)
+
+        assert connection.execute("SELECT consecutive_failures FROM task_health").fetchone() == (0,)
 
 
 def test_rendered_text_diagnostics_can_be_enabled_and_disabled(tmp_path: Path) -> None:
@@ -299,6 +307,14 @@ def test_source_becomes_stale_after_threshold(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.record_source_check("source", now.subtract(hours=25), now.subtract(hours=25))
         assert state.stale_sources(("source",), now, 24) == ["source"]
+
+
+def test_stale_source_check_rejects_naive_time(tmp_path: Path) -> None:
+    with (
+        SQLiteStateStore(tmp_path / "state.db") as state,
+        pytest.raises(ValueError, match="Stale source check time must include explicit timezone information"),
+    ):
+        state.stale_sources(("source",), pendulum.datetime(2026, 7, 13, 9, tz=None), 24)
 
 
 def test_new_empty_source_is_not_immediately_stale(tmp_path: Path) -> None:

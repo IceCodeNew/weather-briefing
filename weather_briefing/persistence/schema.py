@@ -60,7 +60,7 @@ def initialize_state(connection: sqlite3.Connection) -> None:
                 INSERT OR IGNORE INTO task_health(singleton, consecutive_failures) VALUES (1, 0);
         """
     )
-    context_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(context_snapshots)")}
+    context_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(context_snapshots)")}
     if "history_summary" not in context_columns:
         connection.execute("ALTER TABLE context_snapshots ADD COLUMN history_summary TEXT")
     if "history_value" not in context_columns:
