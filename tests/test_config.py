@@ -11,10 +11,10 @@ import pytest
 from weather_briefing.config import (
     ConfigurationError,
     Settings,
-    _locations,
     backfill_location_fields,
     weather_providers_for,
 )
+from weather_briefing.config.locations import load_locations as _locations
 from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
 
 
@@ -798,6 +798,38 @@ def test_locations_reports_file_read_errors(monkeypatch, tmp_path: Path) -> None
         _locations(location_file)
 
 
+def test_json_file_reports_read_errors(monkeypatch, tmp_path: Path) -> None:
+    from weather_briefing.config.files import json_file
+
+    source_file = tmp_path / "rss-sources.json"
+    source_file.write_text("[]", encoding="utf-8")
+
+    def fail_read_text(*_args: object, **_kwargs: object) -> None:
+        raise OSError("read failure")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    with pytest.raises(ConfigurationError, match="must contain readable JSON"):
+        json_file(source_file)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "BRIEFING_LOCATIONS_FILE",
+        "RSS_SOURCES_FILE",
+        "GEOCODING_CACHE_PATH",
+        "BRIEFING_STATE_PATH",
+    ],
+)
+def test_settings_rejects_empty_path_environment_values(monkeypatch, name: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv(name, "   ")
+
+    with pytest.raises(ConfigurationError, match=rf"{name} must not be empty"):
+        Settings.from_env()
+
+
 def test_locations_reports_lock_errors(monkeypatch, tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
@@ -824,7 +856,7 @@ def test_backfill_location_fields_times_out_when_file_remains_locked(monkeypatch
         raise BlockingIOError
 
     monkeypatch.setattr(fcntl, "flock", keep_lock_busy)
-    monkeypatch.setattr("weather_briefing.config._LOCATION_FILE_LOCK_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr("weather_briefing.config.locations._LOCATION_FILE_LOCK_TIMEOUT_SECONDS", 0)
 
     with pytest.raises(ConfigurationError, match="is locked; cannot save resolved location fields"):
         backfill_location_fields(location_file, configured, resolved)
@@ -846,7 +878,7 @@ def test_backfill_location_fields_retries_a_busy_lock(monkeypatch, tmp_path: Pat
         flock(file_descriptor, operation)
 
     monkeypatch.setattr(fcntl, "flock", briefly_busy)
-    monkeypatch.setattr("weather_briefing.config._LOCATION_FILE_LOCK_RETRY_SECONDS", 0)
+    monkeypatch.setattr("weather_briefing.config.locations._LOCATION_FILE_LOCK_RETRY_SECONDS", 0)
 
     assert backfill_location_fields(location_file, configured, resolved)
     assert attempts == 2
