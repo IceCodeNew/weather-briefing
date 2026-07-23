@@ -71,19 +71,19 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 - Keep `docs/requirements.md` about user needs and product behavior, without implementation details.
 - Keep `docs/design.md` as the current technical contract, without repeating requirements or design history.
 - Use `docs/notes.md` only for choices that may look wrong or unnecessarily limited. State their assumptions, why they are acceptable, and when to revisit them.
-- Keep this file for development rules and lessons that future contributors could otherwise miss.
-- Update the document that owns a changed decision in the same change as the code.
-- Write directly, use established terms, and keep each paragraph focused on one idea. Do not hard-wrap prose to a fixed width.
+- Keep this file for durable development rules and invariants, not implementation plans or work history. Update the owning document with the code.
+- Write directly with established terms and focused paragraphs. Do not hard-wrap prose.
 
 ## Engineering judgment
 
-- Design extension boundaries before adding provider-specific behavior. Keep core data platform-neutral and vendor syntax in adapters.
-- Keep domain reference data outside implementation code. Geographic bounds, classification tables, and matching patterns belong in validated data files.
+- Organize modules by reason to change. Keep entry points and composition roots thin, core data platform-neutral, vendor syntax in feature adapters, and domain validation separate from SDK compatibility code.
+- Treat file length as a diagnostic. Split by responsibility while preserving orchestration and transaction boundaries.
+- Preserve transaction atomicity, strict external-response validation, safe diagnostics, and other behavioral boundaries during structural work. Re-export only intentional APIs, and patch tests at the behavior's owning module.
 - Never commit real credentials, locations, coordinates, private source URLs, generated content, or runtime state. Use runtime configuration, ignored state paths, and public test data.
-- Keep dependencies minimal. Evaluate official SDKs and maintained libraries before implementing external-service infrastructure; document a non-obvious custom implementation in `docs/notes.md`.
+- Add a dependency only when it replaces a substantial maintained responsibility. Prefer official SDKs and document non-obvious custom infrastructure in `docs/notes.md`.
 - Prefer timezone-aware Pendulum values. Reject ambiguous timestamps, keep timezone assumptions at provider boundaries, and centralize unavoidable fallback rules.
 - Validate configuration at its input boundary. Reject invalid types and unknown application-owned choices instead of coercing them.
-- When implicit behavior becomes configurable, choose the product-wide default deliberately. Update regional examples to state their intended old behavior.
+- When implicit behavior becomes configurable, choose the product-wide default deliberately and update affected examples.
 - Do not use `typing.cast()` in application or test code. Model type boundaries with protocols, typed test doubles, or runtime narrowing.
 - Keep comments concise and in English. Do not retain compatibility paths for abandoned internal formats without a current requirement.
 - Write application-owned log messages and operational alerts in English. Keep user-selected output and opaque provider or user data in their original language; do not translate payloads merely for logging.
@@ -98,34 +98,31 @@ Python craftsmanship guidance for naming, control flow, data structures, functio
 ## Git history
 
 - Follow Conventional Commits and do not add co-author trailers.
-- Keep pull requests focused, but use several meaningful commits when that makes the change easier to review. Order commits by dependency and include tests with the behavior they cover.
-- Follow-up review commits are acceptable. Do not rewrite published history merely to hide fixes.
-- For stacked pull requests, wait for upstream changes to settle before rebasing and pushing downstream branches. Validate each rewritten layer.
+- Keep pull requests focused. Use several meaningful, dependency-ordered commits when that makes a change easier to review, and include tests with the behavior they cover.
+- Keep follow-up review commits instead of rewriting published history. Stabilize upstream changes before rebasing and validating stacked branches.
 - Do not push, force-push, or open a pull request without explicit approval.
 
 ## Review
 
-- Before publishing an update, run local checks and manually review the complete diff. Fix all known issues before requesting review.
-- Evaluate every review finding. Fix valid findings, document the technical reason for rejecting invalid ones, and resolve adjudicated threads.
-- Confirm that completed reviews apply to the current commit. Do not merge with unresolved actionable findings.
-- Batch feedback for a commit, verify the fixes locally, and avoid unnecessary review requests or pushes.
+- Resolve valid review findings and explain rejected ones. Do not merge with unresolved actionable findings.
+- Batch and verify fixes before requesting another review, and confirm reviews apply to the current commit.
 
 ## Verification strategy
 
-- Make verification proportional to the change. Start with focused tests and add direct probes for changed boundaries.
-- Use containers only for container-specific behavior or when a configured hook owns the check.
-- For container and workflow changes, verify observable behavior. Check the final process, runtime user, argument overrides, filesystem contents, or real workflow log.
-- Use mocks and dummy configuration for routine tests. Use real services only for an explicitly requested end-to-end test, and never expose private inputs.
-- If a check cannot run locally, report the exact limitation and what remains unverified. Do not install an alternative stack without approval.
+- Scale verification to the change. Start with focused tests and directly test changed boundaries.
+- Verify container and workflow changes through observable behavior; use containers only when relevant.
+- Use mocks and dummy configuration by default. Use real services only for explicitly requested end-to-end tests, without exposing private inputs.
+- If a check cannot run locally, report the exact limitation and what remains unverified.
 
 ## Pre-push checklist
 
-Before pushing commits, ensure all local checks and tests pass. Run the repository hooks and branch coverage tests:
+Before publishing an update, review the complete diff and run:
 
 ```bash
 prek run --all-files
 uv run --with pytest --with pytest-cov -- pytest --cov --cov-branch --cov-report=xml
 ```
 
-- Hooks do not compare coverage. Check it separately and do not push commits whose coverage is lower than `master`.
-- Keep tests with the behavior they cover. Put unrelated coverage improvements in a separate pull request.
+- Coverage includes all executable repository code, including tests, and must not fall below `master`.
+- Exclude coverage only when testing adds no behavioral confidence, and explain the reason at the exclusion site.
+- Put unrelated coverage improvements in a separate pull request.
