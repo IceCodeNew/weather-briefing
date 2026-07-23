@@ -651,8 +651,8 @@ async def test_open_meteo_future_enrichment_rejects_non_object_hourly_payload() 
         )
 
         air_quality, allergen = await provider._fetch_air_quality_and_allergen(
-            39.9,
-            116.3,
+            1,
+            2,
             forecast_date=pendulum.date(2026, 7, 15),
         )
 
