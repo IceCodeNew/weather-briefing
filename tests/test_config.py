@@ -1,10 +1,8 @@
-import fcntl
 import json
-import multiprocessing
 import os
+import stat
 from dataclasses import replace
 from pathlib import Path
-from typing import Protocol
 
 import pytest
 
@@ -16,29 +14,6 @@ from weather_briefing.config import (
 )
 from weather_briefing.config.locations import load_locations as _locations
 from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
-
-
-class _ProcessEvent(Protocol):  # pragma: no cover - exercised only in spawned processes
-    def set(self) -> None: ...
-
-
-def _backfill_location_fields_in_process(
-    path: Path,
-    configured: tuple[LocationSpec, ...],
-    resolved: tuple[ResolvedLocation, ...],
-    ready: _ProcessEvent,
-) -> None:  # pragma: no cover - child-process coverage is not combined
-    ready.set()
-    assert backfill_location_fields(path, configured, resolved)
-
-
-def _read_locations_in_process(
-    path: Path,
-    expected: tuple[LocationSpec, ...],
-    ready: _ProcessEvent,
-) -> None:  # pragma: no cover - child-process coverage is not combined
-    ready.set()
-    assert _locations(path) == expected
 
 
 def _required_environment(monkeypatch) -> None:
@@ -571,6 +546,17 @@ def test_backfill_location_fields_writes_only_missing_user_fields(tmp_path: Path
     ]
 
 
+def test_backfill_location_fields_preserves_file_permissions(tmp_path: Path) -> None:
+    location_file = tmp_path / "locations.json"
+    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
+    location_file.chmod(0o600)
+    configured = (LocationSpec("place", "Place"),)
+    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
+
+    assert backfill_location_fields(location_file, configured, resolved)
+    assert stat.S_IMODE(location_file.stat().st_mode) == 0o600
+
+
 def test_backfill_location_fields_skips_reduced_precision_matches(tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     original = '[{"id":"place","name":"Specific Place"}]'
@@ -714,72 +700,6 @@ def test_backfill_location_fields_rejects_invalid_resolved_coordinates(
     assert location_file.read_text(encoding="utf-8") == original
 
 
-def test_backfill_location_fields_locks_read_modify_write_transaction(tmp_path: Path) -> None:
-    location_file = tmp_path / "locations.json"
-    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
-    configured = (LocationSpec("place", "Place"),)
-    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
-    process_context = multiprocessing.get_context("spawn")
-    ready = process_context.Event()
-    process = process_context.Process(
-        target=_backfill_location_fields_in_process,
-        args=(location_file, configured, resolved, ready),
-    )
-
-    with location_file.open("r+", encoding="utf-8") as locked_file:
-        fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
-        process.start()
-        assert ready.wait(timeout=10)
-        process.join(timeout=1)
-        assert process.is_alive()
-
-        items = json.load(locked_file)
-        items[0]["custom"] = "concurrent update"
-        locked_file.seek(0)
-        json.dump(items, locked_file)
-        locked_file.truncate()
-        locked_file.flush()
-        os.fsync(locked_file.fileno())
-
-    process.join(timeout=10)
-    assert process.exitcode == 0
-
-    assert json.loads(location_file.read_text(encoding="utf-8")) == [
-        {
-            "id": "place",
-            "name": "Place",
-            "custom": "concurrent update",
-            "latitude": 10.0,
-            "longitude": 20.0,
-        }
-    ]
-
-
-def test_locations_waits_for_locked_writer_before_reading(tmp_path: Path) -> None:
-    location_file = tmp_path / "locations.json"
-    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
-    expected = (LocationSpec("place", "Place", 10.0, 20.0),)
-    process_context = multiprocessing.get_context("spawn")
-    ready = process_context.Event()
-    process = process_context.Process(target=_read_locations_in_process, args=(location_file, expected, ready))
-
-    with location_file.open("r+", encoding="utf-8") as locked_file:
-        fcntl.flock(locked_file.fileno(), fcntl.LOCK_EX)
-        process.start()
-        assert ready.wait(timeout=10)
-        process.join(timeout=1)
-        assert process.is_alive()
-
-        locked_file.seek(0)
-        locked_file.write('[{"id":"place","name":"Place","latitude":10.0,"longitude":20.0}]')
-        locked_file.truncate()
-        locked_file.flush()
-        os.fsync(locked_file.fileno())
-
-    process.join(timeout=10)
-    assert process.exitcode == 0
-
-
 def test_locations_rejects_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="Configure at least one location"):
         _locations(tmp_path / "missing.json")
@@ -830,70 +750,16 @@ def test_settings_rejects_empty_path_environment_values(monkeypatch, name: str) 
         Settings.from_env()
 
 
-def test_locations_reports_lock_errors(monkeypatch, tmp_path: Path) -> None:
-    location_file = tmp_path / "locations.json"
-    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
-
-    def fail_lock(_file_descriptor: int, _operation: int) -> None:
-        raise OSError("lock unavailable")
-
-    monkeypatch.setattr(fcntl, "flock", fail_lock)
-
-    with pytest.raises(
-        ConfigurationError,
-        match="Failed to lock location configuration .* for reading: lock unavailable",
-    ):
-        _locations(location_file)
-
-
-def test_backfill_location_fields_times_out_when_file_remains_locked(monkeypatch, tmp_path: Path) -> None:
-    location_file = tmp_path / "locations.json"
-    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
-    configured = (LocationSpec("place", "Place"),)
-    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
-
-    def keep_lock_busy(_file_descriptor: int, _operation: int) -> None:
-        raise BlockingIOError
-
-    monkeypatch.setattr(fcntl, "flock", keep_lock_busy)
-    monkeypatch.setattr("weather_briefing.config.locations._LOCATION_FILE_LOCK_TIMEOUT_SECONDS", 0)
-
-    with pytest.raises(ConfigurationError, match="is locked; cannot save resolved location fields"):
-        backfill_location_fields(location_file, configured, resolved)
-
-
-def test_backfill_location_fields_retries_a_busy_lock(monkeypatch, tmp_path: Path) -> None:
-    location_file = tmp_path / "locations.json"
-    location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
-    configured = (LocationSpec("place", "Place"),)
-    resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
-    flock = fcntl.flock
-    attempts = 0
-
-    def briefly_busy(file_descriptor: int, operation: int) -> None:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise BlockingIOError
-        flock(file_descriptor, operation)
-
-    monkeypatch.setattr(fcntl, "flock", briefly_busy)
-    monkeypatch.setattr("weather_briefing.config.locations._LOCATION_FILE_LOCK_RETRY_SECONDS", 0)
-
-    assert backfill_location_fields(location_file, configured, resolved)
-    assert attempts == 2
-
-
 def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
     configured = (LocationSpec("place", "Place"),)
     resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
 
-    def deny_location_write(*_args: object, **_kwargs: object) -> None:
+    def deny_location_write(_path: Path, _mode: int) -> None:
         raise PermissionError("read-only mount")
 
-    monkeypatch.setattr(Path, "open", deny_location_write)
+    monkeypatch.setattr(Path, "chmod", deny_location_write)
 
     with pytest.raises(ConfigurationError, match="must be writable to save resolved location fields"):
         backfill_location_fields(location_file, configured, resolved)
@@ -915,6 +781,9 @@ def test_backfill_location_fields_reports_non_permission_io_errors(monkeypatch, 
         match=rf"Failed to save resolved location fields to {location_file}: disk full",
     ):
         backfill_location_fields(location_file, configured, resolved)
+
+    assert location_file.read_text(encoding="utf-8") == '[{"id":"place","name":"Place"}]'
+    assert not (tmp_path / ".locations.json.tmp").exists()
 
 
 @pytest.mark.parametrize("field", ("id", "name"))

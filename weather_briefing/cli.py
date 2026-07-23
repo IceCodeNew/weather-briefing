@@ -35,6 +35,7 @@ from .geocoding import (
     PrecisionReducingGeocodingProvider,
 )
 from .models import ResolvedLocation
+from .persistence import daemon_state_owner, serialized_state_run
 from .service import BriefingService
 from .sources import RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
@@ -260,6 +261,24 @@ async def run(
     run_now: bool = False,
 ) -> None:
     """Compose dependencies and execute one task across configured locations."""
+    async with serialized_state_run(state_path_from_env()):
+        await _run_unlocked(
+            kind,
+            enforce_window,
+            at,
+            forecast_date=forecast_date,
+            run_now=run_now,
+        )
+
+
+async def _run_unlocked(
+    kind: str,
+    enforce_window: bool,
+    at: str | None,
+    *,
+    forecast_date: str | None,
+    run_now: bool,
+) -> None:
     settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     if forecast_date is not None and kind != "forecast":
@@ -444,7 +463,8 @@ def main() -> None:
     _configure_logging(debug=False)
     try:
         if args.command == "daemon":
-            asyncio.run(daemon())
+            with daemon_state_owner(state_path_from_env()):
+                asyncio.run(daemon())
         elif args.command == "diagnostics":
             _manage_rendered_text_diagnostics(
                 args.diagnostics_action,
