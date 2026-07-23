@@ -191,7 +191,7 @@ class QWeatherProvider:
                 indices_payload = parsed_indices_payload
                 daily_indices_payload = indices_payload.get("daily", [])
                 if not _is_object_list(daily_indices_payload):
-                    raise TypeError("daily indices must be an array")
+                    raise _QWeatherResponseError("daily indices must be an array")
                 daily_indices = tuple(
                     item
                     for item in daily_indices_payload

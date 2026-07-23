@@ -10,20 +10,20 @@ from typing import Any
 import httpx
 import pendulum
 
+from .. import allergen as allergen_module
 from ..air_quality import health_guidance
-from ..allergen import allergen_guidance, pollen_type_names
 from ..api_client import api_call_extensions
 from ..data.resources import ReferenceDataError
 from ..data.service_endpoints import OPEN_METEO_AIR_QUALITY_BASE_URL, OPEN_METEO_WEATHER_BASE_URL
 from ..languages import LanguageSupport
 from ..models import AirQualitySnapshot, AirQualityTimeKind, AllergenLevel, AllergenSnapshot, WeatherContextSnapshot
 from ..time_utils import parse_datetime_with_default_timezone
+from . import open_meteo_reference
 from .base import WeatherContextError, _is_object_list, _is_string_keyed_dict, _safe_provider_error
-from .open_meteo_reference import open_meteo_weather_code_descriptions
 
 _LOGGER = logging.getLogger("weather_briefing.weather_context")
 OPEN_METEO_LANGUAGE_SUPPORT = LanguageSupport.fixed("en")
-open_meteo_weather_code_descriptions()
+open_meteo_reference.open_meteo_weather_code_descriptions()
 
 
 class _OpenMeteoResponseError(ValueError):
@@ -147,7 +147,7 @@ class OpenMeteoProvider:
         forecast_date: pendulum.Date | None,
     ) -> tuple[AirQualitySnapshot | None, AllergenSnapshot | None]:
         try:
-            pollen_types = pollen_type_names()
+            pollen_types = allergen_module.pollen_type_names()
         except ReferenceDataError as exc:
             _LOGGER.warning(
                 "Weather API optional enrichment failed provider=open-meteo operation=allergen reason=%s",
@@ -182,21 +182,22 @@ class OpenMeteoProvider:
             response.raise_for_status()
             payload = response.json()
             if not _is_string_keyed_dict(payload):
-                raise TypeError("air-quality response must be an object")
+                raise _OpenMeteoResponseError("air-quality response must be an object")
             if forecast_date is None:
                 air_quality_values = payload["current"]
                 if not _is_string_keyed_dict(air_quality_values):
-                    raise TypeError("current air quality must be an object")
+                    raise _OpenMeteoResponseError("current air quality must be an object")
                 allergen_values = air_quality_values
             else:
                 hourly = payload["hourly"]
                 if not _is_string_keyed_dict(hourly):
-                    raise TypeError("hourly air quality must be an object")
+                    raise _OpenMeteoResponseError("hourly air quality must be an object")
                 air_quality_values, allergen_values = _open_meteo_daily_peak_values(hourly, pollen_types)
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            reason = str(exc) if isinstance(exc, _OpenMeteoResponseError) else _safe_provider_error(exc)
             _LOGGER.warning(
                 "Weather API optional call failed provider=open-meteo operation=air-quality reason=%s",
-                _safe_provider_error(exc),
+                reason,
             )
             return None, None
         allergen = None
@@ -263,14 +264,14 @@ class OpenMeteoProvider:
             except (TypeError, ValueError):
                 continue
             try:
-                category, _ = allergen_guidance(concentration)
+                category, _ = allergen_module.allergen_guidance(concentration)
             except ValueError:
                 continue
             levels.append(AllergenLevel(name=display_name, category=category, concentration=concentration))
         if not levels:
             return None
         max_concentration = max(level.concentration for level in levels)
-        overall_category, overall_guidance = allergen_guidance(max_concentration)
+        overall_category, overall_guidance = allergen_module.allergen_guidance(max_concentration)
         timezone_value = payload.get("timezone")
         observed_at = None
         time_value = current.get("time")
@@ -386,7 +387,7 @@ def _format_open_meteo_day(daily: dict[str, object], index: int) -> str:
 
 
 def _open_meteo_weather_description(value: object) -> str:
-    descriptions = open_meteo_weather_code_descriptions()
+    descriptions = open_meteo_reference.open_meteo_weather_code_descriptions()
     if type(value) is int and value in descriptions:
         return descriptions[value]
     if type(value) is int:

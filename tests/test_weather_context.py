@@ -555,7 +555,7 @@ def test_open_meteo_weather_code_uses_readable_description() -> None:
 
 def test_open_meteo_weather_code_lookup_uses_cached_loader_boundary(monkeypatch) -> None:
     monkeypatch.setattr(
-        "weather_briefing.weather.open_meteo.open_meteo_weather_code_descriptions",
+        "weather_briefing.weather.open_meteo_reference.open_meteo_weather_code_descriptions",
         lambda: {53: "Reloaded description"},
     )
 
@@ -660,8 +660,18 @@ async def test_open_meteo_future_enrichment_rejects_non_object_hourly_payload() 
     assert allergen is None
 
 
-@pytest.mark.parametrize("payload", ([], {"current": []}))
-async def test_open_meteo_current_enrichment_rejects_non_object_payload(payload: object) -> None:
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    (
+        ([], "air-quality response must be an object"),
+        ({"current": []}, "current air quality must be an object"),
+    ),
+)
+async def test_open_meteo_current_enrichment_rejects_non_object_payload(
+    caplog,
+    payload: object,
+    reason: str,
+) -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
     ) as client:
@@ -670,14 +680,16 @@ async def test_open_meteo_current_enrichment_rejects_non_object_payload(payload:
             air_quality_base_url="https://air.example.invalid",
         )
 
-        air_quality, allergen = await provider._fetch_air_quality_and_allergen(
-            39.9,
-            116.3,
-            forecast_date=None,
-        )
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            air_quality, allergen = await provider._fetch_air_quality_and_allergen(
+                39.9,
+                116.3,
+                forecast_date=None,
+            )
 
     assert air_quality is None
     assert allergen is None
+    assert f"operation=air-quality reason={reason}" in caplog.text
 
 
 def test_open_meteo_daily_peaks_skip_invalid_hourly_values() -> None:
@@ -1351,7 +1363,7 @@ async def test_qweather_non_success_indices_status_is_optional(caplog) -> None:
     ("payload", "reason"),
     (
         ([], "indices response must be an object"),
-        ({"code": "200", "daily": {}}, "TypeError"),
+        ({"code": "200", "daily": {}}, "daily indices must be an array"),
     ),
 )
 async def test_qweather_invalid_indices_response_shape_is_optional(caplog, payload: object, reason: str) -> None:
@@ -2089,7 +2101,7 @@ async def test_open_meteo_allergen_reference_failure_keeps_air_quality(monkeypat
         )
 
     monkeypatch.setattr(
-        "weather_briefing.weather.open_meteo.pollen_type_names",
+        "weather_briefing.allergen.pollen_type_names",
         fail_to_load_pollen_types,
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
