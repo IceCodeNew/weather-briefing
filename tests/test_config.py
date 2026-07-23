@@ -1225,6 +1225,7 @@ class TestConfigErrorPaths:
     def test_missing_bark_device_key_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("PUBLISHER", "bark")
+        monkeypatch.delenv("BARK_DEVICE_KEY", raising=False)
 
         with pytest.raises(ConfigurationError, match="Missing required environment variable: BARK_DEVICE_KEY"):
             Settings.from_env()
