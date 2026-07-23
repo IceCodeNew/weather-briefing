@@ -50,6 +50,7 @@ from weather_briefing.composition.providers import build_weather_provider as _bu
 from weather_briefing.composition.providers import qweather_is_configured as _qweather_is_configured
 from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
+from weather_briefing.delivery import BarkTextRenderer
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
 from weather_briefing.registries import PublisherName, WeatherProviderName
@@ -1224,6 +1225,7 @@ class TestDeliveryProvider:
     async def test_bark_with_plaintext_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="bark", bark_device_key="test-device")
         provider = _delivery_provider(settings, async_client)
+        assert isinstance(provider.renderer, BarkTextRenderer)
         assert provider.single_message_limit == 650
 
     async def test_bark_with_encrypted_config(self, async_client: httpx.AsyncClient) -> None:

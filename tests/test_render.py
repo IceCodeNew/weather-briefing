@@ -1,7 +1,7 @@
 import pendulum
 import pytest
 
-from weather_briefing.delivery import PlainTextRenderer, TelegramHTMLRenderer
+from weather_briefing.delivery import BarkTextRenderer, PlainTextRenderer, TelegramHTMLRenderer
 from weather_briefing.models import (
     Advice,
     AdviceTopic,
@@ -48,6 +48,24 @@ def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
 
     assert rendered.body == "Daily （来源：Source: https://example.invalid/source）"
     assert "<b>" not in rendered.body
+
+
+def test_bark_text_renderer_uses_numbered_sources_without_urls() -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article("article", "feed", "Feed", "Title", "https://example.invalid/article", now, "Body")
+    context = SourceDocument("context", "Weather API", "https://example.invalid/context", "Forecast")
+    result = BriefingResult(
+        "Daily",
+        ("article",),
+        (Conclusion("Rain", ("article", "context")),),
+        output_language="en",
+    )
+
+    rendered = BarkTextRenderer().render_briefing(result, (article,), (context,))
+
+    assert rendered.body == ("Daily [1]\n\nWeather information\n\n- Rain [1][2]\n\nSources: [1] Feed; [2] Weather API")
+    assert article.url not in rendered.body
+    assert context.url not in rendered.body
 
 
 @pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer()))

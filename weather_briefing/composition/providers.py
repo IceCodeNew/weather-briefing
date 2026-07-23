@@ -13,6 +13,7 @@ from ..config import Settings
 from ..config import environment as config_environment
 from ..delivery import (
     BarkPublisher,
+    BarkTextRenderer,
     DeliveryProvider,
     PlainTextRenderer,
     RenderedTextDiagnostics,
@@ -99,7 +100,7 @@ def _build_bark_publisher(
     if not settings.bark_device_key:
         raise ValueError("Bark publisher requires BARK_DEVICE_KEY")
     return DeliveryProvider(
-        PlainTextRenderer(),
+        BarkTextRenderer(),
         BarkPublisher(
             client,
             settings.bark_device_key,
