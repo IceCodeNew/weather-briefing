@@ -2,17 +2,21 @@ import httpx
 import pendulum
 import pytest
 
-from weather_briefing.regional_weather import (
+from weather_briefing.weather import (
     NEA_LANGUAGE_SUPPORT,
     JMAJapanForecastProvider,
     NEASingaporeNowcastProvider,
     RegionalWeatherProviderError,
-    _first_item,
+    snapshot_to_documents,
+)
+from weather_briefing.weather.jma import (
     _jma_forecast_lines,
     _parse_japan_time,
+)
+from weather_briefing.weather.nea import (
+    _first_item,
     _parse_singapore_time,
 )
-from weather_briefing.weather_context import snapshot_to_documents
 
 
 async def test_nea_nowcast_provider_normalizes_v2_response() -> None:

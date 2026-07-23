@@ -7,15 +7,15 @@ import jwt
 import pendulum
 import pytest
 
+from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
     AllergenSnapshot,
     WeatherContextSnapshot,
 )
-from weather_briefing.reference_data import ReferenceDataError
 from weather_briefing.time_utils import parse_aware_datetime
-from weather_briefing.weather_context import (
+from weather_briefing.weather import (
     AirQualitySupplementingWeatherProvider,
     FallbackWeatherContextProvider,
     LoggedWeatherContextProvider,
@@ -24,11 +24,15 @@ from weather_briefing.weather_context import (
     QWeatherProvider,
     UnsupportedForecastDateError,
     WeatherContextError,
-    _format_qweather_day,
-    _format_qweather_lifestyle,
+    snapshot_to_documents,
+)
+from weather_briefing.weather.open_meteo import (
     _open_meteo_daily_peak_values,
     _open_meteo_weather_description,
-    snapshot_to_documents,
+)
+from weather_briefing.weather.qweather import (
+    _format_qweather_day,
+    _format_qweather_lifestyle,
 )
 
 
@@ -551,7 +555,7 @@ def test_open_meteo_weather_code_uses_readable_description() -> None:
 
 def test_open_meteo_weather_code_lookup_uses_cached_loader_boundary(monkeypatch) -> None:
     monkeypatch.setattr(
-        "weather_briefing.weather_context.open_meteo_weather_code_descriptions",
+        "weather_briefing.weather.open_meteo_reference.open_meteo_weather_code_descriptions",
         lambda: {53: "Reloaded description"},
     )
 
@@ -654,6 +658,38 @@ async def test_open_meteo_future_enrichment_rejects_non_object_hourly_payload() 
 
     assert air_quality is None
     assert allergen is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    (
+        ([], "air-quality response must be an object"),
+        ({"current": []}, "current air quality must be an object"),
+    ),
+)
+async def test_open_meteo_current_enrichment_rejects_non_object_payload(
+    caplog,
+    payload: object,
+    reason: str,
+) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as client:
+        provider = OpenMeteoProvider(
+            client,
+            air_quality_base_url="https://air.example.invalid",
+        )
+
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            air_quality, allergen = await provider._fetch_air_quality_and_allergen(
+                39.9,
+                116.3,
+                forecast_date=None,
+            )
+
+    assert air_quality is None
+    assert allergen is None
+    assert f"operation=air-quality reason={reason}" in caplog.text
 
 
 def test_open_meteo_daily_peaks_skip_invalid_hourly_values() -> None:
@@ -846,7 +882,8 @@ async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog)
 
     assert "Weather API call started provider=qweather" in caplog.text
     assert "Weather API call failed provider=qweather" in caplog.text
-    assert "reason=QWeather weather forecast failed: HTTP 401" in caplog.text
+    assert "reason=WeatherContextError" in caplog.text
+    assert "QWeather weather forecast failed: HTTP 401" not in caplog.text
     assert "Weather API call succeeded provider=open-meteo" in caplog.text
     assert "source_id=weather:fallback" in caplog.text
 
@@ -902,7 +939,7 @@ async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fail
         def fail_elapsed(started_at: float) -> int:
             raise RuntimeError("secondary failure")
 
-        monkeypatch.setattr("weather_briefing.weather_context._elapsed_milliseconds", fail_elapsed)
+        monkeypatch.setattr("weather_briefing.weather.base._elapsed_milliseconds", fail_elapsed)
     else:
         original_info = logging.getLogger("weather_briefing.weather_context").info
 
@@ -911,7 +948,7 @@ async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fail
                 raise RuntimeError("secondary failure")
             original_info(message, *args)
 
-        monkeypatch.setattr("weather_briefing.weather_context._LOGGER.info", fail_skip_log)
+        monkeypatch.setattr("weather_briefing.weather.base._LOGGER.info", fail_skip_log)
 
     provider = LoggedWeatherContextProvider("nea-sg", UndatedProvider())
 
@@ -1044,6 +1081,25 @@ async def test_qweather_rejects_non_success_weather_status() -> None:
             ).fetch(1, 2)
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    (
+        ([], "weather response must be an object"),
+        ({"code": "200", "daily": {}}, "daily forecast must be an array"),
+    ),
+)
+async def test_qweather_rejects_invalid_weather_response_shape(payload: object, message: str) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as client:
+        with pytest.raises(WeatherContextError, match=message):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
 async def test_qweather_does_not_log_untrusted_api_status(caplog) -> None:
     untrusted_status = "400\nforged-log-entry"
 
@@ -1066,7 +1122,7 @@ async def test_qweather_does_not_log_untrusted_api_status(caplog) -> None:
             await provider.fetch(1, 2)
 
     assert untrusted_status not in caplog.text
-    assert "reason=QWeather returned a non-success weather status code=invalid" in caplog.text
+    assert "reason=WeatherContextError" in caplog.text
 
 
 async def test_qweather_rejects_empty_daily_forecast() -> None:
@@ -1212,7 +1268,7 @@ async def test_open_meteo_air_quality_failure_is_logged_without_failing_weather(
 
 
 async def test_fallback_weather_provider_requires_at_least_one_provider() -> None:
-    from weather_briefing.weather_context import FallbackWeatherContextProvider
+    from weather_briefing.weather import FallbackWeatherContextProvider
 
     with pytest.raises(ValueError, match="At least one"):
         FallbackWeatherContextProvider()
@@ -1301,6 +1357,35 @@ async def test_qweather_non_success_indices_status_is_optional(caplog) -> None:
     assert snapshot.weather_forecast
     assert snapshot.lifestyle_advice == ()
     assert "operation=lifestyle-indices reason=non-success indices status code=400" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    (
+        ([], "indices response must be an object"),
+        ({"code": "200", "daily": {}}, "daily indices must be an array"),
+    ),
+)
+async def test_qweather_invalid_indices_response_shape_is_optional(caplog, payload: object, reason: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return _qweather_weather_response()
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json=payload)
+        assert request.url.path == "/airquality/v1/current/1.00/2.00"
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            snapshot = await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+    assert snapshot.weather_forecast
+    assert snapshot.lifestyle_advice == ()
+    assert f"operation=lifestyle-indices reason={reason}" in caplog.text
 
 
 async def test_qweather_rejects_http_error() -> None:
@@ -2016,7 +2101,7 @@ async def test_open_meteo_allergen_reference_failure_keeps_air_quality(monkeypat
         )
 
     monkeypatch.setattr(
-        "weather_briefing.weather_context.pollen_type_names",
+        "weather_briefing.allergen.pollen_type_names",
         fail_to_load_pollen_types,
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

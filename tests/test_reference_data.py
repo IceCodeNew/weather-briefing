@@ -17,9 +17,7 @@ from weather_briefing.data.resources import (
 from weather_briefing.data.service_endpoints import NOMINATIM_USER_AGENT
 from weather_briefing.delivery.telegram_reference import telegram_error_classification
 from weather_briefing.localization import localization_table
-from weather_briefing.reference_data import (
-    open_meteo_weather_code_descriptions,
-)
+from weather_briefing.weather.open_meteo_reference import open_meteo_weather_code_descriptions
 
 
 def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
@@ -119,7 +117,7 @@ def test_nominatim_user_agent_identifies_current_version() -> None:
     ),
 )
 def test_open_meteo_weather_codes_reject_invalid_data(monkeypatch, value) -> None:
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.weather.open_meteo_reference.load_reference_data", lambda filename: value)
     open_meteo_weather_code_descriptions.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Open-Meteo weather codes"):

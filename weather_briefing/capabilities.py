@@ -74,7 +74,7 @@ class CapabilityProviderSet:
         if snapshot.air_quality is not None or forecast_date is not None:
             return snapshot
         if self.air_quality is None:
-            from .weather_context import WeatherContextError
+            from .weather import WeatherContextError
 
             raise WeatherContextError("Weather source did not provide air quality; configure AQICN_API_TOKEN")
         try:
@@ -84,7 +84,7 @@ class CapabilityProviderSet:
                 datetime_timezone_specifier(snapshot.observed_at, context="Weather snapshot time"),
             )
         except AirQualityError:
-            from .weather_context import WeatherContextError
+            from .weather import WeatherContextError
 
             raise WeatherContextError("Weather source did not provide air quality and AQICN fallback failed") from None
         return replace(snapshot, air_quality=air_quality)
@@ -107,7 +107,7 @@ class CapabilityProviderSet:
     ) -> tuple[WeatherContextSnapshot, ...]:
         """Fetch primary context and skip expected supplement failures."""
         snapshots = [await self.fetch(latitude, longitude, forecast_date=forecast_date)]
-        from .weather_context import WeatherContextError
+        from .weather import WeatherContextError
 
         for provider in self.supplements:
             try:
@@ -124,6 +124,6 @@ async def _fetch_context(
     forecast_date: pendulum.Date | None,
 ) -> WeatherContextSnapshot:
     """Route current or dated context through the shared provider boundary."""
-    from .weather_context import fetch_weather_context
+    from .weather import fetch_weather_context
 
     return await fetch_weather_context(provider, latitude, longitude, forecast_date)
