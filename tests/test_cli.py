@@ -39,7 +39,6 @@ from weather_briefing.cli import (
 )
 from weather_briefing.composition.providers import (
     PUBLISHER_BUILDERS,
-    WEATHER_PROVIDER_BUILDERS,
     _build_jma,
     _build_nea,
     _build_open_meteo,
@@ -1490,8 +1489,24 @@ def test_parse_run_time_returns_now_when_value_is_none(monkeypatch) -> None:
     assert result.timezone_name == "Asia/Shanghai"
 
 
-def test_runtime_provider_builders_cover_declared_configuration_names() -> None:
-    assert set(WEATHER_PROVIDER_BUILDERS) == set(WeatherProviderName)
+@pytest.mark.parametrize("name", tuple(WeatherProviderName))
+async def test_build_weather_provider_dispatch_is_exhaustive(
+    async_client: httpx.AsyncClient,
+    name: WeatherProviderName,
+) -> None:
+    settings = _make_fake_settings(
+        qweather_project_id="project",
+        qweather_credential_id="credential",
+        qweather_private_key=base64.b64encode(b"fake-private-key-content").decode(),
+        qweather_base_url="https://qweather.example.invalid",
+    )
+
+    provider = _build_weather_provider(name, settings, async_client, jma_office_code="130000")
+
+    assert provider is not None
+
+
+def test_publisher_builders_cover_declared_configuration_names() -> None:
     assert set(PUBLISHER_BUILDERS) == set(PublisherName)
 
 
