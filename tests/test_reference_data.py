@@ -252,20 +252,18 @@ def test_load_reference_data_returns_independent_values() -> None:
 
 
 def test_reference_value_copies_only_the_selected_value(monkeypatch) -> None:
-    from copy import deepcopy as copy_value
-
     import weather_briefing.data.resources as resources_module
 
-    selected = {"items": ["one"]}
-    root = {"selected": selected, "unselected": {"items": ["two"]}}
-    copied_values: list[object] = []
+    class UnselectedValue:
+        def __deepcopy__(self, memo):
+            raise AssertionError(  # pragma: no cover - reached only if root copying regresses
+                "reference_value must not copy the cached root"
+            )
 
-    def tracked_deepcopy(value: object) -> object:
-        copied_values.append(value)
-        return copy_value(value)
+    selected = {"items": ["one"]}
+    root = {"selected": selected, "unselected": UnselectedValue()}
 
     monkeypatch.setattr(resources_module, "_load_reference_data", lambda filename: root)
-    monkeypatch.setattr(resources_module, "deepcopy", tracked_deepcopy)
 
     first = reference_value("test.json", "selected")
     assert isinstance(first, dict)
@@ -276,22 +274,22 @@ def test_reference_value_copies_only_the_selected_value(monkeypatch) -> None:
     second = reference_value("test.json", "selected")
 
     assert second == {"items": ["one"]}
-    assert copied_values == [selected, selected]
-    assert all(value is selected for value in copied_values)
+    assert first is not selected
 
 
 def test_reference_string_tuple_does_not_copy_the_cached_list(monkeypatch) -> None:
-    from unittest.mock import Mock
-
     import weather_briefing.data.resources as resources_module
 
-    cached = ["one", "two"]
+    class CachedStrings(list[str]):
+        def __deepcopy__(self, memo):
+            raise AssertionError(  # pragma: no cover - reached only if list copying regresses
+                "reference_string_tuple must not copy the cached list"
+            )
+
+    cached = CachedStrings(["one", "two"])
     monkeypatch.setattr(resources_module, "_load_reference_data", lambda filename: {"selected": cached})
-    unexpected_deepcopy = Mock(side_effect=AssertionError("reference_string_tuple must not copy the cached list"))
-    monkeypatch.setattr(resources_module, "deepcopy", unexpected_deepcopy)
 
     assert reference_string_tuple("test.json", "selected") == ("one", "two")
-    unexpected_deepcopy.assert_not_called()
 
 
 @pytest.mark.parametrize(
