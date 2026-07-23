@@ -96,6 +96,12 @@ def test_split_message_prefers_line_boundary() -> None:
     assert split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
 
 
+@pytest.mark.parametrize(("body", "limit"), (("", 0), ("body", 0), ("body", -1)))
+def test_split_message_rejects_non_positive_limit(body: str, limit: int) -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        split_message(body, limit)
+
+
 @pytest.mark.parametrize(
     ("body", "limit", "expected"),
     (

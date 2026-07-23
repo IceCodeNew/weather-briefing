@@ -149,6 +149,8 @@ def telegram_error_reason(response: httpx.Response) -> tuple[str, bool]:
 
 def split_message(body: str, limit: int) -> tuple[str, ...]:
     """Split Telegram HTML into independently valid chunks."""
+    if limit <= 0:
+        raise ValueError("Message split limit must be positive")
     if len(body) <= limit:
         return (body,)
     chunker = _TelegramHTMLChunker(limit)
