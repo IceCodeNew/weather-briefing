@@ -3,8 +3,8 @@ import pendulum
 import pytest
 
 from weather_briefing.air_quality import AirQualityError, AQICNProvider, air_quality_to_document, health_guidance
+from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind
-from weather_briefing.reference_data import ReferenceDataError
 
 
 async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> None:
