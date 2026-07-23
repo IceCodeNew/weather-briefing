@@ -7,15 +7,15 @@ import jwt
 import pendulum
 import pytest
 
+from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
     AllergenSnapshot,
     WeatherContextSnapshot,
 )
-from weather_briefing.reference_data import ReferenceDataError
 from weather_briefing.time_utils import parse_aware_datetime
-from weather_briefing.weather_context import (
+from weather_briefing.weather import (
     AirQualitySupplementingWeatherProvider,
     FallbackWeatherContextProvider,
     LoggedWeatherContextProvider,
@@ -24,11 +24,15 @@ from weather_briefing.weather_context import (
     QWeatherProvider,
     UnsupportedForecastDateError,
     WeatherContextError,
-    _format_qweather_day,
-    _format_qweather_lifestyle,
+    snapshot_to_documents,
+)
+from weather_briefing.weather.open_meteo import (
     _open_meteo_daily_peak_values,
     _open_meteo_weather_description,
-    snapshot_to_documents,
+)
+from weather_briefing.weather.qweather import (
+    _format_qweather_day,
+    _format_qweather_lifestyle,
 )
 
 
@@ -551,7 +555,7 @@ def test_open_meteo_weather_code_uses_readable_description() -> None:
 
 def test_open_meteo_weather_code_lookup_uses_cached_loader_boundary(monkeypatch) -> None:
     monkeypatch.setattr(
-        "weather_briefing.weather_context.open_meteo_weather_code_descriptions",
+        "weather_briefing.weather.open_meteo.open_meteo_weather_code_descriptions",
         lambda: {53: "Reloaded description"},
     )
 
@@ -902,7 +906,7 @@ async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fail
         def fail_elapsed(started_at: float) -> int:
             raise RuntimeError("secondary failure")
 
-        monkeypatch.setattr("weather_briefing.weather_context._elapsed_milliseconds", fail_elapsed)
+        monkeypatch.setattr("weather_briefing.weather.base._elapsed_milliseconds", fail_elapsed)
     else:
         original_info = logging.getLogger("weather_briefing.weather_context").info
 
@@ -911,7 +915,7 @@ async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fail
                 raise RuntimeError("secondary failure")
             original_info(message, *args)
 
-        monkeypatch.setattr("weather_briefing.weather_context._LOGGER.info", fail_skip_log)
+        monkeypatch.setattr("weather_briefing.weather.base._LOGGER.info", fail_skip_log)
 
     provider = LoggedWeatherContextProvider("nea-sg", UndatedProvider())
 
@@ -1212,7 +1216,7 @@ async def test_open_meteo_air_quality_failure_is_logged_without_failing_weather(
 
 
 async def test_fallback_weather_provider_requires_at_least_one_provider() -> None:
-    from weather_briefing.weather_context import FallbackWeatherContextProvider
+    from weather_briefing.weather import FallbackWeatherContextProvider
 
     with pytest.raises(ValueError, match="At least one"):
         FallbackWeatherContextProvider()
@@ -2016,7 +2020,7 @@ async def test_open_meteo_allergen_reference_failure_keeps_air_quality(monkeypat
         )
 
     monkeypatch.setattr(
-        "weather_briefing.weather_context.pollen_type_names",
+        "weather_briefing.weather.open_meteo.pollen_type_names",
         fail_to_load_pollen_types,
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

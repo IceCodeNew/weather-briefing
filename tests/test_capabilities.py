@@ -4,7 +4,7 @@ import pytest
 from weather_briefing.air_quality import AirQualityError
 from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
 from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind, WeatherContextSnapshot
-from weather_briefing.weather_context import WeatherContextError
+from weather_briefing.weather import WeatherContextError
 
 
 def _weather(*, air_quality: AirQualitySnapshot | None = None) -> WeatherContextSnapshot:

@@ -2,7 +2,7 @@ import pytest
 
 from weather_briefing.languages import LanguageSupport, localized_labels, normalize_language_tag
 from weather_briefing.models import BriefingResult, LocationSpec, ResolvedLocation, SourceDocument
-from weather_briefing.weather_context import OPEN_METEO_LANGUAGE_SUPPORT, QWEATHER_LANGUAGE_SUPPORT
+from weather_briefing.weather import OPEN_METEO_LANGUAGE_SUPPORT, QWEATHER_LANGUAGE_SUPPORT
 
 
 def test_language_tags_are_normalized() -> None:
