@@ -16,10 +16,14 @@ class ReferenceDataError(RuntimeError):
     """Raised when packaged domain reference data is missing or malformed."""
 
 
-def load_reference_data(filename: str) -> dict[str, object]:
-    """Load and validate one packaged JSON reference-data object."""
+def _validate_reference_data_filename(filename: str) -> None:
     if PurePath(filename).name != filename or not filename.endswith(".json"):
         raise ReferenceDataError("Reference data filename must identify one JSON file")
+
+
+def load_reference_data(filename: str) -> dict[str, object]:
+    """Load and validate one packaged JSON reference-data object."""
+    _validate_reference_data_filename(filename)
     return deepcopy(_load_reference_data(filename))
 
 
@@ -37,14 +41,15 @@ def _load_reference_data(filename: str) -> dict[str, object]:
 
 def reference_value(filename: str, *path: str) -> Any:
     """Read a nested value from a packaged reference-data file."""
-    value: Any = load_reference_data(filename)
+    _validate_reference_data_filename(filename)
+    value: Any = _load_reference_data(filename)
     try:
         for key in path:
             value = value[key]
     except (KeyError, TypeError) as exc:
         joined_path = ".".join(path)
         raise ReferenceDataError(f"Missing reference data field: {filename}:{joined_path}") from exc
-    return value
+    return deepcopy(value)
 
 
 def reference_string(filename: str, *path: str) -> str:
