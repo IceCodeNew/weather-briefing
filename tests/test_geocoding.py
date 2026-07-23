@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from weather_briefing.data.resources import ReferenceDataError, reference_value
 from weather_briefing.geocoding import (
     CachedLocationResolver,
     FallbackGeocodingProvider,
@@ -26,7 +27,6 @@ from weather_briefing.geocoding.matching import (
     specific_location_name as _specific_location_name,
 )
 from weather_briefing.models import LocationSpec, ResolvedLocation
-from weather_briefing.reference_data import ReferenceDataError, reference_value
 
 
 class _NeverCalledGeocoder:
