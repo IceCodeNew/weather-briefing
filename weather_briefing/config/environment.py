@@ -8,8 +8,8 @@ from typing import overload
 
 from apscheduler.triggers.cron import CronTrigger
 
-from ..data.resources import reference_string_tuple
 from ..models import ResolvedLocation
+from ..reference_data import reference_string_tuple
 from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 from .base import ConfigurationError
 
