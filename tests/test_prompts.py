@@ -1,4 +1,16 @@
-from weather_briefing.data.prompts import SYSTEM_PROMPT
+from unittest.mock import patch
+
+import pytest
+
+from weather_briefing.data.prompts import SYSTEM_PROMPT, _load_system_prompt
+
+
+def test_system_prompt_load_failure_is_actionable() -> None:
+    with (
+        patch("weather_briefing.data.prompts.resources.files", side_effect=OSError("unreadable")),
+        pytest.raises(RuntimeError, match="Unable to load system prompt: system_prompt.txt"),
+    ):
+        _load_system_prompt()
 
 
 def test_prompt_limits_disasters_to_the_location_scope() -> None:
