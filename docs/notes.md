@@ -133,3 +133,11 @@ Telegram 投递目前只调用 Bot API 的 `sendMessage`。项目继续复用已
 Telegram publisher 只负责构造请求、平台长度限制、HTML 分块和安全错误分类。它不实现更新轮询、Webhook、会话状态或 Bot 命令路由。
 
 如果投递开始使用多个 Telegram 端点、需要接收更新，或者 Bot API 兼容工作持续增加，就重新评估维护活跃的 SDK，并删除能由 SDK 可靠承担的自定义协议代码。
+
+## Bark 加密只支持 GCM 并直接调用 API
+
+Bark 官方把加密推送和自托管服务端都作为保护消息隐私的方案，因此 publisher 允许用户不配置加密参数并发送明文。Bark App 支持 AES 的 CBC、ECB 和 GCM 模式，但 CBC 和 ECB 只提供机密性，不验证密文完整性；ECB 还会暴露相同明文块的结构。项目启用加密时只支持 GCM 和 noPadding，不提供不安全模式的兼容开关。GCM 提供认证加密，但 Bark 使用固定预共享 key 和固定 IV；重复使用 GCM IV 会破坏标准安全保证，而且该协议不具备前向保密或防重放能力。这里的加密只能作为 Bark 上游约束下的兼容功能，文档和日志不能把它描述为强认证信道。
+
+调研过的 Python Bark 实现规模小、维护历史短，部分实现还存在遗漏 IV、同步请求或响应校验不足等问题。成熟且活跃的 Apprise 内置 Bark，但当前不支持 Bark 推送加密，并会引入另一套同步 HTTP 生命周期。项目因此继续复用 HTTPX，只让 `cryptography` 的高层 `AESGCM` 承担加密原语；应用代码不实现 AES、padding 或 authentication tag 细节。
+
+固定 IV 是 Bark App 配置模型的上游局限。publisher 不自行轮转 IV，而是要求 `BARK_ENCRYPTION_IV` 与 App 设置完全一致，并在请求中显式携带它。这项选择成立的条件是 Bark 继续使用当前 GCM combined 格式，即 ciphertext 后附 16 字节 tag。如果 Bark 支持安全的每消息 nonce 协商、官方 SDK 开始提供异步加密投递、协议格式改变，或项目需要多个 Bark 端点，就重新评估适配器和依赖边界。

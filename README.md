@@ -24,7 +24,7 @@ Weather Briefing periodically gathers weather, air quality, warnings, and option
 Before deploying, you will need:
 
 - An environment that can keep the program running and persist its runtime state.
-- An account and credentials for a delivery platform. Telegram is currently built in and requires a Bot Token and Chat ID.
+- Credentials for Telegram or Bark. Telegram requires a Bot Token and Chat ID; Bark requires a device key and optionally accepts an encryption key and IV.
 - An account, model name, and credentials for a supported large language model. See the [any-llm provider list](https://docs.mozilla.ai/any-llm/providers).
 - At least one location of interest.
 - A directory that can persist runtime state and geocoding results.
@@ -114,9 +114,14 @@ At minimum, configure the following in `.env`:
 
 - `LLM_PROVIDER` and `LLM_MODEL`;
 - the credentials required by your chosen model service;
-- for Telegram delivery: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. These are not needed when testing with `PUBLISHER=stdout`.
+- for Telegram delivery: `PUBLISHER=telegram`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`; or
+- for Bark delivery: `PUBLISHER=bark` and `BARK_DEVICE_KEY`, plus both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV` when encryption is enabled.
 
 For private-chat delivery, open the bot in Telegram and send `/start` before the first briefing. A bot can send messages to a private Chat ID only after the user has initiated the conversation. For group delivery, add the bot to the group and grant it permission to send messages.
+
+Bark sends plaintext when the encryption variables are absent; the official alternative for protecting messages is to deploy your own Bark server and set its root URL with `BARK_BASE_URL`. The default is `https://api.day.app`. To enable encryption, set both encryption variables, open Push Encryption in the app, and select AES128, AES192, or AES256 to match the 16, 24, or 32 ASCII-character `BARK_ENCRYPTION_KEY`. Select GCM and noPadding, then save the same key and 12-character `BARK_ENCRYPTION_IV` in the app. Bark requires this IV to remain fixed; reusing an IV with AES-GCM weakens its security, so treat Bark encryption as protection against casual disclosure rather than a strong authenticated channel. CBC and ECB are intentionally unsupported because they do not authenticate the encrypted content. Bark briefings are limited to 650 visible characters so the content and metadata remain within the APNs payload limit.
+
+`BARK_GROUP` controls notification grouping and defaults to `weather-briefing`. Normal deliveries use Bark's `timeSensitive` level; application-generated silent deliveries use `passive`.
 
 Model calls are handled by any-llm. The credential variables needed by each service follow the [any-llm provider documentation](https://docs.mozilla.ai/any-llm/providers). The official image ships with the components required for DeepSeek, OpenAI, and OpenRouter.
 
@@ -157,7 +162,7 @@ docker exec "${CONTAINER_NAME}" \
   run briefing --run-now
 ```
 
-Once verified with stdout, switch `.env` back to `PUBLISHER=telegram`, fill in `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, and recreate the container.
+Once verified with stdout, select `PUBLISHER=telegram` or `PUBLISHER=bark`, fill in that publisher's credentials, and recreate the container.
 
 The application writes operational logs to standard error. Normal logs do not contain credentials, coordinates, message bodies, or private URLs.
 
