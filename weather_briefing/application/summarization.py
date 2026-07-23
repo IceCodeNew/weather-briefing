@@ -20,6 +20,7 @@ async def summarize_validated(
     payload: dict[str, object],
     now: pendulum.DateTime,
     valid_source_ids: set[str],
+    allowed_resolved_warning_ids: set[str],
     *,
     max_attempts: int,
     output_language: str,
@@ -51,7 +52,7 @@ async def summarize_validated(
                 repair_payload: dict[str, object] = {
                     "original_input": payload,
                     "allowed_source_ids": sorted(valid_source_ids),
-                    "allowed_resolved_warning_ids": payload["allowed_resolved_warning_ids"],
+                    "allowed_resolved_warning_ids": sorted(allowed_resolved_warning_ids),
                 }
                 if raw_result is not None:
                     repair_payload["previous_invalid_response"] = raw_result

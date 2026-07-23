@@ -320,6 +320,7 @@ class BriefingService:
             payload,
             now,
             valid_source_ids,
+            active_warning_ids,
             max_attempts=self._settings.llm_max_attempts,
             output_language=self._location.summary_language,
             validator=validate_result,
