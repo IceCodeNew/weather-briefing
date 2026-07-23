@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import logging
-from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from typing import Literal, Protocol
+from dataclasses import replace
+from typing import Protocol
 
 import pendulum
 
-from .capabilities import CapabilityProviderSet
-from .llm import LLMError, LLMProvider, LLMRequestError, parse_result, serialize_llm_payload
+from .application.collection import collect_rss_articles, collect_weather_documents
+from .application.context_history import (
+    HistoricalContextOverflow as _HistoricalContextOverflow,
+)
+from .application.context_history import bounded_context_history as _bounded_context_history
+from .application.context_history import context_budget_fingerprints as _context_budget_fingerprints
+from .application.payloads import build_briefing_payload
+from .application.summarization import summarize_validated
+from .delivery import DeliveryError, DeliveryProvider
+from .llm import LLMError, LLMProvider, serialize_llm_payload
 from .models import (
     AdviceTopic,
     Article,
@@ -21,89 +26,13 @@ from .models import (
     FeedConfig,
     ResolvedLocation,
     SourceDocument,
-    Warning,
 )
-from .prompts import SYSTEM_PROMPT
-from .publishers import DeliveryError, DeliveryProvider
 from .sources import RSSFeedSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
-from .weather_context import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
+from .weather import WeatherContextProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service")
-_FINGERPRINT_CHUNK_CHARACTERS = 64 * 1024
-_FINGERPRINT_SINGLE_PASS_CHARACTERS = 4 * _FINGERPRINT_CHUNK_CHARACTERS
-
-
-@dataclass(frozen=True, slots=True)
-class _HistoricalContextCandidate:
-    document: SourceDocument
-    role: Literal["latest", "retention_baseline", "recent_change"]
-
-
-@dataclass(frozen=True, slots=True)
-class _HistoricalContextOverflow:
-    source_id: str
-    role: Literal["latest", "retention_baseline"]
-    fingerprint: str
-
-
-@dataclass(frozen=True, slots=True)
-class _BoundedContextHistory:
-    payload: list[dict[str, object]]
-    documents: tuple[SourceDocument, ...]
-    serialized_characters: int
-    overflows: tuple[_HistoricalContextOverflow, ...]
-
-
-@dataclass(slots=True)
-class _ContextSourceChanges:
-    baseline: tuple[int, SourceDocument]
-    recent: deque[tuple[int, SourceDocument]]
-
-
-class _Digest(Protocol):
-    def update(self, data: bytes, /) -> object:
-        """Add bytes to the digest state."""
-        ...
-
-
-def _utf8_length(value: str) -> int:
-    return sum(
-        len(value[start : start + _FINGERPRINT_CHUNK_CHARACTERS].encode())
-        for start in range(0, len(value), _FINGERPRINT_CHUNK_CHARACTERS)
-    )
-
-
-def _update_framed_text_digest(digest: _Digest, value: str) -> None:
-    """Hash length-prefixed UTF-8 without allocating bytes for the full value."""
-    if len(value) <= _FINGERPRINT_SINGLE_PASS_CHARACTERS:
-        encoded = value.encode()
-        digest.update(len(encoded).to_bytes(8, byteorder="big"))
-        digest.update(encoded)
-        return
-    digest.update(_utf8_length(value).to_bytes(8, byteorder="big"))
-    for start in range(0, len(value), _FINGERPRINT_CHUNK_CHARACTERS):
-        digest.update(value[start : start + _FINGERPRINT_CHUNK_CHARACTERS].encode())
-
-
-def _context_overflow_fingerprint(candidate: _HistoricalContextCandidate) -> str:
-    digest = hashlib.sha256()
-    for value in (candidate.role, *_context_document_value(candidate.document)):
-        _update_framed_text_digest(digest, value or "")
-    return digest.hexdigest()
-
-
-def _serialize_article(article: Article) -> dict[str, object]:
-    return {
-        "source_id": article.id,
-        "publisher": article.source_name,
-        "title": article.title,
-        "url": article.url,
-        "published_at": article.published_at.isoformat(),
-        "content": article.content,
-        "verbatim": article.is_verbatim,
-    }
 
 
 class BriefingSettings(Protocol):
@@ -254,32 +183,7 @@ class BriefingService:
         feeds = tuple(
             feed for feed in self._settings.feeds if not feed.location_ids or self._location.id in feed.location_ids
         )
-        _LOGGER.debug("Fetching %d RSS feed(s)", len(feeds))
-        results = await asyncio.gather(
-            *(self._rss_source.fetch(config) for config in feeds),
-            return_exceptions=True,
-        )
-        fetched: list[tuple[Article, ...]] = []
-        pending_cancellation: BaseException | None = None
-        for result, config in zip(results, feeds, strict=True):
-            if isinstance(result, BaseException):
-                if not isinstance(result, Exception):
-                    if pending_cancellation is None:
-                        pending_cancellation = result
-                    continue
-                _LOGGER.warning("RSS source %s failed: %s", config.id, result)
-                fetched.append(())
-                self._state.record_source_check(config.id, now, None)
-                self._state.record_rss_fetch_failure(config.id)
-            else:
-                fetched.append(result)
-                latest_at = max((article.published_at for article in result), default=None)
-                self._state.record_source_check(config.id, now, latest_at)
-                self._state.record_rss_fetch_success(config.id)
-        if pending_cancellation is not None:
-            raise pending_cancellation
-        all_articles = tuple(article for group in fetched for article in group)
-        _LOGGER.info("Fetched %d article(s) from %d feed(s)", len(all_articles), len(fetched))
+        all_articles = await collect_rss_articles(feeds, self._rss_source, self._state, now)
         rss_failure_alert_ids = self._state.rss_sources_requiring_failure_alert(
             tuple(config.id for config in feeds),
             self._settings.rss_failure_threshold,
@@ -330,26 +234,7 @@ class BriefingService:
             article for article in bootstrap_candidates if article.id not in known and article.id not in deferred_ids
         )
         unpublished_articles = _unique_articles((*deferred_articles, *new_articles, *bootstrap_articles))
-        context_items: list[SourceDocument] = []
-        if self._weather_context_provider is not None:
-            if isinstance(self._weather_context_provider, CapabilityProviderSet):
-                weather_contexts = await self._weather_context_provider.fetch_all(
-                    self._location.latitude,
-                    self._location.longitude,
-                    forecast_date=forecast_date,
-                )
-            else:
-                weather_contexts = (
-                    await fetch_weather_context(
-                        self._weather_context_provider,
-                        self._location.latitude,
-                        self._location.longitude,
-                        forecast_date,
-                    ),
-                )
-            for weather_context in weather_contexts:
-                context_items.extend(snapshot_to_documents(weather_context))
-        context = tuple(context_items)
+        context = await collect_weather_documents(self._weather_context_provider, self._location, forecast_date)
         historical_context = self._state.recent_context_documents(now, self._settings.history_hours)
         bounded_history = _bounded_context_history(
             historical_context,
@@ -381,16 +266,20 @@ class BriefingService:
             len(active_warnings),
             len(context),
         )
-        payload = self._build_payload(
-            kind,
-            now,
-            forecast_date,
-            new_articles,
-            deferred_articles,
-            historical_articles,
-            context,
-            bounded_history.payload,
-            active_warnings,
+        payload = build_briefing_payload(
+            kind=kind,
+            now=now,
+            forecast_date=forecast_date,
+            location=self._location,
+            timezone=self._settings.timezone,
+            state=self._state,
+            history_hours=self._settings.history_hours,
+            articles=new_articles,
+            deferred_articles=deferred_articles,
+            historical_articles=historical_articles,
+            context=context,
+            historical_context=bounded_history.payload,
+            active_warnings=active_warnings,
         )
         active_warning_ids = {warning.id for warning in active_warnings}
         payload["allowed_resolved_warning_ids"] = sorted(active_warning_ids)
@@ -426,7 +315,15 @@ class BriefingService:
                     f"briefing has {candidate_message.visible_length} visible characters; limit is {briefing_limit}"
                 )
 
-        result = await self._summarize(payload, now, valid_source_ids, validator=validate_result)
+        result = await summarize_validated(
+            self._llm,
+            payload,
+            now,
+            valid_source_ids,
+            max_attempts=self._settings.llm_max_attempts,
+            output_language=self._location.summary_language,
+            validator=validate_result,
+        )
         unknown_resolved_warning_ids = set(result.resolved_warning_ids) - active_warning_ids
         if unknown_resolved_warning_ids:
             _LOGGER.warning(
@@ -544,49 +441,6 @@ class BriefingService:
             verbatim_silent=verbatim_silent,
         )
 
-    async def _summarize(
-        self,
-        payload: dict[str, object],
-        now: pendulum.DateTime,
-        valid_source_ids: set[str],
-        validator: Callable[[BriefingResult], None],
-    ) -> BriefingResult:
-        instructions = SYSTEM_PROMPT
-        current_payload: dict[str, object] = payload
-        last_error: LLMError | None = None
-        for attempt in range(self._settings.llm_max_attempts):
-            raw_result: dict[str, object] | None = None
-            try:
-                _LOGGER.debug("LLM summarization attempt %d/%d", attempt + 1, self._settings.llm_max_attempts)
-                raw_result = await self._llm.summarize(instructions, current_payload)
-                result = replace(
-                    parse_result(raw_result, now, valid_source_ids),
-                    output_language=self._location.summary_language,
-                )
-                validator(result)
-                _LOGGER.debug(
-                    "LLM summarization successful on attempt %d/%d", attempt + 1, self._settings.llm_max_attempts
-                )
-                return result
-            except LLMRequestError:
-                raise
-            except LLMError as exc:
-                last_error = exc
-                _LOGGER.debug(
-                    "LLM validation failure (attempt %d/%d): %s", attempt + 1, self._settings.llm_max_attempts, exc
-                )
-                if attempt + 1 < self._settings.llm_max_attempts:
-                    instructions = f"{SYSTEM_PROMPT}\n上一版 JSON 未通过验证。请只修复契约错误：{exc}"
-                    repair_payload: dict[str, object] = {
-                        "original_input": payload,
-                        "allowed_source_ids": sorted(valid_source_ids),
-                        "allowed_resolved_warning_ids": payload["allowed_resolved_warning_ids"],
-                    }
-                    if raw_result is not None:
-                        repair_payload["previous_invalid_response"] = raw_result
-                    current_payload = repair_payload
-        raise LLMError("LLM output validation failed after configured attempts") from last_error
-
     def _is_forecast_article(self, article: Article) -> bool:
         feed = next(
             (
@@ -601,254 +455,9 @@ class BriefingService:
             return False
         return article.is_verbatim or any(pattern in article.title for pattern in feed.forecast_title_patterns)
 
-    def _build_payload(
-        self,
-        kind: str,
-        now: pendulum.DateTime,
-        forecast_date: pendulum.Date | None,
-        articles: tuple[Article, ...],
-        deferred_articles: tuple[Article, ...],
-        historical_articles: tuple[Article, ...],
-        context: tuple[SourceDocument, ...],
-        historical_context: list[dict[str, object]],
-        active_warnings: tuple[Warning, ...],
-    ) -> dict[str, object]:
-        location_scope = {"full_name": self._location.name}
-        if self._location.administrative_area:
-            location_scope["administrative_area"] = self._location.administrative_area
-        if self._location.country_code:
-            location_scope["country_code"] = self._location.country_code
-        return {
-            "mode": kind,
-            "output_language": self._location.summary_language,
-            "now": now.isoformat(),
-            "forecast_date": str(forecast_date or now.in_timezone(self._settings.timezone).date()),
-            "region": self._location.name,
-            "location_scope": location_scope,
-            "new_articles": [_serialize_article(article) for article in articles],
-            "deferred_articles": [_serialize_article(article) for article in deferred_articles],
-            "historical_articles": [
-                _serialize_article(article)
-                for article in historical_articles
-                if kind == "forecast" or article.is_verbatim
-            ],
-            "context_documents": [
-                {
-                    "source_id": item.id,
-                    "name": item.name,
-                    "url": item.url,
-                    "language": item.language,
-                    "content": item.content,
-                }
-                for item in context
-            ],
-            "recent_context_documents": historical_context,
-            "recent_briefings": [
-                {
-                    "mode": briefing.kind,
-                    "published_at": briefing.published_at.in_timezone(self._settings.timezone).isoformat(),
-                    "body": briefing.body,
-                }
-                for briefing in self._state.recent_briefings(now, self._settings.history_hours)
-            ],
-            "currently_active_warnings": [
-                {
-                    "id": warning.id,
-                    "title": warning.title,
-                    "status": warning.status,
-                    "detail": warning.detail,
-                    "source_ids": warning.source_ids,
-                    "last_confirmed_at": warning.last_confirmed_at.isoformat(),
-                }
-                for warning in active_warnings
-            ],
-        }
-
 
 def _unique_articles(articles: tuple[Article, ...]) -> tuple[Article, ...]:
     return tuple({article.id: article for article in articles}.values())
-
-
-def _serialize_context_document(
-    document: SourceDocument,
-    *,
-    history_role: Literal["latest", "retention_baseline", "recent_change"],
-    compact: bool = False,
-) -> dict[str, object]:
-    entry: dict[str, object] = {
-        "source_id": document.id,
-        "name": document.name,
-        "url": document.url,
-        "language": document.language,
-        "content": document.history_summary if compact else document.content,
-        "history_role": history_role,
-    }
-    if compact:
-        entry["content_compacted"] = True
-        entry["original_content_characters"] = len(document.content)
-    return entry
-
-
-def _bounded_context_history(
-    documents: tuple[SourceDocument, ...],
-    *,
-    max_documents: int,
-    max_characters: int,
-) -> _BoundedContextHistory:
-    candidates, omitted_overflows = _context_history_selection(documents, max_documents)
-    selected: list[tuple[_HistoricalContextCandidate, dict[str, object]]] = []
-    overflows = list(omitted_overflows)
-    serialized_characters = len("[]")
-    for candidate in candidates:
-        entry = _serialize_context_document(candidate.document, history_role=candidate.role)
-        candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
-        candidate_characters = len(serialize_llm_payload(candidate_payload))
-        if candidate_characters <= max_characters:
-            selected.append((candidate, entry))
-            serialized_characters = candidate_characters
-            continue
-        if candidate.document.history_summary:
-            entry = _serialize_context_document(
-                candidate.document,
-                history_role=candidate.role,
-                compact=True,
-            )
-            candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
-            candidate_characters = len(serialize_llm_payload(candidate_payload))
-            if candidate_characters <= max_characters:
-                selected.append((candidate, entry))
-                serialized_characters = candidate_characters
-                continue
-        if candidate.role != "recent_change":
-            compactable: list[tuple[int, int, dict[str, object]]] = []
-            for index, (selected_candidate, selected_entry) in enumerate(selected):
-                if selected_candidate.document.history_summary and not selected_entry.get("content_compacted"):
-                    compact_entry = _serialize_context_document(
-                        selected_candidate.document,
-                        history_role=selected_candidate.role,
-                        compact=True,
-                    )
-                    full_characters = len(serialize_llm_payload(selected_entry))
-                    compact_characters = len(serialize_llm_payload(compact_entry))
-                    if compact_characters < full_characters:
-                        compactable.append((full_characters - compact_characters, index, compact_entry))
-            compactable.sort(key=lambda item: item[0], reverse=True)
-            for _, index, compact_entry in compactable:
-                selected[index] = (selected[index][0], compact_entry)
-                selected_payload = [selected_entry for _, selected_entry in selected]
-                serialized_characters = len(serialize_llm_payload(selected_payload))
-                candidate_payload = [*selected_payload, entry]
-                candidate_characters = len(serialize_llm_payload(candidate_payload))
-                if candidate_characters <= max_characters:
-                    selected.append((candidate, entry))
-                    serialized_characters = candidate_characters
-                    break
-            else:
-                fingerprint = _context_overflow_fingerprint(candidate)
-                overflows.append(_HistoricalContextOverflow(candidate.document.id, candidate.role, fingerprint))
-                continue
-            continue
-    selected_documents: dict[str, SourceDocument] = {}
-    for candidate, _ in selected:
-        selected_documents.setdefault(candidate.document.id, candidate.document)
-    return _BoundedContextHistory(
-        payload=[entry for _, entry in selected],
-        documents=tuple(selected_documents.values()),
-        serialized_characters=serialized_characters,
-        overflows=tuple(overflows),
-    )
-
-
-def _context_budget_fingerprints(overflows: tuple[_HistoricalContextOverflow, ...]) -> dict[str, str]:
-    """Combine mandatory overflow fingerprints into one stable value per source."""
-    grouped: dict[str, list[str]] = {}
-    for overflow in overflows:
-        grouped.setdefault(overflow.source_id, []).append(overflow.fingerprint)
-    return {
-        source_id: hashlib.sha256("\0".join(sorted(fingerprints)).encode()).hexdigest()
-        for source_id, fingerprints in grouped.items()
-    }
-
-
-def _context_history_candidates(
-    documents: tuple[SourceDocument, ...],
-    max_documents: int,
-) -> tuple[_HistoricalContextCandidate, ...]:
-    candidates, _ = _context_history_selection(documents, max_documents)
-    return candidates
-
-
-def _context_history_selection(
-    documents: tuple[SourceDocument, ...],
-    max_documents: int,
-) -> tuple[tuple[_HistoricalContextCandidate, ...], tuple[_HistoricalContextOverflow, ...]]:
-    changes_by_source: dict[str, _ContextSourceChanges] = {}
-    for index, document in enumerate(documents):
-        source_changes = changes_by_source.get(document.id)
-        if source_changes is None:
-            snapshot = (index, document)
-            changes_by_source[document.id] = _ContextSourceChanges(
-                baseline=snapshot,
-                recent=deque((snapshot,), maxlen=max_documents),
-            )
-            continue
-        if _context_document_value(source_changes.recent[-1][1]) != _context_document_value(document):
-            source_changes.recent.append((index, document))
-
-    source_changes = sorted(changes_by_source.values(), key=lambda changes: changes.recent[-1][0], reverse=True)
-    mandatory: list[tuple[int, SourceDocument, Literal["latest", "retention_baseline"]]] = []
-    selected_indexes: set[int] = set()
-
-    def add_mandatory(
-        snapshot: tuple[int, SourceDocument],
-        role: Literal["latest", "retention_baseline"],
-    ) -> None:
-        if snapshot[0] not in selected_indexes:
-            mandatory.append((snapshot[0], snapshot[1], role))
-            selected_indexes.add(snapshot[0])
-
-    for changes in source_changes:
-        add_mandatory(changes.recent[-1], "latest")
-    for changes in source_changes:
-        add_mandatory(changes.baseline, "retention_baseline")
-
-    candidates = [
-        (index, _HistoricalContextCandidate(document, role)) for index, document, role in mandatory[:max_documents]
-    ]
-    omitted_mandatory = mandatory[max_documents:]
-
-    depth = 2
-    while len(candidates) < max_documents:
-        added_change = False
-        for changes in source_changes:
-            if len(changes.recent) > depth:
-                snapshot = changes.recent[-depth]
-                candidates.append((snapshot[0], _HistoricalContextCandidate(snapshot[1], "recent_change")))
-                selected_indexes.add(snapshot[0])
-                if len(candidates) == max_documents:
-                    break
-                added_change = True
-        if not added_change:
-            break
-        depth += 1
-
-    return (
-        tuple(candidate for _, candidate in candidates),
-        tuple(
-            _HistoricalContextOverflow(
-                document.id,
-                role,
-                _context_overflow_fingerprint(_HistoricalContextCandidate(document, role)),
-            )
-            for _, document, role in omitted_mandatory
-        ),
-    )
-
-
-def _context_document_value(document: SourceDocument) -> tuple[str, str, str, str, str | None]:
-    if document.history_value is not None:
-        return document.name, document.url, document.language, document.history_value, None
-    return document.name, document.url, document.language, document.content, document.history_summary
 
 
 def _required_advice_topics(
