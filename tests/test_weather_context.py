@@ -660,6 +660,26 @@ async def test_open_meteo_future_enrichment_rejects_non_object_hourly_payload() 
     assert allergen is None
 
 
+@pytest.mark.parametrize("payload", ([], {"current": []}))
+async def test_open_meteo_current_enrichment_rejects_non_object_payload(payload: object) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as client:
+        provider = OpenMeteoProvider(
+            client,
+            air_quality_base_url="https://air.example.invalid",
+        )
+
+        air_quality, allergen = await provider._fetch_air_quality_and_allergen(
+            39.9,
+            116.3,
+            forecast_date=None,
+        )
+
+    assert air_quality is None
+    assert allergen is None
+
+
 def test_open_meteo_daily_peaks_skip_invalid_hourly_values() -> None:
     hourly: dict[str, object] = {
         "time": ["2026-07-15T06:00", "2026-07-15T09:00", "2026-07-15T18:00"],
@@ -1049,6 +1069,25 @@ async def test_qweather_rejects_non_success_weather_status() -> None:
             ).fetch(1, 2)
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    (
+        ([], "weather response must be an object"),
+        ({"code": "200", "daily": {}}, "daily forecast must be an array"),
+    ),
+)
+async def test_qweather_rejects_invalid_weather_response_shape(payload: object, message: str) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    ) as client:
+        with pytest.raises(WeatherContextError, match=message):
+            await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+
 async def test_qweather_does_not_log_untrusted_api_status(caplog) -> None:
     untrusted_status = "400\nforged-log-entry"
 
@@ -1306,6 +1345,35 @@ async def test_qweather_non_success_indices_status_is_optional(caplog) -> None:
     assert snapshot.weather_forecast
     assert snapshot.lifestyle_advice == ()
     assert "operation=lifestyle-indices reason=non-success indices status code=400" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    (
+        ([], "indices response must be an object"),
+        ({"code": "200", "daily": {}}, "TypeError"),
+    ),
+)
+async def test_qweather_invalid_indices_response_shape_is_optional(caplog, payload: object, reason: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return _qweather_weather_response()
+        if request.url.path == "/v7/indices/1d":
+            return httpx.Response(200, json=payload)
+        assert request.url.path == "/airquality/v1/current/1.00/2.00"
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with caplog.at_level("WARNING", logger="weather_briefing.weather_context"):
+            snapshot = await QWeatherProvider(
+                client,
+                authenticator=StaticAuthenticator(),
+                base_url="https://api.example.invalid",
+            ).fetch(1, 2)
+
+    assert snapshot.weather_forecast
+    assert snapshot.lifestyle_advice == ()
+    assert f"operation=lifestyle-indices reason={reason}" in caplog.text
 
 
 async def test_qweather_rejects_http_error() -> None:

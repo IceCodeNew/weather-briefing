@@ -181,8 +181,12 @@ class OpenMeteoProvider:
             )
             response.raise_for_status()
             payload = response.json()
+            if not _is_string_keyed_dict(payload):
+                raise TypeError("air-quality response must be an object")
             if forecast_date is None:
-                air_quality_values: dict[str, Any] = payload["current"]
+                air_quality_values = payload["current"]
+                if not _is_string_keyed_dict(air_quality_values):
+                    raise TypeError("current air quality must be an object")
                 allergen_values = air_quality_values
             else:
                 hourly = payload["hourly"]

@@ -19,7 +19,7 @@ from ..languages import LanguageSupport, localized_labels
 from ..localization import localization_table
 from ..models import AirQualitySnapshot, AirQualityTimeKind, WeatherContextSnapshot
 from ..time_utils import parse_datetime_with_default_timezone
-from .base import WeatherContextError, _is_string_keyed_dict, _safe_provider_error
+from .base import WeatherContextError, _is_object_list, _is_string_keyed_dict, _safe_provider_error
 
 _LOGGER = logging.getLogger("weather_briefing.weather_context")
 QWEATHER_LANGUAGE_SUPPORT = LanguageSupport(
@@ -136,13 +136,17 @@ class QWeatherProvider:
             )
             weather_response.raise_for_status()
             weather_payload = weather_response.json()
+            if not _is_string_keyed_dict(weather_payload):
+                raise _QWeatherResponseError("weather response must be an object")
             if weather_payload.get("code") != "200":
                 raise WeatherContextError(
                     "QWeather returned a non-success weather status "
                     f"code={_safe_api_status(weather_payload.get('code'))}"
                 )
             operation = "weather forecast parsing"
-            daily_forecasts = weather_payload.get("daily", ())
+            daily_forecasts = weather_payload.get("daily", [])
+            if not _is_object_list(daily_forecasts):
+                raise _QWeatherResponseError("daily forecast must be an array")
             forecast_index: int | None = None
             if forecast_date is None:
                 selected_forecasts = daily_forecasts[:2]
@@ -178,23 +182,28 @@ class QWeatherProvider:
                 )
                 indices_response.raise_for_status()
                 parsed_indices_payload = indices_response.json()
+                if not _is_string_keyed_dict(parsed_indices_payload):
+                    raise _QWeatherResponseError("indices response must be an object")
                 if parsed_indices_payload.get("code") != "200":
                     raise _QWeatherResponseError(
                         f"non-success indices status code={_safe_api_status(parsed_indices_payload.get('code'))}"
                     )
                 indices_payload = parsed_indices_payload
+                daily_indices_payload = indices_payload.get("daily", [])
+                if not _is_object_list(daily_indices_payload):
+                    raise TypeError("daily indices must be an array")
                 daily_indices = tuple(
                     item
-                    for item in indices_payload.get("daily", ())
-                    if forecast_date is None or (isinstance(item, dict) and item.get("date") == str(forecast_date))
+                    for item in daily_indices_payload
+                    if _is_string_keyed_dict(item) and (forecast_date is None or item.get("date") == str(forecast_date))
                 )
+                if forecast_date is None and len(daily_indices) != len(daily_indices_payload):
+                    raise TypeError("daily indices must contain objects")
                 lifestyle_advice = tuple(
                     _format_qweather_lifestyle(item, self._output_language) for item in daily_indices
                 )
                 allergen_advice_available = any(
-                    str(item.get("type")) == self._allergen_index_type
-                    for item in daily_indices
-                    if isinstance(item, dict)
+                    str(item.get("type")) == self._allergen_index_type for item in daily_indices
                 )
             except (httpx.HTTPError, _QWeatherResponseError, KeyError, TypeError, ValueError) as exc:
                 reason = str(exc) if isinstance(exc, _QWeatherResponseError) else _safe_provider_error(exc)
