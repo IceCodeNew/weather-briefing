@@ -5,9 +5,14 @@ import pytest
 from weather_briefing.data.prompts import SYSTEM_PROMPT, _load_system_prompt
 
 
-def test_system_prompt_load_failure_is_actionable() -> None:
+@pytest.mark.parametrize(
+    "error",
+    [OSError("unreadable"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")],
+    ids=["io-error", "decode-error"],
+)
+def test_system_prompt_load_failure_is_actionable(error: Exception) -> None:
     with (
-        patch("weather_briefing.data.prompts.resources.files", side_effect=OSError("unreadable")),
+        patch("importlib.resources.files", side_effect=error),
         pytest.raises(RuntimeError, match="Unable to load system prompt: system_prompt.txt"),
     ):
         _load_system_prompt()

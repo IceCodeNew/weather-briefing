@@ -8,7 +8,7 @@ def _load_system_prompt() -> str:
     filename = "system_prompt.txt"
     try:
         return resources.files("weather_briefing.data").joinpath(filename).read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError) as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise RuntimeError(f"Unable to load system prompt: {filename}") from exc
 
 
