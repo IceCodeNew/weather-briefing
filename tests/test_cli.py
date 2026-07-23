@@ -1103,7 +1103,7 @@ class TestLLMProvider:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         sdk_client = SimpleNamespace()
         monkeypatch.setattr(
-            "weather_briefing.composition.providers.create_any_llm_provider",
+            "weather_briefing.llm.any_llm.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or sdk_client,
         )
         settings = _make_fake_settings(
@@ -1127,7 +1127,7 @@ class TestLLMProvider:
     async def test_deepseek_without_base_url(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
-            "weather_briefing.composition.providers.create_any_llm_provider",
+            "weather_briefing.llm.any_llm.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
@@ -1139,7 +1139,7 @@ class TestLLMProvider:
     async def test_arbitrary_any_llm_provider_is_forwarded(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
-            "weather_briefing.composition.providers.create_any_llm_provider",
+            "weather_briefing.llm.any_llm.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = replace(_make_fake_settings(llm_provider="mistral"), api_key=None, llm_base_url=None)
@@ -1327,7 +1327,7 @@ def test_weather_provider_metadata_rejects_unregistered_provider() -> None:
 
 async def test_no_weather_provider_available(monkeypatch, async_client: httpx.AsyncClient) -> None:
     monkeypatch.setattr(
-        "weather_briefing.composition.providers.weather_providers_for",
+        "weather_briefing.config.environment.weather_providers_for",
         lambda *_: ("qweather",),
     )
     settings = _make_fake_settings(

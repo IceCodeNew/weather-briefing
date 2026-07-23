@@ -9,7 +9,8 @@ import httpx
 
 from ..air_quality import AirQualityProvider, AQICNProvider
 from ..capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
-from ..config import Settings, weather_providers_for
+from ..config import Settings
+from ..config import environment as config_environment
 from ..delivery import (
     DeliveryProvider,
     PlainTextRenderer,
@@ -18,7 +19,7 @@ from ..delivery import (
     TelegramHTMLRenderer,
     TelegramPublisher,
 )
-from ..llm import AnyLLMStructuredProvider, create_any_llm_provider
+from ..llm import AnyLLMStructuredProvider, any_llm
 from ..models import ResolvedLocation
 from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 from ..weather import (
@@ -44,7 +45,7 @@ def llm_provider(
     diagnostics: RenderedTextDiagnostics | None = None,
 ) -> AnyLLMStructuredProvider:
     """Build the configured any-llm adapter."""
-    return create_any_llm_provider(
+    return any_llm.create_any_llm_provider(
         settings.llm_provider,
         settings.llm_model,
         settings.llm_max_output_tokens,
@@ -151,7 +152,7 @@ def weather_context_provider(
     location: ResolvedLocation,
 ) -> CapabilityProviderSet:
     """Compose complete and supplemental weather providers for one location."""
-    names = weather_providers_for(location, settings.weather_providers)
+    names = config_environment.weather_providers_for(location, settings.weather_providers)
     if (
         settings.weather_providers is not None
         and WeatherProviderName.NEA_SINGAPORE in settings.weather_providers
