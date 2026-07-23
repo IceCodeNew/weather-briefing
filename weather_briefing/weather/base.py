@@ -80,7 +80,7 @@ class LoggedWeatherContextProvider:
                 "Weather API call failed provider=%s duration_ms=%d reason=%s",
                 self._name,
                 _elapsed_milliseconds(started_at),
-                exc,
+                type(exc).__name__,
             )
             raise
         except Exception as exc:

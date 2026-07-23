@@ -850,7 +850,8 @@ async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog)
 
     assert "Weather API call started provider=qweather" in caplog.text
     assert "Weather API call failed provider=qweather" in caplog.text
-    assert "reason=QWeather weather forecast failed: HTTP 401" in caplog.text
+    assert "reason=WeatherContextError" in caplog.text
+    assert "QWeather weather forecast failed: HTTP 401" not in caplog.text
     assert "Weather API call succeeded provider=open-meteo" in caplog.text
     assert "source_id=weather:fallback" in caplog.text
 
@@ -1070,7 +1071,7 @@ async def test_qweather_does_not_log_untrusted_api_status(caplog) -> None:
             await provider.fetch(1, 2)
 
     assert untrusted_status not in caplog.text
-    assert "reason=QWeather returned a non-success weather status code=invalid" in caplog.text
+    assert "reason=WeatherContextError" in caplog.text
 
 
 async def test_qweather_rejects_empty_daily_forecast() -> None:
