@@ -24,7 +24,6 @@ Weather Briefing 定时汇总天气、空气质量、预警和可选信息源，
 部署前需要准备：
 
 - 一个能长期运行程序并保存运行状态的环境；
-- Telegram 或 Bark 的投递凭据。Telegram 需要 Bot Token 和 Chat ID；Bark 需要设备 key，也可以选择配置加密 key 和 IV；
 - 一个受支持的大语言模型账号、模型名称和凭据。可查阅 [any-llm provider 列表](https://docs.mozilla.ai/any-llm/providers)；
 - 至少一个关注地点；
 - 一个可持久保存运行状态和定位结果的目录。

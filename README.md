@@ -24,7 +24,6 @@ Weather Briefing periodically gathers weather, air quality, warnings, and option
 Before deploying, you will need:
 
 - An environment that can keep the program running and persist its runtime state.
-- Credentials for Telegram or Bark. Telegram requires a Bot Token and Chat ID; Bark requires a device key and optionally accepts an encryption key and IV.
 - An account, model name, and credentials for a supported large language model. See the [any-llm provider list](https://docs.mozilla.ai/any-llm/providers).
 - At least one location of interest.
 - A directory that can persist runtime state and geocoding results.
