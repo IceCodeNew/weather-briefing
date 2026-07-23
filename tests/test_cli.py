@@ -18,16 +18,8 @@ from weather_briefing.capabilities import CapabilityName
 from weather_briefing.cli import (
     _LOGGER,
     _SENSITIVE_SDK_LOGGERS,
-    PUBLISHER_BUILDERS,
-    WEATHER_PROVIDER_BUILDERS,
-    _aqicn_provider,
     _briefing_delivery_policy,
     _briefing_sent_today,
-    _build_jma,
-    _build_nea,
-    _build_open_meteo,
-    _build_qweather,
-    _build_weather_provider,
     _configure_logging,
     _delivery_provider,
     _hour_in_cron,
@@ -38,20 +30,30 @@ from weather_briefing.cli import (
     _parse_forecast_date,
     _parse_run_time,
     _precision_reduction_notice,
-    _qweather_is_configured,
     _save_resolved_location_fields,
     _weather_context_provider,
-    _weather_provider_metadata,
     build_parser,
     daemon,
     main,
     run,
 )
+from weather_briefing.composition.providers import (
+    PUBLISHER_BUILDERS,
+    WEATHER_PROVIDER_BUILDERS,
+    _build_jma,
+    _build_nea,
+    _build_open_meteo,
+    _build_qweather,
+)
+from weather_briefing.composition.providers import aqicn_provider as _aqicn_provider
+from weather_briefing.composition.providers import build_weather_provider as _build_weather_provider
+from weather_briefing.composition.providers import qweather_is_configured as _qweather_is_configured
+from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
-from weather_briefing.weather_context import QWeatherProvider
+from weather_briefing.weather import QWeatherProvider
 
 _REQUIRED_SENSITIVE_SDK_LOGGERS = frozenset({"any_llm", "openai", "httpx", "httpcore"})
 
@@ -1101,7 +1103,7 @@ class TestLLMProvider:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         sdk_client = SimpleNamespace()
         monkeypatch.setattr(
-            "weather_briefing.cli.create_any_llm_provider",
+            "weather_briefing.composition.providers.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or sdk_client,
         )
         settings = _make_fake_settings(
@@ -1125,7 +1127,7 @@ class TestLLMProvider:
     async def test_deepseek_without_base_url(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
-            "weather_briefing.cli.create_any_llm_provider",
+            "weather_briefing.composition.providers.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
@@ -1137,7 +1139,7 @@ class TestLLMProvider:
     async def test_arbitrary_any_llm_provider_is_forwarded(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
-            "weather_briefing.cli.create_any_llm_provider",
+            "weather_briefing.composition.providers.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = replace(_make_fake_settings(llm_provider="mistral"), api_key=None, llm_base_url=None)
@@ -1325,7 +1327,7 @@ def test_weather_provider_metadata_rejects_unregistered_provider() -> None:
 
 async def test_no_weather_provider_available(monkeypatch, async_client: httpx.AsyncClient) -> None:
     monkeypatch.setattr(
-        "weather_briefing.cli.weather_providers_for",
+        "weather_briefing.composition.providers.weather_providers_for",
         lambda *_: ("qweather",),
     )
     settings = _make_fake_settings(
