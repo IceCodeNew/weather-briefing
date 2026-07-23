@@ -14,6 +14,7 @@ from weather_briefing.llm import (
     LLMError,
     LLMRequestError,
     LLMStructuredOutput,
+    SensitiveLLMDiagnostics,
     parse_result,
 )
 
@@ -52,6 +53,10 @@ class _DiagnosticsStub:
 class _FailingDiagnosticsStub:
     def rendered_text_logging_enabled(self) -> bool:
         raise RuntimeError("diagnostic state unavailable")
+
+
+def test_sensitive_llm_diagnostics_remains_public() -> None:
+    assert SensitiveLLMDiagnostics.__name__ == "SensitiveLLMDiagnostics"
 
 
 async def test_completion_client_stub_requires_a_configured_response() -> None:
