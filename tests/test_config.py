@@ -27,6 +27,10 @@ def _required_environment(monkeypatch) -> None:
         monkeypatch.setenv(name, value)
 
 
+def _select_bark(monkeypatch) -> None:
+    monkeypatch.setenv("PUBLISHER", "bark")
+
+
 def _resolved_location(*, mainland: bool) -> ResolvedLocation:
     return ResolvedLocation(
         "test",
@@ -1220,6 +1224,7 @@ class TestConfigErrorPaths:
     @pytest.mark.parametrize("key", ("short", "a" * 17, "a" * 33))
     def test_invalid_bark_encryption_key_length_raises_error(self, monkeypatch, key: str) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_ENCRYPTION_KEY", key)
 
         with pytest.raises(ConfigurationError, match="16, 24, or 32 ASCII characters"):
@@ -1227,6 +1232,7 @@ class TestConfigErrorPaths:
 
     def test_non_ascii_bark_encryption_key_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_ENCRYPTION_KEY", "密" * 16)
 
         with pytest.raises(ConfigurationError, match="only ASCII"):
@@ -1235,6 +1241,7 @@ class TestConfigErrorPaths:
     @pytest.mark.parametrize("iv", ("short", "longer-than-twelve"))
     def test_invalid_bark_encryption_iv_length_raises_error(self, monkeypatch, iv: str) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_ENCRYPTION_IV", iv)
 
         with pytest.raises(ConfigurationError, match="exactly 12 ASCII characters"):
@@ -1242,6 +1249,7 @@ class TestConfigErrorPaths:
 
     def test_non_ascii_bark_encryption_iv_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_ENCRYPTION_IV", "密" * 12)
 
         with pytest.raises(ConfigurationError, match="only ASCII"):
@@ -1249,6 +1257,7 @@ class TestConfigErrorPaths:
 
     def test_bark_encryption_key_without_iv_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_ENCRYPTION_KEY", "k" * 32)
 
         with pytest.raises(ConfigurationError, match="must be configured together"):
@@ -1256,6 +1265,7 @@ class TestConfigErrorPaths:
 
     def test_bark_encryption_iv_without_key_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_ENCRYPTION_IV", "fixed-iv-123")
 
         with pytest.raises(ConfigurationError, match="must be configured together"):
@@ -1274,6 +1284,7 @@ class TestConfigErrorPaths:
     )
     def test_invalid_bark_base_url_raises_error(self, monkeypatch, base_url: str) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_BASE_URL", base_url)
 
         with pytest.raises(ConfigurationError, match="BARK_BASE_URL must be"):
@@ -1281,6 +1292,7 @@ class TestConfigErrorPaths:
 
     def test_bark_base_url_is_loaded_and_normalized(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_BASE_URL", "https://bark.example.invalid/prefix/")
 
         settings = Settings.from_env()
@@ -1289,6 +1301,7 @@ class TestConfigErrorPaths:
 
     def test_bark_group_is_loaded(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_GROUP", "forecast-team")
 
         settings = Settings.from_env()
@@ -1297,6 +1310,7 @@ class TestConfigErrorPaths:
 
     def test_empty_bark_group_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_GROUP", "   ")
 
         with pytest.raises(ConfigurationError, match="BARK_GROUP must not be empty"):
@@ -1305,7 +1319,7 @@ class TestConfigErrorPaths:
     @pytest.mark.parametrize("key_length", (16, 24, 32))
     def test_bark_encryption_key_lengths_are_loaded(self, monkeypatch, key_length: int) -> None:
         _required_environment(monkeypatch)
-        monkeypatch.setenv("PUBLISHER", "bark")
+        _select_bark(monkeypatch)
         monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
         monkeypatch.setenv("BARK_ENCRYPTION_KEY", "k" * key_length)
         monkeypatch.setenv("BARK_ENCRYPTION_IV", "fixed-iv-123")
@@ -1318,6 +1332,23 @@ class TestConfigErrorPaths:
         assert settings.bark_group == "weather-briefing"
         assert settings.bark_encryption_key == "k" * key_length
         assert settings.bark_encryption_iv == "fixed-iv-123"
+
+    def test_bark_settings_do_not_block_another_publisher(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "telegram")
+        monkeypatch.setenv("BARK_BASE_URL", "not-a-url")
+        monkeypatch.setenv("BARK_GROUP", "   ")
+        monkeypatch.setenv("BARK_ENCRYPTION_KEY", "short")
+        monkeypatch.setenv("BARK_ENCRYPTION_IV", "short")
+
+        settings = Settings.from_env()
+
+        assert settings.publisher == "telegram"
+        assert settings.bark_device_key is None
+        assert settings.bark_base_url == "https://api.day.app"
+        assert settings.bark_group == "weather-briefing"
+        assert settings.bark_encryption_key is None
+        assert settings.bark_encryption_iv is None
 
     def test_invalid_json_in_rss_sources_file_raises_error(self, monkeypatch, tmp_path: Path) -> None:
         _required_environment(monkeypatch)

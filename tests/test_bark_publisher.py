@@ -209,6 +209,7 @@ async def test_bark_error_logs_safe_reason_without_private_response(caplog) -> N
     with caplog.at_level("INFO"):
         async with LoggedAsyncClient(transport=transport) as client:
             publisher = BarkPublisher(client, "private-device", "k" * 32, "fixed-iv-123")
+            # The alternate pytest.raises exit is assertion machinery and adds no behavior coverage.
             with pytest.raises(DeliveryError, match="device-key-rejected") as caught:  # pragma: no branch
                 await publisher.publish(RenderedMessage("Private body", 12))
 
@@ -232,6 +233,7 @@ async def test_bark_rejects_invalid_success_response(response: httpx.Response, c
     with caplog.at_level("INFO", logger="weather_briefing.publishers"):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as client:
             publisher = BarkPublisher(client, "private-device", "k" * 32, "fixed-iv-123")
+            # The alternate pytest.raises exit is assertion machinery and adds no behavior coverage.
             with pytest.raises(DeliveryError, match="invalid-response"):  # pragma: no branch
                 await publisher.publish(RenderedMessage("Private body", 12))
 
@@ -246,6 +248,7 @@ async def test_bark_request_error_does_not_log_private_detail(caplog) -> None:
     with caplog.at_level("INFO", logger="weather_briefing.publishers"):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             publisher = BarkPublisher(client, "private-device", "k" * 32, "fixed-iv-123")
+            # The alternate pytest.raises exit is assertion machinery and adds no behavior coverage.
             with pytest.raises(DeliveryError, match="request-error"):  # pragma: no branch
                 await publisher.publish(RenderedMessage("Private body", 12))
 
