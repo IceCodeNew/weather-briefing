@@ -1533,16 +1533,33 @@ def test_publisher_builders_cover_declared_configuration_names() -> None:
     assert set(PUBLISHER_BUILDERS) == set(PublisherName)
 
 
-async def test_daemon_schedules_forecast_and_briefing_without_running_either_immediately(monkeypatch) -> None:
+async def test_daemon_schedules_forecast_and_briefing_without_running_either_immediately(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     from unittest.mock import patch
 
     jobs: list[tuple[object, tuple[object, ...]]] = []
+    state_path = tmp_path / "weather.sqlite3"
+    lock_is_held = False
+
+    @asynccontextmanager
+    async def record_state_lock(path: Path) -> AsyncIterator[None]:
+        nonlocal lock_is_held
+        assert path == state_path
+        lock_is_held = True
+        try:
+            yield
+        finally:
+            lock_is_held = False
 
     class FakeEvent:
         async def wait(self) -> None:
             pass
 
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
+    monkeypatch.setattr("weather_briefing.cli.serialized_state_run", record_state_lock)
     monkeypatch.setattr(
         "weather_briefing.cli.AsyncIOScheduler",
         lambda **kw: SimpleNamespace(
@@ -1552,12 +1569,17 @@ async def test_daemon_schedules_forecast_and_briefing_without_running_either_imm
     )
     monkeypatch.setattr("weather_briefing.cli.asyncio.Event", FakeEvent)
 
-    settings = _make_fake_settings()
+    settings = replace(_make_fake_settings(), state_path=state_path)
 
-    with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
+    def load_settings(_cls: type[Settings]) -> Settings:
+        assert lock_is_held
+        return settings
+
+    with patch.object(Settings, "from_env", classmethod(load_settings)):
         await daemon()
 
     assert jobs == [(run, ("forecast", True)), (run, ("briefing", True))]
+    assert not lock_is_held
 
 
 def test_main_calls_daemon_correctly(monkeypatch) -> None:

@@ -24,7 +24,12 @@ class HistoricalContextCandidate:
 
 @dataclass(frozen=True, slots=True)
 class HistoricalContextOverflow:
-    """Identify mandatory context omitted by a configured budget."""
+    """Identify mandatory context omitted by a configured budget.
+
+    Payload sizes are cumulative serialized context attempts, including earlier
+    selected entries and the candidate. They reflect the last attempt after any
+    preceding-entry compaction; ``None`` means that form was not attempted.
+    """
 
     source_id: str
     role: Literal["latest", "retention_baseline"]
