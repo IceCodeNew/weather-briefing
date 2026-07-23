@@ -14,10 +14,16 @@ from weather_briefing.geocoding import (
     NominatimGeocodingProvider,
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
-    _location_name_matches,
-    _mainland_china_rules,
-    _specific_location_name,
     possibly_mainland_china,
+)
+from weather_briefing.geocoding.matching import (
+    location_name_matches as _location_name_matches,
+)
+from weather_briefing.geocoding.matching import (
+    mainland_china_rules as _mainland_china_rules,
+)
+from weather_briefing.geocoding.matching import (
+    specific_location_name as _specific_location_name,
 )
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.reference_data import ReferenceDataError, reference_value
@@ -294,9 +300,9 @@ async def test_nominatim_reverse_geocoder_rate_limits_consecutive_requests(monke
     async def fake_sleep(delay: float) -> None:
         sleep_calls.append(delay)
 
-    monkeypatch.setattr("weather_briefing.geocoding.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("weather_briefing.geocoding.nominatim.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(
-        "weather_briefing.geocoding.time",
+        "weather_briefing.geocoding.nominatim.time",
         SimpleNamespace(monotonic=lambda: next(monotonic_values)),
     )
 
@@ -692,6 +698,12 @@ async def test_open_meteo_handles_results_not_a_list() -> None:
             await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
 
 
+async def test_open_meteo_handles_non_object_payload() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=[]))) as client:
+        with pytest.raises(GeocodingError, match="returned an invalid response"):
+            await OpenMeteoGeocodingProvider(client).geocode(LocationSpec("test", "Test"))
+
+
 async def test_open_meteo_ignores_null_fields_when_matching_results() -> None:
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -847,9 +859,9 @@ async def test_nominatim_rate_limits_consecutive_requests(monkeypatch) -> None:
     async def fake_sleep(delay: float) -> None:
         sleep_calls.append(delay)
 
-    monkeypatch.setattr("weather_briefing.geocoding.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("weather_briefing.geocoding.nominatim.asyncio.sleep", fake_sleep)
     monkeypatch.setattr(
-        "weather_briefing.geocoding.time",
+        "weather_briefing.geocoding.nominatim.time",
         SimpleNamespace(monotonic=lambda: next(monotonic_values)),
     )
 
@@ -1004,9 +1016,9 @@ def test_mainland_china_rules_rejects_invalid_latitude_bounds(monkeypatch) -> No
             return {"minimum": "73", "maximum": "136"}
         raise AssertionError(f"Unexpected call: {filename} {path}")
 
-    monkeypatch.setattr("weather_briefing.geocoding.reference_value", fake_value)
+    monkeypatch.setattr("weather_briefing.geocoding.matching.reference_value", fake_value)
     monkeypatch.setattr(
-        "weather_briefing.geocoding.reference_string_tuple",
+        "weather_briefing.geocoding.matching.reference_string_tuple",
         lambda *_: (),
     )
     with pytest.raises(ReferenceDataError, match="latitude"):
@@ -1023,9 +1035,9 @@ def test_mainland_china_rules_rejects_invalid_longitude_bounds(monkeypatch) -> N
             return {"minimum": "200", "maximum": "250"}
         raise AssertionError(f"Unexpected call: {filename} {path}")
 
-    monkeypatch.setattr("weather_briefing.geocoding.reference_value", fake_value)
+    monkeypatch.setattr("weather_briefing.geocoding.matching.reference_value", fake_value)
     monkeypatch.setattr(
-        "weather_briefing.geocoding.reference_string_tuple",
+        "weather_briefing.geocoding.matching.reference_string_tuple",
         lambda *_: (),
     )
     with pytest.raises(ReferenceDataError, match="longitude"):
@@ -1035,7 +1047,7 @@ def test_mainland_china_rules_rejects_invalid_longitude_bounds(monkeypatch) -> N
 def test_mainland_china_rules_handles_corrupt_reference_data(monkeypatch) -> None:
     _mainland_china_rules.cache_clear()
     monkeypatch.setattr(
-        "weather_briefing.geocoding.reference_value",
+        "weather_briefing.geocoding.matching.reference_value",
         lambda *_: (_ for _ in ()).throw(KeyError("missing")),
     )
     with pytest.raises(ReferenceDataError, match="mainland China geography"):
@@ -1044,7 +1056,7 @@ def test_mainland_china_rules_handles_corrupt_reference_data(monkeypatch) -> Non
 
 def test_specific_location_name_rejects_non_string_suffix(monkeypatch) -> None:
     monkeypatch.setattr(
-        "weather_briefing.geocoding.reference_value",
+        "weather_briefing.geocoding.matching.reference_value",
         lambda *_: 123,
     )
     with pytest.raises(ReferenceDataError, match="suffix characters must be a string"):
