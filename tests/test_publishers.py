@@ -4,16 +4,16 @@ import httpx
 import pytest
 
 from weather_briefing.api_client import LoggedAsyncClient
-from weather_briefing.models import RenderedMessage
-from weather_briefing.publishers import (
+from weather_briefing.data.resources import ReferenceDataError
+from weather_briefing.delivery import (
     DeliveryError,
     DeliveryProvider,
+    PlainTextRenderer,
     StdoutPublisher,
     TelegramPublisher,
-    _split_message,
 )
-from weather_briefing.reference_data import ReferenceDataError
-from weather_briefing.render import PlainTextRenderer
+from weather_briefing.delivery.telegram import split_message
+from weather_briefing.models import RenderedMessage
 
 
 class NoopPublisher:
@@ -73,7 +73,7 @@ async def test_telegram_publisher_validates_error_metadata_on_construction(monke
     def fail_validation() -> None:
         raise ReferenceDataError("invalid Telegram metadata")
 
-    monkeypatch.setattr("weather_briefing.publishers.telegram_error_classification", fail_validation)
+    monkeypatch.setattr("weather_briefing.delivery.telegram.telegram_error_classification", fail_validation)
 
     async with httpx.AsyncClient() as client:
         with pytest.raises(ReferenceDataError, match="invalid Telegram metadata"):
@@ -93,7 +93,7 @@ def test_delivery_error_rejects_non_boolean_channel_availability(value) -> None:
 
 
 def test_split_message_prefers_line_boundary() -> None:
-    assert _split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
+    assert split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
 
 
 @pytest.mark.parametrize(
@@ -122,7 +122,7 @@ def test_split_message_balances_html_tags(
     limit: int,
     expected: tuple[str, ...],
 ) -> None:
-    assert _split_message(body, limit) == expected
+    assert split_message(body, limit) == expected
 
 
 async def test_telegram_publisher_uses_runtime_values(caplog) -> None:

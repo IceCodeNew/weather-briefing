@@ -14,10 +14,10 @@ from weather_briefing.data.resources import (
     reference_value,
 )
 from weather_briefing.data.service_endpoints import NOMINATIM_USER_AGENT
+from weather_briefing.delivery.telegram_reference import telegram_error_classification
 from weather_briefing.localization import localization_table
 from weather_briefing.reference_data import (
     open_meteo_weather_code_descriptions,
-    telegram_error_classification,
 )
 
 
@@ -214,7 +214,7 @@ def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
     ),
 )
 def test_telegram_error_classification_rejects_invalid_data(monkeypatch, value, message) -> None:
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.delivery.telegram_reference.load_reference_data", lambda filename: value)
     telegram_error_classification.cache_clear()
 
     with pytest.raises(ReferenceDataError, match=message):
