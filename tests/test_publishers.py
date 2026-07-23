@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from weather_briefing.api_client import LoggedAsyncClient
+from weather_briefing.data import resources as data_resources
 from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.delivery import (
     DeliveryError,
@@ -71,7 +72,7 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
 
 
 async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:
-    monkeypatch.setattr("weather_briefing.data.resources.load_reference_data", lambda filename: {})
+    monkeypatch.setattr(data_resources, "load_reference_data", lambda filename: {})
     telegram_error_classification.cache_clear()
 
     async with httpx.AsyncClient() as client:
