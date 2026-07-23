@@ -780,6 +780,11 @@ _DEFAULT_SETTINGS = Settings(
     publisher="stdout",
     telegram_bot_token=None,
     telegram_chat_id=None,
+    bark_device_key=None,
+    bark_base_url="https://api.day.app",
+    bark_group="weather-briefing",
+    bark_encryption_key=None,
+    bark_encryption_iv=None,
     rss_max_attempts=3,
     rss_retry_min_seconds=3.0,
     rss_retry_max_seconds=5.0,
@@ -804,6 +809,11 @@ def _make_fake_settings(
     publisher: str = "stdout",
     telegram_bot_token: str | None = None,
     telegram_chat_id: str | None = None,
+    bark_device_key: str | None = None,
+    bark_base_url: str = "https://api.day.app",
+    bark_group: str = "weather-briefing",
+    bark_encryption_key: str | None = None,
+    bark_encryption_iv: str | None = None,
     weather_providers: tuple[str, ...] | None = None,
     qweather_project_id: str | None = None,
     qweather_credential_id: str | None = None,
@@ -820,6 +830,11 @@ def _make_fake_settings(
         publisher=publisher,
         telegram_bot_token=telegram_bot_token,
         telegram_chat_id=telegram_chat_id,
+        bark_device_key=bark_device_key,
+        bark_base_url=bark_base_url,
+        bark_group=bark_group,
+        bark_encryption_key=bark_encryption_key,
+        bark_encryption_iv=bark_encryption_iv,
         weather_providers=weather_providers,
         qweather_project_id=qweather_project_id,
         qweather_credential_id=qweather_credential_id,
@@ -1200,6 +1215,26 @@ class TestDeliveryProvider:
         )
         provider = _delivery_provider(settings, async_client)
         assert provider.single_message_limit == 4096
+
+    async def test_bark_missing_config(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(publisher="bark")
+        with pytest.raises(ValueError, match="BARK_DEVICE_KEY"):
+            _delivery_provider(settings, async_client)
+
+    async def test_bark_with_plaintext_config(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(publisher="bark", bark_device_key="test-device")
+        provider = _delivery_provider(settings, async_client)
+        assert provider.single_message_limit == 650
+
+    async def test_bark_with_encrypted_config(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(
+            publisher="bark",
+            bark_device_key="test-device",
+            bark_encryption_key="k" * 32,
+            bark_encryption_iv="fixed-iv-123",
+        )
+        provider = _delivery_provider(settings, async_client)
+        assert provider.single_message_limit == 650
 
     async def test_unsupported_publisher(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="unsupported")

@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pendulum
 from any_llm import AnyLLM
 
+from ..data.service_endpoints import BARK_BASE_URL
 from ..models import FeedConfig, LocationSpec
 from .base import ConfigurationError
 from .environment import (
@@ -61,6 +63,11 @@ class Settings:
     publisher: str
     telegram_bot_token: str | None
     telegram_chat_id: str | None
+    bark_device_key: str | None
+    bark_base_url: str
+    bark_group: str
+    bark_encryption_key: str | None
+    bark_encryption_iv: str | None
     rss_max_attempts: int
     rss_retry_min_seconds: float
     rss_retry_max_seconds: float
@@ -118,6 +125,44 @@ class Settings:
             raise ConfigurationError(
                 "RSS sources reference unknown location ids: " + ", ".join(sorted(unknown_feed_locations))
             )
+        bark_encryption_key = clean_env(os.getenv("BARK_ENCRYPTION_KEY")) or None
+        if bark_encryption_key is not None:
+            try:
+                encoded_bark_key = bark_encryption_key.encode("ascii")
+            except UnicodeEncodeError as exc:
+                raise ConfigurationError("BARK_ENCRYPTION_KEY must contain only ASCII characters") from exc
+            if len(encoded_bark_key) not in {16, 24, 32}:
+                raise ConfigurationError("BARK_ENCRYPTION_KEY must contain 16, 24, or 32 ASCII characters")
+        bark_encryption_iv = clean_env(os.getenv("BARK_ENCRYPTION_IV")) or None
+        if bark_encryption_iv is not None:
+            try:
+                encoded_bark_iv = bark_encryption_iv.encode("ascii")
+            except UnicodeEncodeError as exc:
+                raise ConfigurationError("BARK_ENCRYPTION_IV must contain only ASCII characters") from exc
+            if len(encoded_bark_iv) != 12:
+                raise ConfigurationError("BARK_ENCRYPTION_IV must contain exactly 12 ASCII characters")
+        if (bark_encryption_key is None) != (bark_encryption_iv is None):
+            raise ConfigurationError("BARK_ENCRYPTION_KEY and BARK_ENCRYPTION_IV must be configured together")
+        bark_base_url = clean_env(os.getenv("BARK_BASE_URL", BARK_BASE_URL)).rstrip("/")
+        try:
+            parsed_bark_base_url = urlsplit(bark_base_url)
+            hostname = parsed_bark_base_url.hostname
+            port = parsed_bark_base_url.port
+        except ValueError as exc:
+            raise ConfigurationError("BARK_BASE_URL must be a valid absolute HTTP(S) URL") from exc
+        if (
+            parsed_bark_base_url.scheme not in {"http", "https"}
+            or hostname is None
+            or parsed_bark_base_url.username is not None
+            or parsed_bark_base_url.password is not None
+            or port == 0
+            or parsed_bark_base_url.query
+            or parsed_bark_base_url.fragment
+        ):
+            raise ConfigurationError("BARK_BASE_URL must be an absolute HTTP(S) URL without credentials or parameters")
+        bark_group = clean_env(os.getenv("BARK_GROUP", "weather-briefing"))
+        if not bark_group:
+            raise ConfigurationError("BARK_GROUP must not be empty")
         return cls(
             api_key=api_key,
             llm_provider=llm_provider,
@@ -146,6 +191,11 @@ class Settings:
             publisher=publisher(),
             telegram_bot_token=clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,
             telegram_chat_id=clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None,
+            bark_device_key=clean_env(os.getenv("BARK_DEVICE_KEY")) or None,
+            bark_base_url=bark_base_url,
+            bark_group=bark_group,
+            bark_encryption_key=bark_encryption_key,
+            bark_encryption_iv=bark_encryption_iv,
             rss_max_attempts=positive_integer("RSS_MAX_ATTEMPTS", 3),
             rss_retry_min_seconds=retry_min,
             rss_retry_max_seconds=retry_max,
