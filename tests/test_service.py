@@ -11,7 +11,15 @@ from typing import TypeGuard
 import pendulum
 import pytest
 
+from weather_briefing.application.context_history import (
+    HistoricalContextOverflow as _HistoricalContextOverflow,
+)
+from weather_briefing.application.context_history import bounded_context_history as _bounded_context_history
+from weather_briefing.application.context_history import context_history_candidates as _context_history_candidates
+from weather_briefing.application.context_history import serialize_context_document as _serialize_context_document
+from weather_briefing.application.payloads import build_briefing_payload
 from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
+from weather_briefing.delivery import DeliveryError, DeliveryProvider, PlainTextRenderer
 from weather_briefing.llm import LLMError, LLMRequestError
 from weather_briefing.models import (
     AirQualitySnapshot,
@@ -24,17 +32,11 @@ from weather_briefing.models import (
     Warning,
     WeatherContextSnapshot,
 )
-from weather_briefing.publishers import DeliveryError, DeliveryProvider
-from weather_briefing.render import PlainTextRenderer
 from weather_briefing.service import (
     BriefingService,
-    _bounded_context_history,
-    _context_history_candidates,
-    _HistoricalContextOverflow,
-    _serialize_context_document,
 )
 from weather_briefing.state import SQLiteStateStore
-from weather_briefing.weather_context import WeatherContextError
+from weather_briefing.weather import WeatherContextError
 
 
 @dataclass(frozen=True, slots=True)
@@ -673,20 +675,20 @@ def test_build_payload_serializes_article_groups_consistently(
     historical = (historical_verbatim, historical_summary)
 
     with SQLiteStateStore(tmp_path / f"{kind}.sqlite3") as state:
-        service = object.__new__(BriefingService)
-        service._settings = _TestSettings(timezone=pendulum.timezone("Asia/Shanghai"))
-        service._location = _location()
-        service._state = state
-        payload = service._build_payload(
-            kind,
-            now,
-            None,
-            (new,),
-            (deferred,),
-            historical,
-            (),
-            (),
-            (),
+        payload = build_briefing_payload(
+            kind=kind,
+            now=now,
+            forecast_date=None,
+            location=_location(),
+            timezone=pendulum.timezone("Asia/Shanghai"),
+            state=state,
+            history_hours=48,
+            articles=(new,),
+            deferred_articles=(deferred,),
+            historical_articles=historical,
+            context=(),
+            historical_context=[],
+            active_warnings=(),
         )
 
     assert payload["new_articles"] == [expected(new)]

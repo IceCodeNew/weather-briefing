@@ -1,4 +1,21 @@
-from weather_briefing.prompts import SYSTEM_PROMPT
+from unittest.mock import patch
+
+import pytest
+
+from weather_briefing.data.prompts import SYSTEM_PROMPT, _load_system_prompt
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError("unreadable"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")],
+    ids=["io-error", "decode-error"],
+)
+def test_system_prompt_load_failure_is_actionable(error: Exception) -> None:
+    with (
+        patch("importlib.resources.files", side_effect=error),
+        pytest.raises(RuntimeError, match="Unable to load system prompt: system_prompt.txt"),
+    ):
+        _load_system_prompt()
 
 
 def test_prompt_limits_disasters_to_the_location_scope() -> None:
