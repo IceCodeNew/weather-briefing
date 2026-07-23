@@ -1,4 +1,4 @@
-from weather_briefing.prompts import SYSTEM_PROMPT
+from weather_briefing.data.prompts import SYSTEM_PROMPT
 
 
 def test_prompt_limits_disasters_to_the_location_scope() -> None:
