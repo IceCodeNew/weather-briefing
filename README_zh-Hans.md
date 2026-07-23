@@ -8,7 +8,7 @@
 
 [English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
-Weather Briefing 定时汇总天气、空气质量、预警和可选信息源，再通过大语言模型生成带来源链接的简报。
+Weather Briefing 定时汇总天气、空气质量、预警和可选信息源，再通过大语言模型生成标明信息来源的简报，并在投递平台支持时附上来源链接。
 
 ## 核心能力
 

@@ -8,7 +8,7 @@
 
 [English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
-Weather Briefing periodically gathers weather, air quality, warnings, and optional private RSS content, then uses a large language model to produce a briefing with links to its sources.
+Weather Briefing periodically gathers weather, air quality, warnings, and optional private RSS content, then uses a large language model to produce a briefing that identifies its sources and includes source links when supported by the publisher.
 
 ## Core capabilities
 
