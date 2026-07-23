@@ -258,16 +258,15 @@ def build_weather_provider(
     jma_office_code: str | None = None,
 ) -> WeatherContextProvider:
     """Build one configured weather provider adapter."""
-    builder = WEATHER_PROVIDER_BUILDERS.get(name)
-    if builder is None:
-        raise ValueError(f"Unsupported weather provider: {name}")
     if name == WeatherProviderName.QWEATHER:
         return _build_qweather(settings, client, output_language=output_language)
+    if name == WeatherProviderName.OPEN_METEO:
+        return _build_open_meteo(settings, client)
     if name == WeatherProviderName.NEA_SINGAPORE:
-        return NEASingaporeNowcastProvider(client, api_key=settings.nea_api_key)
+        return _build_nea(settings, client)
     if name == WeatherProviderName.JMA_JAPAN:
         return _build_jma(settings, client, office_code=jma_office_code)
-    return builder(settings, client)
+    raise ValueError(f"Unsupported weather provider: {name}")
 
 
 def _build_qweather(
@@ -319,11 +318,3 @@ def aqicn_provider(settings: Settings, client: httpx.AsyncClient) -> AirQualityP
     if not settings.aqicn_api_token:
         return None
     return AQICNProvider(client, token=settings.aqicn_api_token)
-
-
-WEATHER_PROVIDER_BUILDERS: dict[str, Callable[[Settings, httpx.AsyncClient], WeatherContextProvider]] = {
-    WeatherProviderName.QWEATHER: _build_qweather,
-    WeatherProviderName.OPEN_METEO: _build_open_meteo,
-    WeatherProviderName.NEA_SINGAPORE: _build_nea,
-    WeatherProviderName.JMA_JAPAN: _build_jma,
-}

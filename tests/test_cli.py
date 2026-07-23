@@ -39,7 +39,6 @@ from weather_briefing.cli import (
 )
 from weather_briefing.composition.providers import (
     PUBLISHER_BUILDERS,
-    WEATHER_PROVIDER_BUILDERS,
     _build_jma,
     _build_nea,
     _build_open_meteo,
@@ -51,7 +50,7 @@ from weather_briefing.composition.providers import qweather_is_configured as _qw
 from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
-from weather_briefing.registries import PublisherName, WeatherProviderName
+from weather_briefing.registries import PublisherName
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from weather_briefing.weather import QWeatherProvider
 
@@ -1490,8 +1489,7 @@ def test_parse_run_time_returns_now_when_value_is_none(monkeypatch) -> None:
     assert result.timezone_name == "Asia/Shanghai"
 
 
-def test_runtime_provider_builders_cover_declared_configuration_names() -> None:
-    assert set(WEATHER_PROVIDER_BUILDERS) == set(WeatherProviderName)
+def test_publisher_builders_cover_declared_configuration_names() -> None:
     assert set(PUBLISHER_BUILDERS) == set(PublisherName)
 
 
