@@ -6,15 +6,17 @@ import pytest
 
 from weather_briefing import __version__
 from weather_briefing.air_quality import health_guidance
-from weather_briefing.data.service_endpoints import NOMINATIM_USER_AGENT
-from weather_briefing.reference_data import (
+from weather_briefing.data.resources import (
     ReferenceDataError,
     load_reference_data,
-    localization_table,
-    open_meteo_weather_code_descriptions,
     reference_string,
     reference_string_tuple,
     reference_value,
+)
+from weather_briefing.data.service_endpoints import NOMINATIM_USER_AGENT
+from weather_briefing.localization import localization_table
+from weather_briefing.reference_data import (
+    open_meteo_weather_code_descriptions,
     telegram_error_classification,
 )
 
@@ -157,7 +159,7 @@ def test_reference_string_tuple_rejects_non_list_value() -> None:
 
 @pytest.mark.parametrize("value", [None, "", "   ", 7])
 def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
-    monkeypatch.setattr("weather_briefing.reference_data.reference_value", lambda *args: value)
+    monkeypatch.setattr("weather_briefing.data.resources.reference_value", lambda *args: value)
 
     with pytest.raises(ReferenceDataError, match="non-empty string"):
         reference_string("provider_defaults.json", "qweather_allergen_index_type")
@@ -220,7 +222,7 @@ def test_telegram_error_classification_rejects_invalid_data(monkeypatch, value, 
 
 
 def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:
-    from weather_briefing.reference_data import load_reference_data
+    from weather_briefing.data.resources import load_reference_data
 
     class FakeResource:
         def joinpath(self, filename):
@@ -230,14 +232,64 @@ def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:
             return "42"
 
     monkeypatch.setattr(
-        "weather_briefing.reference_data.resources.files",
+        "weather_briefing.data.resources.resources.files",
         lambda package: FakeResource(),
     )
 
-    load_reference_data.cache_clear()
-
     with pytest.raises(ReferenceDataError, match="must be an object"):
         load_reference_data("test.json")
+
+
+def test_load_reference_data_returns_independent_values() -> None:
+    first = load_reference_data("localization.json")
+    tables = first["tables"]
+    assert isinstance(tables, dict)
+    tables.clear()
+
+    second = load_reference_data("localization.json")
+
+    assert second["tables"]
+
+
+def test_reference_value_copies_only_the_selected_value(monkeypatch) -> None:
+    import weather_briefing.data.resources as resources_module
+
+    class UnselectedValue:
+        def __deepcopy__(self, memo):
+            raise AssertionError(  # pragma: no cover - reached only if root copying regresses
+                "reference_value must not copy the cached root"
+            )
+
+    selected = {"items": ["one"]}
+    root = {"selected": selected, "unselected": UnselectedValue()}
+
+    monkeypatch.setattr(resources_module, "_load_reference_data", lambda filename: root)
+
+    first = reference_value("test.json", "selected")
+    assert isinstance(first, dict)
+    items = first["items"]
+    assert isinstance(items, list)
+    items.append("changed")
+
+    second = reference_value("test.json", "selected")
+
+    assert second == {"items": ["one"]}
+    assert first is not selected
+
+
+def test_reference_string_tuple_does_not_copy_the_cached_list(monkeypatch) -> None:
+    import weather_briefing.data.resources as resources_module
+
+    class CachedStrings(list[str]):
+        def __deepcopy__(self, memo):
+            raise AssertionError(  # pragma: no cover - reached only if list copying regresses
+                "reference_string_tuple must not copy the cached list"
+            )
+
+    cached = CachedStrings(["one", "two"])
+    monkeypatch.setattr(resources_module, "_load_reference_data", lambda filename: {"selected": cached})
+
+    assert reference_string_tuple("test.json", "selected") == ("one", "two")
 
 
 @pytest.mark.parametrize(
@@ -257,7 +309,7 @@ def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:
     ],
 )
 def test_localization_table_rejects_incomplete_data(monkeypatch, value, message) -> None:
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match=message):
@@ -268,7 +320,7 @@ def test_localization_table_rejects_missing_fields(monkeypatch) -> None:
     value, tables, _ = _mutable_localization_data()
     english = _localization_language(tables, "briefing", "en")
     del english["weather"]
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Invalid localization fields: briefing:en"):
@@ -280,7 +332,7 @@ def test_localization_table_rejects_unknown_alias_target(monkeypatch) -> None:
     briefing = aliases["briefing"]
     assert _is_string_object_dict(briefing)
     briefing["zh-Hans"] = "missing"
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Invalid localization alias: briefing:zh-Hans"):
@@ -290,7 +342,7 @@ def test_localization_table_rejects_unknown_alias_target(monkeypatch) -> None:
 def test_localization_table_rejects_whitespace_values(monkeypatch) -> None:
     value, tables, _ = _mutable_localization_data()
     _localization_language(tables, "briefing", "en")["weather"] = "   "
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Invalid localization fields: briefing:en"):
@@ -312,7 +364,7 @@ def test_localization_tables_are_immutable() -> None:
 def test_localization_table_rejects_invalid_alias_root(monkeypatch, aliases) -> None:
     value, _, _ = _mutable_localization_data()
     value["aliases"] = aliases
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="every supported table"):
@@ -329,7 +381,7 @@ def test_localization_table_rejects_unknown_table() -> None:
 def test_localization_table_rejects_non_object_table(monkeypatch) -> None:
     value, tables, _ = _mutable_localization_data()
     tables["briefing"] = []
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Unknown localization table: briefing"):
@@ -341,7 +393,7 @@ def test_localization_table_rejects_non_object_labels(monkeypatch) -> None:
     briefing = tables["briefing"]
     assert _is_string_object_dict(briefing)
     briefing["en"] = []
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Invalid localization fields: briefing:en"):
@@ -351,7 +403,7 @@ def test_localization_table_rejects_non_object_labels(monkeypatch) -> None:
 def test_localization_table_rejects_non_object_table_aliases(monkeypatch) -> None:
     value, _, aliases = _mutable_localization_data()
     aliases["briefing"] = []
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Localization aliases must be an object: briefing"):
@@ -365,7 +417,7 @@ def test_localization_table_rejects_non_object_table_aliases(monkeypatch) -> Non
 def test_localization_table_rejects_invalid_aliases(monkeypatch, alias, target) -> None:
     value, _, aliases = _mutable_localization_data()
     aliases["briefing"] = {alias: target}
-    monkeypatch.setattr("weather_briefing.reference_data.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     localization_table.cache_clear()
 
     with pytest.raises(ReferenceDataError, match="Invalid localization alias: briefing"):

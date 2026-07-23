@@ -7,8 +7,8 @@ from weather_briefing.allergen import (
     allergen_to_document,
     pollen_type_names,
 )
+from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.models import AllergenLevel, AllergenSnapshot
-from weather_briefing.reference_data import ReferenceDataError
 
 
 def test_allergen_guidance_zero_is_none() -> None:

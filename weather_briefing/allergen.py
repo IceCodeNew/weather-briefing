@@ -5,9 +5,10 @@ from __future__ import annotations
 from functools import cache
 from math import isfinite
 
+from .data.resources import ReferenceDataError, reference_value
 from .languages import localized_labels
+from .localization import localization_table
 from .models import AllergenSnapshot, SourceDocument
-from .reference_data import ReferenceDataError, localization_table, reference_value
 
 _ALLERGEN_FORMATS = localization_table("allergen")
 

@@ -9,10 +9,11 @@ import httpx
 import pendulum
 
 from .api_client import api_call_extensions
+from .data.resources import ReferenceDataError, reference_value
 from .data.service_endpoints import AQICN_BASE_URL
 from .languages import localized_labels
+from .localization import localization_table
 from .models import AirQualitySnapshot, AirQualityTimeKind, SourceDocument
-from .reference_data import ReferenceDataError, localization_table, reference_value
 from .time_utils import parse_datetime_with_default_timezone
 
 _AIR_QUALITY_FORMATS = localization_table("air_quality")

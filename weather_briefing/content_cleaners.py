@@ -10,7 +10,7 @@ from typing import Protocol
 from bs4 import BeautifulSoup, Comment
 from soupsieve import SelectorSyntaxError
 
-from .reference_data import reference_string_tuple
+from .data.resources import reference_string_tuple
 
 
 class ContentCleaningError(ValueError):
