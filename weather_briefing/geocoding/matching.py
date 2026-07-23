@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from functools import cache
 
-from ..data.resources import ReferenceDataError, reference_string_tuple, reference_value
+from ..reference_data import ReferenceDataError, reference_string_tuple, reference_value
 
 
 @cache
