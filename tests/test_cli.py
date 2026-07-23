@@ -1367,23 +1367,6 @@ async def test_build_weather_provider_unsupported(async_client: httpx.AsyncClien
         _build_weather_provider("unknown", settings, async_client)
 
 
-@pytest.mark.parametrize("name", tuple(WeatherProviderName))
-async def test_build_weather_provider_dispatch_is_exhaustive(
-    async_client: httpx.AsyncClient,
-    name: WeatherProviderName,
-) -> None:
-    settings = _make_fake_settings(
-        qweather_project_id="project",
-        qweather_credential_id="credential",
-        qweather_private_key=base64.b64encode(b"fake-private-key-content").decode(),
-        qweather_base_url="https://qweather.example.invalid",
-    )
-
-    provider = _build_weather_provider(name, settings, async_client, jma_office_code="130000")
-
-    assert provider is not None
-
-
 async def test_build_open_meteo_returns_provider(async_client: httpx.AsyncClient) -> None:
     settings = _make_fake_settings()
     provider = _build_open_meteo(settings, async_client)
@@ -1504,6 +1487,23 @@ def test_parse_run_time_returns_now_when_value_is_none(monkeypatch) -> None:
     tz = pendulum.timezone("Asia/Shanghai")
     result = _parse_run_time(None, tz)
     assert result.timezone_name == "Asia/Shanghai"
+
+
+@pytest.mark.parametrize("name", tuple(WeatherProviderName))
+async def test_build_weather_provider_dispatch_is_exhaustive(
+    async_client: httpx.AsyncClient,
+    name: WeatherProviderName,
+) -> None:
+    settings = _make_fake_settings(
+        qweather_project_id="project",
+        qweather_credential_id="credential",
+        qweather_private_key=base64.b64encode(b"fake-private-key-content").decode(),
+        qweather_base_url="https://qweather.example.invalid",
+    )
+
+    provider = _build_weather_provider(name, settings, async_client, jma_office_code="130000")
+
+    assert provider is not None
 
 
 def test_publisher_builders_cover_declared_configuration_names() -> None:
