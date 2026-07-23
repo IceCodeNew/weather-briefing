@@ -24,11 +24,19 @@ class HistoricalContextCandidate:
 
 @dataclass(frozen=True, slots=True)
 class HistoricalContextOverflow:
-    """Identify mandatory context omitted by a configured budget."""
+    """Identify mandatory context omitted by a configured budget.
+
+    Payload sizes are cumulative serialized context attempts, including earlier
+    selected entries and the candidate. They reflect the last attempt after any
+    preceding-entry compaction; ``None`` means that form was not attempted.
+    """
 
     source_id: str
     role: Literal["latest", "retention_baseline"]
+    reason: Literal["document_limit", "character_limit"]
     fingerprint: str
+    full_payload_characters: int | None
+    compact_payload_characters: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +46,9 @@ class BoundedContextHistory:
     payload: list[dict[str, object]]
     documents: tuple[SourceDocument, ...]
     serialized_characters: int
+    distinct_sources: int
+    mandatory_documents: int
+    compacted_documents: int
     overflows: tuple[HistoricalContextOverflow, ...]
 
 
@@ -100,6 +111,25 @@ def serialize_context_document(
     return entry
 
 
+def _context_overflow(
+    candidate: HistoricalContextCandidate,
+    reason: Literal["document_limit", "character_limit"],
+    *,
+    full_payload_characters: int | None = None,
+    compact_payload_characters: int | None = None,
+) -> HistoricalContextOverflow:
+    if candidate.role == "recent_change":
+        raise ValueError("recent changes are optional and cannot produce overflow alerts")
+    return HistoricalContextOverflow(
+        source_id=candidate.document.id,
+        role=candidate.role,
+        reason=reason,
+        fingerprint=_context_overflow_fingerprint(candidate),
+        full_payload_characters=full_payload_characters,
+        compact_payload_characters=compact_payload_characters,
+    )
+
+
 def bounded_context_history(
     documents: tuple[SourceDocument, ...],
     *,
@@ -115,6 +145,8 @@ def bounded_context_history(
         entry = serialize_context_document(candidate.document, history_role=candidate.role)
         candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
         candidate_characters = len(serialize_llm_payload(candidate_payload))
+        full_payload_characters = candidate_characters
+        compact_payload_characters = None
         if candidate_characters <= max_characters:
             selected.append((candidate, entry))
             serialized_characters = candidate_characters
@@ -123,6 +155,7 @@ def bounded_context_history(
             entry = serialize_context_document(candidate.document, history_role=candidate.role, compact=True)
             candidate_payload = [*(selected_entry for _, selected_entry in selected), entry]
             candidate_characters = len(serialize_llm_payload(candidate_payload))
+            compact_payload_characters = candidate_characters
             if candidate_characters <= max_characters:
                 selected.append((candidate, entry))
                 serialized_characters = candidate_characters
@@ -147,13 +180,23 @@ def bounded_context_history(
                 serialized_characters = len(serialize_llm_payload(selected_payload))
                 candidate_payload = [*selected_payload, entry]
                 candidate_characters = len(serialize_llm_payload(candidate_payload))
+                if entry.get("content_compacted"):
+                    compact_payload_characters = candidate_characters
+                else:
+                    full_payload_characters = candidate_characters
                 if candidate_characters <= max_characters:
                     selected.append((candidate, entry))
                     serialized_characters = candidate_characters
                     break
             else:
-                fingerprint = _context_overflow_fingerprint(candidate)
-                overflows.append(HistoricalContextOverflow(candidate.document.id, candidate.role, fingerprint))
+                overflows.append(
+                    _context_overflow(
+                        candidate,
+                        "character_limit",
+                        full_payload_characters=full_payload_characters,
+                        compact_payload_characters=compact_payload_characters,
+                    )
+                )
                 continue
             continue
     selected_documents: dict[str, SourceDocument] = {}
@@ -163,6 +206,9 @@ def bounded_context_history(
         payload=[entry for _, entry in selected],
         documents=tuple(selected_documents.values()),
         serialized_characters=serialized_characters,
+        distinct_sources=len({document.id for document in documents}),
+        mandatory_documents=sum(candidate.role != "recent_change" for candidate in candidates) + len(omitted_overflows),
+        compacted_documents=sum(bool(entry.get("content_compacted")) for _, entry in selected),
         overflows=tuple(overflows),
     )
 
@@ -244,11 +290,7 @@ def _context_history_selection(
     return (
         tuple(candidate for _, candidate in candidates),
         tuple(
-            HistoricalContextOverflow(
-                document.id,
-                role,
-                _context_overflow_fingerprint(HistoricalContextCandidate(document, role)),
-            )
+            _context_overflow(HistoricalContextCandidate(document, role), "document_limit")
             for _, document, role in omitted_mandatory
         ),
     )

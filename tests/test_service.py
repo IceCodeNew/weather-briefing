@@ -12,9 +12,14 @@ import pendulum
 import pytest
 
 from weather_briefing.application.context_history import (
+    HistoricalContextCandidate as _HistoricalContextCandidate,
+)
+from weather_briefing.application.context_history import (
     HistoricalContextOverflow as _HistoricalContextOverflow,
 )
+from weather_briefing.application.context_history import _context_overflow
 from weather_briefing.application.context_history import bounded_context_history as _bounded_context_history
+from weather_briefing.application.context_history import context_budget_fingerprints as _context_budget_fingerprints
 from weather_briefing.application.context_history import context_history_candidates as _context_history_candidates
 from weather_briefing.application.context_history import serialize_context_document as _serialize_context_document
 from weather_briefing.application.payloads import build_briefing_payload
@@ -354,6 +359,11 @@ def test_context_history_enforces_document_and_serialized_character_limits() -> 
     assert bounded_history.serialized_characters <= character_limit
     assert compact_history.overflows == ()
     assert [(overflow.source_id, overflow.role) for overflow in bounded_history.overflows] == [("oversized", "latest")]
+    assert [overflow.reason for overflow in bounded_history.overflows] == ["character_limit"]
+    full_payload_characters = bounded_history.overflows[0].full_payload_characters
+    assert full_payload_characters is not None
+    assert full_payload_characters > character_limit
+    assert bounded_history.overflows[0].compact_payload_characters is None
     expected = hashlib.sha256()
     for value in (
         "latest",
@@ -367,6 +377,33 @@ def test_context_history_enforces_document_and_serialized_character_limits() -> 
         expected.update(len(encoded).to_bytes(8, byteorder="big"))
         expected.update(encoded)
     assert bounded_history.overflows[0].fingerprint == expected.hexdigest()
+
+
+def test_recent_change_cannot_create_mandatory_overflow() -> None:
+    candidate = _HistoricalContextCandidate(_context_document("weather", "recent change"), "recent_change")
+
+    with pytest.raises(ValueError, match="optional"):
+        _context_overflow(candidate, "document_limit")
+
+
+def test_context_history_recomputes_full_size_after_repacking_selected_entries() -> None:
+    oversized = _context_document("oversized", "private-history" * 1_000)
+    selected = _context_document("selected", "selected history" * 100, history_summary="short summary")
+    selected_entry = _serialize_context_document(selected, history_role="latest")
+    character_limit = len(json.dumps([selected_entry], ensure_ascii=False, separators=(",", ":")))
+
+    bounded_history = _bounded_context_history(
+        (oversized, selected),
+        max_documents=2,
+        max_characters=character_limit,
+    )
+
+    assert [entry["source_id"] for entry in bounded_history.payload] == ["selected"]
+    assert bounded_history.payload[0]["content_compacted"] is True
+    assert bounded_history.overflows[0].source_id == "oversized"
+    assert bounded_history.overflows[0].full_payload_characters is not None
+    assert bounded_history.overflows[0].full_payload_characters > character_limit
+    assert bounded_history.overflows[0].compact_payload_characters is None
 
 
 def test_context_history_overflow_fingerprint_has_unambiguous_field_boundaries() -> None:
@@ -500,6 +537,10 @@ def test_context_history_reports_mandatory_documents_excluded_by_count_limit() -
     assert [(overflow.source_id, overflow.role) for overflow in bounded_history.overflows] == [
         ("weather", "retention_baseline")
     ]
+    assert [overflow.reason for overflow in bounded_history.overflows] == ["document_limit"]
+    assert bounded_history.distinct_sources == 2
+    assert bounded_history.mandatory_documents == 4
+    assert bounded_history.compacted_documents == 0
 
 
 def test_context_history_reports_mandatory_overflow_but_silently_drops_recent_change() -> None:
@@ -518,9 +559,16 @@ def test_context_history_reports_mandatory_overflow_but_silently_drops_recent_ch
     assert bounded_history.documents == ()
     assert bounded_history.serialized_characters == len("[]")
     assert [overflow.role for overflow in bounded_history.overflows] == ["latest", "retention_baseline"]
+    assert [overflow.reason for overflow in bounded_history.overflows] == [
+        "character_limit",
+        "character_limit",
+    ]
 
 
-async def test_bounded_history_excludes_omitted_sources_from_citation_validation(tmp_path: Path) -> None:
+async def test_bounded_history_excludes_omitted_sources_from_citation_validation(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     class OmittedHistoryCitationLLM:
         def __init__(self) -> None:
             self.payload: dict[str, object] | None = None
@@ -545,7 +593,8 @@ async def test_bounded_history_excludes_omitted_sources_from_citation_validation
         llm_max_attempts=1,
     )
     llm = OmittedHistoryCitationLLM()
-    delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "bounded-citations.sqlite3") as state:
@@ -568,7 +617,10 @@ async def test_bounded_history_excludes_omitted_sources_from_citation_validation
             StaticWeatherContextProvider(),
         )
 
-        with pytest.raises(LLMError, match="validation failed") as error:
+        with (
+            caplog.at_level(logging.DEBUG, logger="weather_briefing.service"),
+            pytest.raises(LLMError, match="validation failed") as error,
+        ):
             await service.run("forecast", now)
 
     assert "unknown source IDs: ['omitted-history']" in str(error.value.__cause__)
@@ -576,6 +628,42 @@ async def test_bounded_history_excludes_omitted_sources_from_citation_validation
     recent_context = llm.payload["recent_context_documents"]
     assert _is_dict_list(recent_context)
     assert [item["source_id"] for item in recent_context] == ["selected-history"]
+    assert (
+        "Historical context overflow: source_id=omitted-history role=latest reason=document_limit "
+        "full_payload_characters=None compact_payload_characters=None"
+    ) in caplog.text
+    private_values = (
+        "older history",
+        "Source omitted-history",
+        "https://example.invalid/omitted-history",
+        "fingerprint",
+    )
+    assert all(value not in caplog.text for value in private_values)
+    assert len(publisher.messages) == 2
+    assert all(value not in message.body for value in private_values for message, _, _ in publisher.messages)
+
+
+def test_context_budget_fingerprint_stays_compatible_when_reason_changes() -> None:
+    document_overflow = _HistoricalContextOverflow(
+        "private-source",
+        "latest",
+        "document_limit",
+        "fingerprint",
+        None,
+        None,
+    )
+    character_overflow = _HistoricalContextOverflow(
+        "private-source",
+        "latest",
+        "character_limit",
+        "fingerprint",
+        100,
+        20,
+    )
+
+    expected = hashlib.sha256(b"fingerprint").hexdigest()
+    assert _context_budget_fingerprints((document_overflow,)) == {"private-source": expected}
+    assert _context_budget_fingerprints((character_overflow,)) == {"private-source": expected}
 
 
 async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Path) -> None:
@@ -583,7 +671,14 @@ async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Pat
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
     now = pendulum.datetime(2026, 7, 13, 9, tz=settings.timezone)
-    overflow = _HistoricalContextOverflow("private-source", "latest", "fingerprint")
+    overflow = _HistoricalContextOverflow(
+        "private-source",
+        "latest",
+        "document_limit",
+        "fingerprint",
+        None,
+        None,
+    )
 
     with SQLiteStateStore(tmp_path / "context-budget.sqlite3") as state:
         service = BriefingService(
@@ -602,8 +697,8 @@ async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Pat
 
     assert len(publisher.messages) == 2
     assert all(
-        message.body.startswith("Weather history exceeds the LLM input budget")
-        and "deterministic compaction: private-source" in message.body
+        message.body.startswith("Weather history exceeds configured input limits")
+        and "document limit (8): private-source (latest)" in message.body
         for message, _, _ in publisher.messages
     )
 
@@ -613,7 +708,14 @@ async def test_context_budget_alert_delivery_failure_is_retried(tmp_path: Path, 
     publisher = FailOncePublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
     now = pendulum.datetime(2026, 7, 13, 9, tz=settings.timezone)
-    overflow = _HistoricalContextOverflow("private-source", "latest", "fingerprint")
+    overflow = _HistoricalContextOverflow(
+        "private-source",
+        "latest",
+        "character_limit",
+        "fingerprint",
+        100,
+        20,
+    )
 
     with SQLiteStateStore(tmp_path / "context-budget-retry.sqlite3") as state:
         service = BriefingService(
@@ -631,6 +733,10 @@ async def test_context_budget_alert_delivery_failure_is_retried(tmp_path: Path, 
 
     assert publisher.attempts == 2
     assert len(publisher.messages) == 1
+    assert (
+        "character limit (16000) after deterministic compaction: private-source (latest)"
+        in publisher.messages[0][0].body
+    )
     assert "Failed to publish or record context budget alert" in caplog.text
 
 
@@ -1028,7 +1134,10 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
     assert llm.payload is not None
     assert llm.payload["mode"] == "briefing"
     assert publisher.messages == []
-    assert "input_documents=1 selected_documents=1 serialized_characters=" in caplog.text
+    assert "input_documents=1 distinct_sources=1 mandatory_documents=1 max_documents=8" in caplog.text
+    assert "selected_documents=1 selected_latest=1 selected_baselines=0 selected_changes=0" in caplog.text
+    assert "compacted_documents=0 max_characters=16000 serialized_characters=" in caplog.text
+    assert "overflows=0" in caplog.text
     assert "LLM payload prepared: serialized_characters=" in caplog.text
     assert "sensitive historical body" not in caplog.text
     assert {document.id for document in remembered} == {

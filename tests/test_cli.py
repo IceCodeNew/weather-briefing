@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import subprocess
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,11 +51,17 @@ from weather_briefing.composition.providers import qweather_is_configured as _qw
 from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
+from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
 from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from weather_briefing.weather import QWeatherProvider
 
 _REQUIRED_SENSITIVE_SDK_LOGGERS = frozenset({"any_llm", "openai", "httpx", "httpcore"})
+
+
+@pytest.fixture(autouse=True)
+def _isolated_state_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(tmp_path / "weather.sqlite3"))
 
 
 class _ClosableLLMProviderStub:
@@ -438,17 +445,38 @@ def test_forecast_date_and_at_are_mutually_exclusive() -> None:
         build_parser().parse_args(["run", "forecast", "--date", "2026-07-11", "--at", "2026-07-11T08:00:00+08:00"])
 
 
-async def test_briefing_rejects_forecast_date(monkeypatch) -> None:
+async def test_run_holds_state_lock_while_loading_settings(monkeypatch, tmp_path: Path) -> None:
     from unittest.mock import patch
 
-    settings = _make_fake_settings()
+    state_path = tmp_path / "weather.sqlite3"
+    settings = replace(_make_fake_settings(), state_path=state_path)
+    lock_is_held = False
+
+    @asynccontextmanager
+    async def record_state_lock(path: Path) -> AsyncIterator[None]:
+        nonlocal lock_is_held
+        assert path == state_path
+        lock_is_held = True
+        try:
+            yield
+        finally:
+            lock_is_held = False
+
+    def load_settings(_cls: type[Settings]) -> Settings:
+        assert lock_is_held
+        return settings
+
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.persistence.locking.serialized_state_run", record_state_lock)
 
     with (
-        patch.object(Settings, "from_env", classmethod(lambda cls: settings)),
+        patch.object(Settings, "from_env", classmethod(load_settings)),
         pytest.raises(ValueError, match="only supported for run forecast"),
     ):
         await run("briefing", enforce_window=False, forecast_date="2026-07-11")
+
+    assert not lock_is_held
 
 
 async def test_forecast_date_rejects_past_date_and_points_to_at(monkeypatch) -> None:
@@ -1510,16 +1538,33 @@ def test_publisher_builders_cover_declared_configuration_names() -> None:
     assert set(PUBLISHER_BUILDERS) == set(PublisherName)
 
 
-async def test_daemon_schedules_forecast_and_briefing_without_running_either_immediately(monkeypatch) -> None:
+async def test_daemon_schedules_forecast_and_briefing_without_running_either_immediately(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     from unittest.mock import patch
 
     jobs: list[tuple[object, tuple[object, ...]]] = []
+    state_path = tmp_path / "weather.sqlite3"
+    lock_is_held = False
+
+    @asynccontextmanager
+    async def record_state_lock(path: Path) -> AsyncIterator[None]:
+        nonlocal lock_is_held
+        assert path == state_path
+        lock_is_held = True
+        try:
+            yield
+        finally:
+            lock_is_held = False
 
     class FakeEvent:
         async def wait(self) -> None:
             pass
 
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
+    monkeypatch.setattr("weather_briefing.persistence.locking.serialized_state_run", record_state_lock)
     monkeypatch.setattr(
         "weather_briefing.cli.AsyncIOScheduler",
         lambda **kw: SimpleNamespace(
@@ -1529,12 +1574,25 @@ async def test_daemon_schedules_forecast_and_briefing_without_running_either_imm
     )
     monkeypatch.setattr("weather_briefing.cli.asyncio.Event", FakeEvent)
 
-    settings = _make_fake_settings()
+    settings = replace(_make_fake_settings(), state_path=state_path)
 
-    with patch.object(Settings, "from_env", classmethod(lambda cls: settings)):
+    def load_settings(_cls: type[Settings]) -> Settings:
+        assert lock_is_held
+        return settings
+
+    with patch.object(Settings, "from_env", classmethod(load_settings)):
         await daemon()
 
     assert jobs == [(run, ("forecast", True)), (run, ("briefing", True))]
+    assert not lock_is_held
+
+
+async def test_daemon_rejects_direct_second_instance(monkeypatch, tmp_path: Path) -> None:
+    state_path = tmp_path / "weather.sqlite3"
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
+
+    with daemon_state_owner(state_path), pytest.raises(StateDirectoryInUseError):
+        await daemon()
 
 
 def test_main_calls_daemon_correctly(monkeypatch) -> None:
@@ -1553,13 +1611,28 @@ def test_main_calls_daemon_correctly(monkeypatch) -> None:
     assert calls == 1
 
 
+def test_main_rejects_a_second_daemon_with_a_clear_error(monkeypatch, tmp_path: Path, caplog) -> None:
+    state_path = tmp_path / "weather.sqlite3"
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "daemon"])
+
+    with daemon_state_owner(state_path), pytest.raises(SystemExit) as error:
+        main()
+
+    assert error.value.code == 1
+    assert "Another weather-briefing daemon is already using the configured state directory" in caplog.text
+
+
 def test_daemon_parser_rejects_run_now() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["daemon", "--run-now"])
 
 
-def test_main_calls_run_correctly(monkeypatch) -> None:
+def test_main_allows_manual_run_while_daemon_owns_state(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, bool, str | None]] = []
+    state_path = tmp_path / "weather.sqlite3"
 
     async def fake_run(
         kind: str,
@@ -1575,9 +1648,11 @@ def test_main_calls_run_correctly(monkeypatch) -> None:
     monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
     monkeypatch.setattr("weather_briefing.cli.run", fake_run)
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
     monkeypatch.setattr("sys.argv", ["weather-briefing", "run", "forecast", "--at", "2026-07-14T08:00:00+08:00"])
 
-    main()
+    with daemon_state_owner(state_path):
+        main()
     assert calls == [("forecast", False, "2026-07-14T08:00:00+08:00")]
 
 

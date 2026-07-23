@@ -35,6 +35,7 @@ from .geocoding import (
     PrecisionReducingGeocodingProvider,
 )
 from .models import ResolvedLocation
+from .persistence import locking as persistence_locking
 from .service import BriefingService
 from .sources import RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
@@ -260,6 +261,24 @@ async def run(
     run_now: bool = False,
 ) -> None:
     """Compose dependencies and execute one task across configured locations."""
+    async with persistence_locking.serialized_state_run(state_path_from_env()):
+        await _run_unlocked(
+            kind,
+            enforce_window,
+            at,
+            forecast_date=forecast_date,
+            run_now=run_now,
+        )
+
+
+async def _run_unlocked(
+    kind: str,
+    enforce_window: bool,
+    at: str | None,
+    *,
+    forecast_date: str | None,
+    run_now: bool,
+) -> None:
     settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     if forecast_date is not None and kind != "forecast":
@@ -380,7 +399,14 @@ def _parse_forecast_date(value: str) -> pendulum.Date:
 
 async def daemon() -> None:
     """Run the in-process forecast and briefing scheduler indefinitely."""
-    settings = await asyncio.to_thread(Settings.from_env)
+    state_path = state_path_from_env()
+    with persistence_locking.daemon_state_owner(state_path):
+        await _daemon(state_path)
+
+
+async def _daemon(state_path: Path) -> None:
+    async with persistence_locking.serialized_state_run(state_path):
+        settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)

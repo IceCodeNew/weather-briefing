@@ -241,12 +241,38 @@ class BriefingService:
             max_documents=self._settings.llm_history_max_documents,
             max_characters=self._settings.llm_history_max_characters,
         )
+        selected_roles = {
+            role: sum(entry["history_role"] == role for entry in bounded_history.payload)
+            for role in ("latest", "retention_baseline", "recent_change")
+        }
         _LOGGER.debug(
-            "Historical context bounded: input_documents=%d selected_documents=%d serialized_characters=%d",
+            "Historical context bounded: input_documents=%d distinct_sources=%d mandatory_documents=%d "
+            "max_documents=%d selected_documents=%d selected_latest=%d selected_baselines=%d "
+            "selected_changes=%d compacted_documents=%d max_characters=%d serialized_characters=%d "
+            "overflows=%d",
             len(historical_context),
+            bounded_history.distinct_sources,
+            bounded_history.mandatory_documents,
+            self._settings.llm_history_max_documents,
             len(bounded_history.payload),
+            selected_roles["latest"],
+            selected_roles["retention_baseline"],
+            selected_roles["recent_change"],
+            bounded_history.compacted_documents,
+            self._settings.llm_history_max_characters,
             bounded_history.serialized_characters,
+            len(bounded_history.overflows),
         )
+        for overflow in bounded_history.overflows:
+            _LOGGER.debug(
+                "Historical context overflow: source_id=%s role=%s reason=%s full_payload_characters=%s "
+                "compact_payload_characters=%s",
+                overflow.source_id,
+                overflow.role,
+                overflow.reason,
+                overflow.full_payload_characters,
+                overflow.compact_payload_characters,
+            )
         await self._publish_context_budget_alert(bounded_history.overflows, now)
         reference_context = _unique_documents((*bounded_history.documents, *context))
         active_warnings = self._state.active_warnings(now, self._settings.warning_retention_hours)
@@ -408,10 +434,31 @@ class BriefingService:
             source_ids = self._state.context_budget_sources_requiring_alert(fingerprints)
             if not source_ids:
                 return
+            alerted_sources = set(source_ids)
+            document_overflows = [
+                overflow
+                for overflow in overflows
+                if overflow.source_id in alerted_sources and overflow.reason == "document_limit"
+            ]
+            character_overflows = [
+                overflow
+                for overflow in overflows
+                if overflow.source_id in alerted_sources and overflow.reason == "character_limit"
+            ]
+            details = []
+            if document_overflows:
+                details.append(
+                    f"document limit ({self._settings.llm_history_max_documents}): "
+                    + _format_context_overflows(document_overflows)
+                )
+            if character_overflows:
+                details.append(
+                    f"character limit ({self._settings.llm_history_max_characters}) after deterministic compaction: "
+                    + _format_context_overflows(character_overflows)
+                )
             await self._ops_delivery.publish_alert(
-                "Weather history exceeds the LLM input budget",
-                "The latest value or window baseline for the following sources still cannot fit after "
-                "deterministic compaction: " + ", ".join(source_ids),
+                "Weather history exceeds configured input limits",
+                "Mandatory weather history was omitted by the configured " + "; ".join(details) + ".",
             )
             self._state.mark_context_budget_alerted(
                 {source_id: fingerprints[source_id] for source_id in source_ids},
@@ -455,6 +502,10 @@ class BriefingService:
         if feed is None:
             return False
         return article.is_verbatim or any(pattern in article.title for pattern in feed.forecast_title_patterns)
+
+
+def _format_context_overflows(overflows: list[_HistoricalContextOverflow]) -> str:
+    return ", ".join(f"{overflow.source_id} ({overflow.role})" for overflow in overflows)
 
 
 def _unique_articles(articles: tuple[Article, ...]) -> tuple[Article, ...]:

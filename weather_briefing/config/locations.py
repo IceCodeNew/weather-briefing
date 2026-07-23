@@ -1,55 +1,21 @@
-"""Location configuration loading and locked field backfill."""
+"""Location configuration loading and resolved field backfill."""
 
 from __future__ import annotations
 
-import fcntl
 import json
 import math
 import os
-import time
 from pathlib import Path
-from typing import Any
 
 from ..languages import normalize_language_tag
 from ..models import LocationSpec, ResolvedLocation, normalize_jma_office_code
 from .base import ConfigurationError
-from .files import json_array, optional_string_field, required_string_field
-
-_LOCATION_FILE_LOCK_TIMEOUT_SECONDS = 5.0
-_LOCATION_FILE_LOCK_RETRY_SECONDS = 0.05
-
-
-def _lock_location_file(path: Path, file_descriptor: int, operation: int, timeout_action: str) -> None:
-    deadline = time.monotonic() + _LOCATION_FILE_LOCK_TIMEOUT_SECONDS
-    while True:
-        try:
-            fcntl.flock(file_descriptor, operation | fcntl.LOCK_NB)
-            return
-        except BlockingIOError as exc:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise ConfigurationError(f"{path} is locked; cannot {timeout_action}") from exc
-            time.sleep(min(_LOCATION_FILE_LOCK_RETRY_SECONDS, remaining))
-
-
-def _locked_location_json_file(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    try:
-        with path.open(encoding="utf-8") as locations_file:
-            try:
-                _lock_location_file(path, locations_file.fileno(), fcntl.LOCK_SH, "read location configuration")
-            except OSError as exc:
-                raise ConfigurationError(f"Failed to lock location configuration {path} for reading: {exc}") from exc
-            content = locations_file.read()
-    except OSError as exc:
-        raise ConfigurationError(f"{path} must contain readable JSON") from exc
-    return json_array(path, content)
+from .files import json_array, json_file, optional_string_field, required_string_field
 
 
 def load_locations(path: Path) -> tuple[LocationSpec, ...]:
     """Load and validate configured locations."""
-    items = _locked_location_json_file(path)
+    items = json_file(path)
     if not items:
         raise ConfigurationError(f"Configure at least one location in {path}")
     locations: list[LocationSpec] = []
@@ -142,7 +108,6 @@ def backfill_location_fields(
 
     try:
         with path.open("r+", encoding="utf-8") as locations_file:
-            _lock_location_file(path, locations_file.fileno(), fcntl.LOCK_EX, "save resolved location fields")
             items = json_array(path, locations_file.read())
             changed = False
             for item in items:
