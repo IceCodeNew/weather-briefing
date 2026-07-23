@@ -148,9 +148,17 @@ def publisher() -> str:
     return selected
 
 
+def path_from_env(name: str, default: str) -> Path:
+    """Read one non-empty filesystem path environment value."""
+    value = clean_env(os.getenv(name, default))
+    if not value:
+        raise ConfigurationError(f"{name} must not be empty")
+    return Path(value)
+
+
 def state_path_from_env() -> Path:
     """Return the configured SQLite state path without loading all settings."""
-    return Path(clean_env(os.getenv("BRIEFING_STATE_PATH", "state/weather.sqlite3")))
+    return path_from_env("BRIEFING_STATE_PATH", "state/weather.sqlite3")
 
 
 def weather_providers_for(location: ResolvedLocation, configured: tuple[str, ...] | None) -> tuple[str, ...]:

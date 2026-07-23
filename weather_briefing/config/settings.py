@@ -20,6 +20,7 @@ from .environment import (
     cron_hour,
     first_configured,
     number,
+    path_from_env,
     positive_float,
     positive_integer,
     publisher,
@@ -78,8 +79,8 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         """Load and validate application settings from the environment."""
-        locations_path = Path(clean_env(os.getenv("BRIEFING_LOCATIONS_FILE", "locations.json")))
-        rss_sources_path = Path(clean_env(os.getenv("RSS_SOURCES_FILE", "rss-sources.json")))
+        locations_path = path_from_env("BRIEFING_LOCATIONS_FILE", "locations.json")
+        rss_sources_path = path_from_env("RSS_SOURCES_FILE", "rss-sources.json")
         feeds = load_feeds(rss_sources_path)
         try:
             timezone = pendulum.timezone(clean_env(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai")))
@@ -129,7 +130,7 @@ class Settings:
             locations_path=locations_path,
             locations=locations,
             geocoding_api_key=clean_env(os.getenv("GEOCODING_API_KEY")) or None,
-            geocoding_cache_path=Path(clean_env(os.getenv("GEOCODING_CACHE_PATH", "state/geocoding.json"))),
+            geocoding_cache_path=path_from_env("GEOCODING_CACHE_PATH", "state/geocoding.json"),
             rss_sources_path=rss_sources_path,
             feeds=feeds,
             weather_providers=configured_weather_providers(),

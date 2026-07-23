@@ -813,6 +813,23 @@ def test_json_file_reports_read_errors(monkeypatch, tmp_path: Path) -> None:
         json_file(source_file)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "BRIEFING_LOCATIONS_FILE",
+        "RSS_SOURCES_FILE",
+        "GEOCODING_CACHE_PATH",
+        "BRIEFING_STATE_PATH",
+    ],
+)
+def test_settings_rejects_empty_path_environment_values(monkeypatch, name: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv(name, "   ")
+
+    with pytest.raises(ConfigurationError, match=rf"{name} must not be empty"):
+        Settings.from_env()
+
+
 def test_locations_reports_lock_errors(monkeypatch, tmp_path: Path) -> None:
     location_file = tmp_path / "locations.json"
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
