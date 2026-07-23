@@ -39,8 +39,7 @@ def _load_reference_data(filename: str) -> dict[str, object]:
     return value
 
 
-def reference_value(filename: str, *path: str) -> Any:
-    """Read a nested value from a packaged reference-data file."""
+def _cached_reference_value(filename: str, *path: str) -> Any:
     _validate_reference_data_filename(filename)
     value: Any = _load_reference_data(filename)
     try:
@@ -49,7 +48,12 @@ def reference_value(filename: str, *path: str) -> Any:
     except (KeyError, TypeError) as exc:
         joined_path = ".".join(path)
         raise ReferenceDataError(f"Missing reference data field: {filename}:{joined_path}") from exc
-    return deepcopy(value)
+    return value
+
+
+def reference_value(filename: str, *path: str) -> Any:
+    """Read an isolated nested value from a packaged reference-data file."""
+    return deepcopy(_cached_reference_value(filename, *path))
 
 
 def reference_string(filename: str, *path: str) -> str:
@@ -63,7 +67,7 @@ def reference_string(filename: str, *path: str) -> str:
 
 def reference_string_tuple(filename: str, *path: str) -> tuple[str, ...]:
     """Read a non-empty string sequence from packaged reference data."""
-    value = reference_value(filename, *path)
+    value = _cached_reference_value(filename, *path)
     if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
         joined_path = ".".join(path)
         raise ReferenceDataError(f"Reference data field must be a non-empty string list: {filename}:{joined_path}")

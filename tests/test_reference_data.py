@@ -280,6 +280,20 @@ def test_reference_value_copies_only_the_selected_value(monkeypatch) -> None:
     assert all(value is selected for value in copied_values)
 
 
+def test_reference_string_tuple_does_not_copy_the_cached_list(monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    import weather_briefing.data.resources as resources_module
+
+    cached = ["one", "two"]
+    monkeypatch.setattr(resources_module, "_load_reference_data", lambda filename: {"selected": cached})
+    unexpected_deepcopy = Mock(side_effect=AssertionError("reference_string_tuple must not copy the cached list"))
+    monkeypatch.setattr(resources_module, "deepcopy", unexpected_deepcopy)
+
+    assert reference_string_tuple("test.json", "selected") == ("one", "two")
+    unexpected_deepcopy.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("value", "message"),
     [
