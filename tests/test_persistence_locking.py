@@ -58,6 +58,15 @@ def test_daemon_state_owner_releases_lock_on_exit(tmp_path: Path) -> None:
         pass
 
 
+def test_daemon_state_owner_allows_sibling_state_directories(tmp_path: Path) -> None:
+    production = tmp_path / "state" / "weather.sqlite3"
+    production_test = tmp_path / "abc-state" / "weather.sqlite3"
+
+    with daemon_state_owner(production), daemon_state_owner(production_test):
+        assert (production.parent / ".weather-briefing.daemon.lock").exists()
+        assert (production_test.parent / ".weather-briefing.daemon.lock").exists()
+
+
 async def test_serialized_state_run_waits_for_the_active_run(tmp_path: Path) -> None:
     state_path = tmp_path / "weather.sqlite3"
     first_entered = asyncio.Event()
