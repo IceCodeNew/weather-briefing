@@ -399,7 +399,13 @@ def _parse_forecast_date(value: str) -> pendulum.Date:
 
 async def daemon() -> None:
     """Run the in-process forecast and briefing scheduler indefinitely."""
-    async with persistence_locking.serialized_state_run(state_path_from_env()):
+    state_path = state_path_from_env()
+    with persistence_locking.daemon_state_owner(state_path):
+        await _daemon(state_path)
+
+
+async def _daemon(state_path: Path) -> None:
+    async with persistence_locking.serialized_state_run(state_path):
         settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
@@ -464,8 +470,7 @@ def main() -> None:
     _configure_logging(debug=False)
     try:
         if args.command == "daemon":
-            with persistence_locking.daemon_state_owner(state_path_from_env()):
-                asyncio.run(daemon())
+            asyncio.run(daemon())
         elif args.command == "diagnostics":
             _manage_rendered_text_diagnostics(
                 args.diagnostics_action,

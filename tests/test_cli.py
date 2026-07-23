@@ -51,12 +51,17 @@ from weather_briefing.composition.providers import qweather_is_configured as _qw
 from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.models import LocationSpec, ResolvedLocation
-from weather_briefing.persistence import daemon_state_owner
+from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
 from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from weather_briefing.weather import QWeatherProvider
 
 _REQUIRED_SENSITIVE_SDK_LOGGERS = frozenset({"any_llm", "openai", "httpx", "httpcore"})
+
+
+@pytest.fixture(autouse=True)
+def _isolated_state_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(tmp_path / "weather.sqlite3"))
 
 
 class _ClosableLLMProviderStub:
@@ -1580,6 +1585,14 @@ async def test_daemon_schedules_forecast_and_briefing_without_running_either_imm
 
     assert jobs == [(run, ("forecast", True)), (run, ("briefing", True))]
     assert not lock_is_held
+
+
+async def test_daemon_rejects_direct_second_instance(monkeypatch, tmp_path: Path) -> None:
+    state_path = tmp_path / "weather.sqlite3"
+    monkeypatch.setenv("BRIEFING_STATE_PATH", str(state_path))
+
+    with daemon_state_owner(state_path), pytest.raises(StateDirectoryInUseError):
+        await daemon()
 
 
 def test_main_calls_daemon_correctly(monkeypatch) -> None:
