@@ -214,7 +214,7 @@ def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
     ),
 )
 def test_telegram_error_classification_rejects_invalid_data(monkeypatch, value, message) -> None:
-    monkeypatch.setattr("weather_briefing.delivery.telegram_reference.load_reference_data", lambda filename: value)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: value)
     telegram_error_classification.cache_clear()
 
     with pytest.raises(ReferenceDataError, match=message):

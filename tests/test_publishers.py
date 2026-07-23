@@ -13,6 +13,7 @@ from weather_briefing.delivery import (
     TelegramPublisher,
 )
 from weather_briefing.delivery.telegram import split_message
+from weather_briefing.delivery.telegram_reference import telegram_error_classification
 from weather_briefing.models import RenderedMessage
 
 
@@ -70,13 +71,11 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
 
 
 async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:
-    def fail_validation() -> None:
-        raise ReferenceDataError("invalid Telegram metadata")
-
-    monkeypatch.setattr("weather_briefing.delivery.telegram.telegram_error_classification", fail_validation)
+    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: {})
+    telegram_error_classification.cache_clear()
 
     async with httpx.AsyncClient() as client:
-        with pytest.raises(ReferenceDataError, match="invalid Telegram metadata"):
+        with pytest.raises(ReferenceDataError, match="supported fields"):
             TelegramPublisher(client, "runtime-token", "runtime-chat")
 
 
