@@ -40,6 +40,7 @@ _LOCALIZATION_FIELDS = {
             "attribution",
             "html_source_separator",
             "plain_source_separator",
+            "sources",
             "status_open",
             "status_close",
             "detail_separator",

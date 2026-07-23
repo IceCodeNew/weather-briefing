@@ -5,11 +5,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pendulum
 from any_llm import AnyLLM
 
+from ..data.bark import BARK_MAX_MESSAGE_LENGTH
+from ..data.service_endpoints import BARK_BASE_URL
 from ..models import FeedConfig, LocationSpec
+from ..registries import PublisherName
 from .base import ConfigurationError
 from .environment import (
     boolean,
@@ -61,6 +65,11 @@ class Settings:
     publisher: str
     telegram_bot_token: str | None
     telegram_chat_id: str | None
+    bark_device_key: str | None
+    bark_base_url: str
+    bark_group: str
+    bark_encryption_key: str | None
+    bark_encryption_iv: str | None
     rss_max_attempts: int
     rss_retry_min_seconds: float
     rss_retry_max_seconds: float
@@ -90,7 +99,20 @@ class Settings:
         retry_max = number("RSS_RETRY_MAX_SECONDS", 5)
         if retry_min < 0 or retry_max < retry_min:
             raise ConfigurationError("RSS retry delay range is invalid")
-        briefing_max_characters = positive_integer("BRIEFING_MAX_CHARACTERS", 3500)
+        selected_publisher = publisher()
+        bark_selected = selected_publisher == PublisherName.BARK
+        if bark_selected:
+            briefing_max_characters = bounded_positive_integer(
+                "BRIEFING_MAX_CHARACTERS",
+                BARK_MAX_MESSAGE_LENGTH,
+                BARK_MAX_MESSAGE_LENGTH,
+            )
+        else:
+            briefing_max_characters = positive_integer("BRIEFING_MAX_CHARACTERS", 3500)
+        llm_max_output_tokens = positive_integer(
+            "LLM_MAX_OUTPUT_TOKENS",
+            briefing_max_characters * 2,
+        )
         daily_cron_hour = bounded_integer("GREETING_HOUR", 8, 0, 23)
         daily_cron_minute = bounded_integer("GREETING_MINUTE", 0, 0, 59)
         hourly_cron = cron_hour("BRIEFING_CRON", "9-23")
@@ -118,12 +140,61 @@ class Settings:
             raise ConfigurationError(
                 "RSS sources reference unknown location ids: " + ", ".join(sorted(unknown_feed_locations))
             )
+        bark_device_key = None
+        bark_base_url = BARK_BASE_URL
+        bark_group = "weather-briefing"
+        bark_encryption_key = None
+        bark_encryption_iv = None
+        if selected_publisher == "bark":
+            bark_device_key = clean_env(os.getenv("BARK_DEVICE_KEY")) or None
+            if bark_device_key is None:
+                raise ConfigurationError("Missing required environment variable: BARK_DEVICE_KEY")
+            bark_encryption_key = clean_env(os.getenv("BARK_ENCRYPTION_KEY")) or None
+            if bark_encryption_key is not None:
+                try:
+                    encoded_bark_key = bark_encryption_key.encode("ascii")
+                except UnicodeEncodeError as exc:
+                    raise ConfigurationError("BARK_ENCRYPTION_KEY must contain only ASCII characters") from exc
+                if len(encoded_bark_key) not in {16, 24, 32}:
+                    raise ConfigurationError("BARK_ENCRYPTION_KEY must contain 16, 24, or 32 ASCII characters")
+            bark_encryption_iv = clean_env(os.getenv("BARK_ENCRYPTION_IV")) or None
+            if bark_encryption_iv is not None:
+                try:
+                    encoded_bark_iv = bark_encryption_iv.encode("ascii")
+                except UnicodeEncodeError as exc:
+                    raise ConfigurationError("BARK_ENCRYPTION_IV must contain only ASCII characters") from exc
+                if len(encoded_bark_iv) != 12:
+                    raise ConfigurationError("BARK_ENCRYPTION_IV must contain exactly 12 ASCII characters")
+            if (bark_encryption_key is None) != (bark_encryption_iv is None):
+                raise ConfigurationError("BARK_ENCRYPTION_KEY and BARK_ENCRYPTION_IV must be configured together")
+            bark_base_url = clean_env(os.getenv("BARK_BASE_URL", BARK_BASE_URL)).rstrip("/")
+            try:
+                parsed_bark_base_url = urlsplit(bark_base_url)
+                hostname = parsed_bark_base_url.hostname
+                port = parsed_bark_base_url.port
+            except ValueError as exc:
+                raise ConfigurationError("BARK_BASE_URL must be a valid absolute HTTP(S) URL") from exc
+            if (
+                parsed_bark_base_url.scheme not in {"http", "https"}
+                or hostname is None
+                or parsed_bark_base_url.username is not None
+                or parsed_bark_base_url.password is not None
+                or port == 0
+                or parsed_bark_base_url.query
+                or parsed_bark_base_url.fragment
+            ):
+                raise ConfigurationError(
+                    "BARK_BASE_URL must be an absolute HTTP(S) URL without credentials or parameters"
+                )
+            bark_group = clean_env(os.getenv("BARK_GROUP", "weather-briefing"))
+            if not bark_group:
+                raise ConfigurationError("BARK_GROUP must not be empty")
         return cls(
             api_key=api_key,
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_base_url=llm_base_url.rstrip("/") if llm_base_url else None,
-            llm_max_output_tokens=positive_integer("LLM_MAX_OUTPUT_TOKENS", 8192),
+            llm_max_output_tokens=llm_max_output_tokens,
             llm_max_attempts=positive_integer("LLM_MAX_ATTEMPTS", 3),
             http_timeout_seconds=positive_float("HTTP_TIMEOUT_SECONDS", 30),
             timezone=timezone,
@@ -143,9 +214,14 @@ class Settings:
             open_meteo_api_key=clean_env(os.getenv("OPEN_METEO_API_KEY")) or None,
             aqicn_api_token=clean_env(os.getenv("AQICN_API_TOKEN")) or None,
             state_path=state_path_from_env(),
-            publisher=publisher(),
+            publisher=selected_publisher,
             telegram_bot_token=clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,
             telegram_chat_id=clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None,
+            bark_device_key=bark_device_key,
+            bark_base_url=bark_base_url,
+            bark_group=bark_group,
+            bark_encryption_key=bark_encryption_key,
+            bark_encryption_iv=bark_encryption_iv,
             rss_max_attempts=positive_integer("RSS_MAX_ATTEMPTS", 3),
             rss_retry_min_seconds=retry_min,
             rss_retry_max_seconds=retry_max,

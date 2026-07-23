@@ -23,5 +23,6 @@ LOCAL_WEATHER_CAPABILITY_PROVIDERS = frozenset(
 class PublisherName(StrEnum):
     """Identify application-owned delivery provider adapters."""
 
+    BARK = "bark"
     STDOUT = "stdout"
     TELEGRAM = "telegram"

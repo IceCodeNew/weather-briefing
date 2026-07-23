@@ -12,6 +12,8 @@ from ..capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabi
 from ..config import Settings
 from ..config import environment as config_environment
 from ..delivery import (
+    BarkPublisher,
+    BarkTextRenderer,
     DeliveryProvider,
     PlainTextRenderer,
     RenderedTextDiagnostics,
@@ -90,10 +92,34 @@ def _build_telegram_publisher(
     )
 
 
+def _build_bark_publisher(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    diagnostics: RenderedTextDiagnostics | None,
+) -> DeliveryProvider:
+    if not settings.bark_device_key:
+        raise ValueError("Bark publisher requires BARK_DEVICE_KEY")
+    return DeliveryProvider(
+        BarkTextRenderer(),
+        BarkPublisher(
+            client,
+            settings.bark_device_key,
+            settings.bark_encryption_key,
+            settings.bark_encryption_iv,
+            diagnostics,
+            base_url=settings.bark_base_url,
+            group=settings.bark_group,
+        ),
+        single_message_limit=BarkPublisher.MAX_MESSAGE_LENGTH,
+        diagnostics=diagnostics,
+    )
+
+
 PUBLISHER_BUILDERS: dict[
     str,
     Callable[[Settings, httpx.AsyncClient, RenderedTextDiagnostics | None], DeliveryProvider],
 ] = {
+    PublisherName.BARK: _build_bark_publisher,
     PublisherName.STDOUT: _build_stdout_publisher,
     PublisherName.TELEGRAM: _build_telegram_publisher,
 }

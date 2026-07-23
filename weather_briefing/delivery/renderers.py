@@ -104,6 +104,11 @@ class TelegramHTMLRenderer:
 class PlainTextRenderer:
     """Render briefings for stdout and other plain-text transports."""
 
+    def __init__(self, *, include_source_urls: bool = True, number_sources: bool = False) -> None:
+        """Configure whether briefing attributions include source URLs."""
+        self._include_source_urls = include_source_urls
+        self._number_sources = number_sources
+
     def render_briefing(
         self,
         result: BriefingResult,
@@ -113,25 +118,68 @@ class PlainTextRenderer:
         """Render a sourced briefing as plain text."""
         labels = _briefing_labels(result.output_language)
         source_references = {
-            article.id: f"{_article_source_name(article)}: {article.url}" for article in reference_articles
+            article.id: self._source_reference(_article_source_name(article), article.url)
+            for article in reference_articles
         }
-        source_references.update({document.id: f"{document.name}: {document.url}" for document in context})
+        source_references.update(
+            {document.id: self._source_reference(document.name, document.url) for document in context}
+        )
+        source_footer = None
+        if self._number_sources:
+            source_references, source_footer = _numbered_source_references(result, source_references, labels)
+        headline_sources = _plain_attribution(
+            result.headline_source_ids,
+            source_references,
+            labels,
+            numbered=self._number_sources,
+        )
         lines = [
-            f"{result.headline} {_plain_attribution(result.headline_source_ids, source_references, labels)}",
+            f"{result.headline} {headline_sources}",
             "",
         ]
-        lines.extend(_plain_items(labels["weather"], result.conclusions, source_references, labels))
+        lines.extend(
+            _plain_items(
+                labels["weather"],
+                result.conclusions,
+                source_references,
+                labels,
+                numbered_sources=self._number_sources,
+            )
+        )
         if result.active_warnings:
             lines.extend([labels["warnings"], ""])
             for warning in result.active_warnings:
-                sources = _plain_attribution(warning.source_ids, source_references, labels)
+                sources = _plain_attribution(
+                    warning.source_ids,
+                    source_references,
+                    labels,
+                    numbered=self._number_sources,
+                )
                 lines.append(
                     f"- {warning.title}{labels['status_open']}{warning.status}{labels['status_close']}"
                     f"{labels['detail_separator']}{warning.detail} {sources}"
                 )
             lines.append("")
-        lines.extend(_plain_items(labels["disasters"], result.disaster_tracking, source_references, labels))
-        lines.extend(_plain_items(labels["advice"], result.advice, source_references, labels))
+        lines.extend(
+            _plain_items(
+                labels["disasters"],
+                result.disaster_tracking,
+                source_references,
+                labels,
+                numbered_sources=self._number_sources,
+            )
+        )
+        lines.extend(
+            _plain_items(
+                labels["advice"],
+                result.advice,
+                source_references,
+                labels,
+                numbered_sources=self._number_sources,
+            )
+        )
+        if source_footer is not None:
+            lines.append(source_footer)
         return _plain_message("\n".join(lines).strip())
 
     def render_verbatim(self, article: Article) -> RenderedMessage:
@@ -141,6 +189,19 @@ class PlainTextRenderer:
     def render_alert(self, title: str, body: str) -> RenderedMessage:
         """Render an operational alert as plain text."""
         return _plain_message(f"{title}\n\n{body}")
+
+    def _source_reference(self, name: str, url: str) -> str:
+        if not self._include_source_urls:
+            return name
+        return f"{name}: {url}"
+
+
+class BarkTextRenderer(PlainTextRenderer):
+    """Render compact Bark briefings without source URLs."""
+
+    def __init__(self) -> None:
+        """Omit source URLs from Bark briefing attributions."""
+        super().__init__(include_source_urls=False, number_sources=True)
 
 
 def _html_text(value: str) -> str:
@@ -176,11 +237,16 @@ def _plain_items(
     items: tuple[Conclusion | Advice, ...],
     source_references: dict[str, str],
     labels: Mapping[str, str],
+    *,
+    numbered_sources: bool = False,
 ) -> list[str]:
     if not items:
         return []
     lines = [title, ""]
-    lines.extend(f"- {item.text} {_plain_attribution(item.source_ids, source_references, labels)}" for item in items)
+    lines.extend(
+        f"- {item.text} {_plain_attribution(item.source_ids, source_references, labels, numbered=numbered_sources)}"
+        for item in items
+    )
     lines.append("")
     return lines
 
@@ -198,11 +264,32 @@ def _plain_attribution(
     source_ids: tuple[str, ...],
     source_references: dict[str, str],
     labels: Mapping[str, str],
+    *,
+    numbered: bool = False,
 ) -> str:
-    sources = labels["plain_source_separator"].join(
-        dict.fromkeys(source_references[source_id] for source_id in source_ids)
-    )
+    source_values = tuple(dict.fromkeys(source_references[source_id] for source_id in source_ids))
+    if numbered:
+        return "".join(source_values)
+    sources = labels["plain_source_separator"].join(source_values)
     return labels["attribution"].format(sources=sources)
+
+
+def _numbered_source_references(
+    result: BriefingResult,
+    source_references: dict[str, str],
+    labels: Mapping[str, str],
+) -> tuple[dict[str, str], str]:
+    ordered_source_ids = list(result.headline_source_ids)
+    for items in (result.conclusions, result.active_warnings, result.disaster_tracking, result.advice):
+        for item in items:
+            ordered_source_ids.extend(item.source_ids)
+    ordered_source_ids = list(dict.fromkeys(ordered_source_ids))
+    numbered_references = {source_id: f"[{index}]" for index, source_id in enumerate(ordered_source_ids, start=1)}
+    source_list = labels["plain_source_separator"].join(
+        f"{numbered_references[source_id]} {source_references[source_id]}" for source_id in ordered_source_ids
+    )
+    footer = f"{labels['sources']}{labels['detail_separator']}{source_list}"
+    return numbered_references, footer
 
 
 def _briefing_labels(language: str) -> Mapping[str, str]:

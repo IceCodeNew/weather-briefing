@@ -27,6 +27,11 @@ def _required_environment(monkeypatch) -> None:
         monkeypatch.setenv(name, value)
 
 
+def _select_bark(monkeypatch) -> None:
+    monkeypatch.setenv("PUBLISHER", "bark")
+    monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
+
+
 def _resolved_location(*, mainland: bool) -> ResolvedLocation:
     return ResolvedLocation(
         "test",
@@ -58,6 +63,62 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert settings.qweather_jwt_lifetime_seconds == 900
     assert settings.llm_history_max_documents == 8
     assert settings.llm_history_max_characters == 16_000
+
+
+@pytest.mark.parametrize(
+    ("selected_publisher", "briefing_max_characters", "llm_max_output_tokens"),
+    (("bark", 650, 1300), ("stdout", 3500, 7000), ("telegram", 3500, 7000)),
+)
+def test_publisher_selects_generation_defaults(
+    monkeypatch,
+    selected_publisher: str,
+    briefing_max_characters: int,
+    llm_max_output_tokens: int,
+) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("PUBLISHER", selected_publisher)
+    monkeypatch.delenv("BRIEFING_MAX_CHARACTERS", raising=False)
+    monkeypatch.delenv("LLM_MAX_OUTPUT_TOKENS", raising=False)
+    if selected_publisher == "bark":
+        monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
+
+    settings = Settings.from_env()
+
+    assert settings.briefing_max_characters == briefing_max_characters
+    assert settings.llm_max_output_tokens == llm_max_output_tokens
+
+
+def test_explicit_generation_limits_override_bark_defaults(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    _select_bark(monkeypatch)
+    monkeypatch.setenv("BRIEFING_MAX_CHARACTERS", "500")
+    monkeypatch.setenv("LLM_MAX_OUTPUT_TOKENS", "1536")
+
+    settings = Settings.from_env()
+
+    assert settings.briefing_max_characters == 500
+    assert settings.llm_max_output_tokens == 1536
+
+
+def test_llm_token_default_tracks_explicit_briefing_limit(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    _select_bark(monkeypatch)
+    monkeypatch.setenv("BRIEFING_MAX_CHARACTERS", "500")
+    monkeypatch.delenv("LLM_MAX_OUTPUT_TOKENS", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.briefing_max_characters == 500
+    assert settings.llm_max_output_tokens == 1000
+
+
+def test_bark_briefing_limit_rejects_values_above_platform_limit(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    _select_bark(monkeypatch)
+    monkeypatch.setenv("BRIEFING_MAX_CHARACTERS", "1000")
+
+    with pytest.raises(ConfigurationError, match="BRIEFING_MAX_CHARACTERS cannot exceed 650"):
+        Settings.from_env()
 
 
 def test_llm_history_limits_can_be_configured(monkeypatch) -> None:
@@ -1214,8 +1275,144 @@ class TestConfigErrorPaths:
         _required_environment(monkeypatch)
         monkeypatch.setenv("PUBLISHER", "telegrm")
 
-        with pytest.raises(ConfigurationError, match="PUBLISHER must be one of: stdout, telegram"):
+        with pytest.raises(ConfigurationError, match="PUBLISHER must be one of: bark, stdout, telegram"):
             Settings.from_env()
+
+    def test_missing_bark_device_key_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "bark")
+        monkeypatch.delenv("BARK_DEVICE_KEY", raising=False)
+
+        with pytest.raises(ConfigurationError, match="Missing required environment variable: BARK_DEVICE_KEY"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("key", ("short", "a" * 17, "a" * 33))
+    def test_invalid_bark_encryption_key_length_raises_error(self, monkeypatch, key: str) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_ENCRYPTION_KEY", key)
+
+        with pytest.raises(ConfigurationError, match="16, 24, or 32 ASCII characters"):
+            Settings.from_env()
+
+    def test_non_ascii_bark_encryption_key_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_ENCRYPTION_KEY", "密" * 16)
+
+        with pytest.raises(ConfigurationError, match="only ASCII"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("iv", ("short", "longer-than-twelve"))
+    def test_invalid_bark_encryption_iv_length_raises_error(self, monkeypatch, iv: str) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_ENCRYPTION_IV", iv)
+
+        with pytest.raises(ConfigurationError, match="exactly 12 ASCII characters"):
+            Settings.from_env()
+
+    def test_non_ascii_bark_encryption_iv_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_ENCRYPTION_IV", "密" * 12)
+
+        with pytest.raises(ConfigurationError, match="only ASCII"):
+            Settings.from_env()
+
+    def test_bark_encryption_key_without_iv_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_ENCRYPTION_KEY", "k" * 32)
+
+        with pytest.raises(ConfigurationError, match="must be configured together"):
+            Settings.from_env()
+
+    def test_bark_encryption_iv_without_key_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_ENCRYPTION_IV", "fixed-iv-123")
+
+        with pytest.raises(ConfigurationError, match="must be configured together"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize(
+        "base_url",
+        (
+            "api.example.invalid",
+            "ftp://api.example.invalid",
+            "https://user:password@api.example.invalid",
+            "https://api.example.invalid?token=private",
+            "https://api.example.invalid#fragment",
+            "https://api.example.invalid:invalid",
+        ),
+    )
+    def test_invalid_bark_base_url_raises_error(self, monkeypatch, base_url: str) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_BASE_URL", base_url)
+
+        with pytest.raises(ConfigurationError, match="BARK_BASE_URL must be"):
+            Settings.from_env()
+
+    def test_bark_base_url_is_loaded_and_normalized(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_BASE_URL", "https://bark.example.invalid/prefix/")
+
+        settings = Settings.from_env()
+
+        assert settings.bark_base_url == "https://bark.example.invalid/prefix"
+
+    def test_bark_group_is_loaded(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_GROUP", "forecast-team")
+
+        settings = Settings.from_env()
+
+        assert settings.bark_group == "forecast-team"
+
+    def test_empty_bark_group_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_GROUP", "   ")
+
+        with pytest.raises(ConfigurationError, match="BARK_GROUP must not be empty"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("key_length", (16, 24, 32))
+    def test_bark_encryption_key_lengths_are_loaded(self, monkeypatch, key_length: int) -> None:
+        _required_environment(monkeypatch)
+        _select_bark(monkeypatch)
+        monkeypatch.setenv("BARK_ENCRYPTION_KEY", "k" * key_length)
+        monkeypatch.setenv("BARK_ENCRYPTION_IV", "fixed-iv-123")
+
+        settings = Settings.from_env()
+
+        assert settings.publisher == "bark"
+        assert settings.bark_device_key == "test-device"
+        assert settings.bark_base_url == "https://api.day.app"
+        assert settings.bark_group == "weather-briefing"
+        assert settings.bark_encryption_key == "k" * key_length
+        assert settings.bark_encryption_iv == "fixed-iv-123"
+
+    def test_bark_settings_do_not_block_another_publisher(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "telegram")
+        monkeypatch.setenv("BARK_BASE_URL", "not-a-url")
+        monkeypatch.setenv("BARK_GROUP", "   ")
+        monkeypatch.setenv("BARK_ENCRYPTION_KEY", "short")
+        monkeypatch.setenv("BARK_ENCRYPTION_IV", "short")
+
+        settings = Settings.from_env()
+
+        assert settings.publisher == "telegram"
+        assert settings.bark_device_key is None
+        assert settings.bark_base_url == "https://api.day.app"
+        assert settings.bark_group == "weather-briefing"
+        assert settings.bark_encryption_key is None
+        assert settings.bark_encryption_iv is None
 
     def test_invalid_json_in_rss_sources_file_raises_error(self, monkeypatch, tmp_path: Path) -> None:
         _required_environment(monkeypatch)

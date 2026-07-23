@@ -1,6 +1,6 @@
 # JMA オフィスコード / JMA Office Codes / JMA 办公室编码
 
-気象庁（JMA）は地域ごとに天気予報を公開しており、`jma_office_code` に 6 桁のオフィスコードを設定することで各地の予報を取得できます。
+気象庁（JMA）は地域ごとに天気予報を公開しており、`jma_office_code` に6桁のオフィスコードを設定することで各地の予報を取得できます。
 
 The Japan Meteorological Agency publishes forecasts by area. Set the six-digit office code as `jma_office_code` to fetch local forecasts.
 
