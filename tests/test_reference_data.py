@@ -236,10 +236,19 @@ def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:
         lambda package: FakeResource(),
     )
 
-    load_reference_data.cache_clear()
-
     with pytest.raises(ReferenceDataError, match="must be an object"):
         load_reference_data("test.json")
+
+
+def test_load_reference_data_returns_independent_values() -> None:
+    first = load_reference_data("localization.json")
+    tables = first["tables"]
+    assert isinstance(tables, dict)
+    tables.clear()
+
+    second = load_reference_data("localization.json")
+
+    assert second["tables"]
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from functools import cache
 from importlib import resources
 from pathlib import PurePath
@@ -15,11 +16,15 @@ class ReferenceDataError(RuntimeError):
     """Raised when packaged domain reference data is missing or malformed."""
 
 
-@cache
 def load_reference_data(filename: str) -> dict[str, object]:
     """Load and validate one packaged JSON reference-data object."""
     if PurePath(filename).name != filename or not filename.endswith(".json"):
         raise ReferenceDataError("Reference data filename must identify one JSON file")
+    return deepcopy(_load_reference_data(filename))
+
+
+@cache
+def _load_reference_data(filename: str) -> dict[str, object]:
     try:
         text = resources.files(data).joinpath(filename).read_text(encoding="utf-8")
         value = json.loads(text)
