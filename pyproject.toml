@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "weather-briefing"
-version = "3.0.1-dev"
+version = "3.1.0"
 description = "Stateful, source-cited weather briefings"
 readme = "README.md"
 requires-python = ">=3.11"
