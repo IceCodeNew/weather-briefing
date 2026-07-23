@@ -3,6 +3,7 @@
 from weather_briefing import __version__
 
 AQICN_BASE_URL = "https://api.waqi.info"
+BARK_BASE_URL = "https://api.day.app"
 JMA_FORECAST_BASE_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast"
 NEA_BASE_URL = "https://api-open.data.gov.sg"
 NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"

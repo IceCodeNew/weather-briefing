@@ -2704,11 +2704,6 @@ wheels = [
     { url = "https://pypi.flatt.tech/files/packages/a3/5e/ecf12fdb62546d64385c158514e9b2b671f7832108ef2ecd2020ce0af2d1/pyjwt-2.13.0-py3-none-any.whl", hash = "sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728", size = 31274, upload-time = "2026-05-21T19:54:35.362Z" },
 ]
 
-[package.optional-dependencies]
-crypto = [
-    { name = "cryptography" },
-]
-
 [[package]]
 name = "pynacl"
 version = "1.6.2"
@@ -3339,11 +3334,12 @@ dependencies = [
     { name = "any-llm-sdk" },
     { name = "apscheduler" },
     { name = "beautifulsoup4" },
+    { name = "cryptography" },
     { name = "feedparser" },
     { name = "httpx", extra = ["socks"] },
     { name = "pendulum" },
     { name = "pydantic" },
-    { name = "pyjwt", extra = ["crypto"] },
+    { name = "pyjwt" },
     { name = "python-dotenv" },
 ]
 
@@ -3364,11 +3360,12 @@ requires-dist = [
     { name = "any-llm-sdk", specifier = ">=1.19,<2" },
     { name = "apscheduler", specifier = ">=3.11,<4" },
     { name = "beautifulsoup4", specifier = ">=4.13,<5" },
+    { name = "cryptography", specifier = ">=45,<50" },
     { name = "feedparser", specifier = ">=6.0.11,<7" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27,<1" },
     { name = "pendulum", specifier = ">=3.1,<4" },
     { name = "pydantic", specifier = ">=2.12,<3" },
-    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
+    { name = "pyjwt", specifier = ">=2.10,<3" },
     { name = "python-dotenv", specifier = ">=1.1,<2" },
 ]
 
