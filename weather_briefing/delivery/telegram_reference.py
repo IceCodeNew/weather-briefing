@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from functools import cache
 from types import MappingProxyType
 
-from ..data.resources import ReferenceDataError, load_reference_data
+from ..data import resources
+from ..data.resources import ReferenceDataError
 
 _CLASSIFICATION_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
@@ -26,7 +27,7 @@ class TelegramErrorClassification:
 @cache
 def telegram_error_classification() -> TelegramErrorClassification:
     """Return validated Telegram API error classification data."""
-    value = load_reference_data("telegram_error_classification.json")
+    value = resources.load_reference_data("telegram_error_classification.json")
     markers = value.get("description_markers")
     parameters = value.get("parameter_reasons")
     statuses = value.get("status_reasons")

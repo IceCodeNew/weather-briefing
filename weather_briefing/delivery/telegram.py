@@ -9,8 +9,8 @@ import httpx
 
 from ..api_client import api_call_extensions
 from ..models import RenderedMessage
+from . import telegram_reference
 from .base import DeliveryError, RenderedTextDiagnostics, rendered_text_logging_enabled
-from .telegram_reference import telegram_error_classification
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 
@@ -28,7 +28,7 @@ class TelegramPublisher:
         diagnostics: RenderedTextDiagnostics | None = None,
     ) -> None:
         """Configure Telegram delivery and optional sensitive-text diagnostics."""
-        telegram_error_classification()
+        telegram_reference.telegram_error_classification()
         self._client = client
         self._url = f"https://api.telegram.org/bot{token}/sendMessage"
         self._chat_id = chat_id
@@ -124,7 +124,7 @@ class TelegramPublisher:
 
 def telegram_error_reason(response: httpx.Response) -> tuple[str, bool]:
     """Classify a Telegram API error without logging its response body."""
-    classification = telegram_error_classification()
+    classification = telegram_reference.telegram_error_classification()
     try:
         payload = response.json()
     except ValueError:

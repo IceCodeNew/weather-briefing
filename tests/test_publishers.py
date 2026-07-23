@@ -71,7 +71,7 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
 
 
 async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:
-    monkeypatch.setattr("weather_briefing.data.resources._load_reference_data", lambda filename: {})
+    monkeypatch.setattr("weather_briefing.data.resources.load_reference_data", lambda filename: {})
     telegram_error_classification.cache_clear()
 
     async with httpx.AsyncClient() as client:
