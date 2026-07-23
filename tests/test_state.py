@@ -617,7 +617,7 @@ def test_record_success_retains_articles_referenced_by_verbatim_queue(tmp_path: 
 def test_parse_time_rejects_invalid_format() -> None:
     import pytest
 
-    from weather_briefing.state import _parse_time
+    from weather_briefing.persistence.serialization import _parse_time
 
     with pytest.raises(ValueError, match="fixed-width UTC format"):
         _parse_time("invalid")
