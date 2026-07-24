@@ -1,5 +1,7 @@
 """Core briefing orchestration and output contract enforcement."""
 
+# FILE_LENGTH_EXCEPTION: Keep the briefing transaction and its failure boundaries together.
+
 from __future__ import annotations
 
 import logging
