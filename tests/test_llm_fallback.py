@@ -214,10 +214,11 @@ async def test_both_close_failures_are_preserved() -> None:
     ]
 
 
-async def test_close_does_not_capture_cancellation() -> None:
+async def test_primary_close_cancellation_still_closes_fallback() -> None:
     primary = _provider()
     fallback = _provider()
-    primary.aclose.side_effect = asyncio.CancelledError
+    cancellation = asyncio.CancelledError()
+    primary.aclose.side_effect = cancellation
     provider = FallbackLLMProvider(
         primary,
         fallback,
@@ -225,7 +226,32 @@ async def test_close_does_not_capture_cancellation() -> None:
         fallback_name="fallback",
     )
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as exc_info:
         await provider.aclose()
 
-    fallback.aclose.assert_not_awaited()
+    assert exc_info.value is cancellation
+    fallback.aclose.assert_awaited_once_with()
+
+
+async def test_fallback_close_failure_does_not_mask_primary_cancellation(caplog) -> None:
+    primary = _provider()
+    fallback = _provider()
+    cancellation = asyncio.CancelledError()
+    primary.aclose.side_effect = cancellation
+    fallback.aclose.side_effect = RuntimeError("private cleanup detail")
+    provider = FallbackLLMProvider(
+        primary,
+        fallback,
+        primary_name="primary",
+        fallback_name="fallback",
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="weather_briefing.llm"),
+        pytest.raises(asyncio.CancelledError) as exc_info,
+    ):
+        await provider.aclose()
+
+    assert exc_info.value is cancellation
+    assert "error_type=RuntimeError" in caplog.text
+    assert "private cleanup detail" not in caplog.text

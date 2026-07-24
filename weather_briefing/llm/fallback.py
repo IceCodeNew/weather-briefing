@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
@@ -110,6 +111,15 @@ class FallbackLLMProvider:
         errors: list[Exception] = []
         try:
             await self._primary.aclose()
+        except asyncio.CancelledError:
+            try:
+                await self._fallback.aclose()
+            except Exception as exc:
+                _LOGGER.warning(
+                    "Failed to close fallback LLM provider during cancellation error_type=%s",
+                    type(exc).__name__,
+                )
+            raise
         except Exception as exc:
             errors.append(exc)
         try:
