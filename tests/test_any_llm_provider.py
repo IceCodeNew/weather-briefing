@@ -1,7 +1,7 @@
 import json
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -11,10 +11,12 @@ from pydantic import BaseModel
 from weather_briefing.api_client import LoggedAsyncClient
 from weather_briefing.llm import (
     AnyLLMStructuredProvider,
+    LazyServiceStatusLLM,
     LLMStructuredOutput,
     create_any_llm_provider,
 )
 from weather_briefing.llm.schema import NotificationDecisionOutput, ServiceStatusTranslationOutput
+from weather_briefing.notifications import NotificationDecision
 
 
 class _CompletionClientStub:
@@ -41,6 +43,29 @@ class _CompletionClientStub:
             }
         )
         return self._response
+
+
+async def test_service_status_llm_is_created_only_on_first_operation() -> None:
+    provider = AsyncMock()
+    provider.assess_notification.return_value = NotificationDecision(True)
+    provider.translate_service_status.return_value = ("Translated", "Translated body")
+    factory = Mock(return_value=provider)
+    lazy = LazyServiceStatusLLM(factory)
+
+    await lazy.aclose()
+    factory.assert_not_called()
+
+    assert await lazy.assess_notification({"current": {}}) == NotificationDecision(True)
+    assert await lazy.translate_service_status("Title", "Body", "en") == (
+        "Translated",
+        "Translated body",
+    )
+    await lazy.aclose()
+
+    factory.assert_called_once_with()
+    provider.assess_notification.assert_awaited_once_with({"current": {}})
+    provider.translate_service_status.assert_awaited_once_with("Title", "Body", "en")
+    provider.aclose.assert_awaited_once()
 
 
 async def test_any_llm_provider_uses_structured_chat_completion() -> None:

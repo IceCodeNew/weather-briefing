@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pendulum
@@ -172,6 +172,20 @@ def test_revision_changes_only_with_official_revision_content() -> None:
 
     assert first.revision_id == same.revision_id
     assert first.revision_id != changed.revision_id
+
+
+def test_revision_ignores_publication_time_only_changes() -> None:
+    async def fetch(published: str) -> ServiceStatusMessage:
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, content=_rss(published=published)))
+        ) as client:
+            return (await _provider(client).fetch()).messages[0]
+
+    first = asyncio.run(fetch("Fri, 24 Jul 2026 11:34:20 GMT"))
+    timestamp_only = asyncio.run(fetch("Fri, 24 Jul 2026 11:35:20 GMT"))
+
+    assert first.published_at != timestamp_only.published_at
+    assert first.revision_id == timestamp_only.revision_id
 
 
 async def test_classic_feed_accepts_update_without_hyphen_separator() -> None:
@@ -371,6 +385,17 @@ async def test_meaningful_active_message_is_forwarded_to_every_delivery(tmp_path
     second.publish_alert.assert_awaited_once_with(message.title, expected_body)
     translator.translate_service_status.assert_not_awaited()
     decision.assess_notification.assert_awaited_once()
+
+
+async def test_handled_revision_does_not_write_unchanged_observation(tmp_path: Path) -> None:
+    message = _message()
+    provider, delivery, decision, translator = _monitor_dependencies(_snapshot(message))
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        monitor = ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator)
+        assert await monitor.run(pendulum.now("UTC")) == 1
+        state.observe_service_status_message = Mock(side_effect=state.observe_service_status_message)
+        assert await monitor.run(pendulum.now("UTC")) == 0
+        state.observe_service_status_message.assert_not_called()
 
 
 async def test_unworthy_revision_is_handled_without_delivery(tmp_path: Path) -> None:

@@ -1705,17 +1705,19 @@ async def test_service_status_run_is_independent_from_weather_orchestration(
     )
     delivery = AsyncMock()
     translator = AsyncMock()
+    llm_factory = Mock(return_value=translator)
     monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: settings))
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
     monkeypatch.setattr("weather_briefing.cli._delivery_providers", lambda *args: (delivery,))
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda *args: translator)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", llm_factory)
     monkeypatch.setattr("weather_briefing.cli._service_status_providers", lambda names, client: (provider,))
 
     await run_service_status()
 
     provider.fetch.assert_awaited_once()
     delivery.publish_alert.assert_not_awaited()
-    translator.aclose.assert_awaited_once()
+    llm_factory.assert_not_called()
+    translator.aclose.assert_not_awaited()
     with SQLiteStateStore(state_path) as state:
         assert state.service_status_message_state("service-status:openai", "incident") is not None
 

@@ -147,6 +147,8 @@ class ServiceStatusMonitor:
         now: pendulum.DateTime,
     ) -> bool:
         previous = self._state.service_status_message_state(snapshot.source_id, message.incident_id)
+        if previous is not None and previous.handled_revision_id == message.revision_id:
+            return False
         self._state.observe_service_status_message(
             snapshot.source_id,
             message.incident_id,
@@ -156,8 +158,6 @@ class ServiceStatusMonitor:
             message.body,
             message.published_at,
         )
-        if previous is not None and previous.handled_revision_id == message.revision_id:
-            return False
         if previous is None and message.status == "resolved":
             self._mark_handled(snapshot, message, now)
             return False

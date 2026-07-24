@@ -74,7 +74,7 @@ class StatusFeedProvider:
         status, body, affected_components = _parse_official_summary(summary, self._provider_name)
         surface_names = affected_components or (title,)
         surfaces = tuple(dict.fromkeys(self._classify_component(name) for name in surface_names))
-        revision_payload = "\0".join((incident_id, published_at.to_iso8601_string(), status, body))
+        revision_payload = "\0".join((incident_id, title, status, body, *(surface.value for surface in surfaces)))
         revision_id = hashlib.sha256(revision_payload.encode()).hexdigest()
         return ServiceStatusMessage(
             incident_id=incident_id,

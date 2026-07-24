@@ -35,6 +35,7 @@ from .geocoding import (
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
 )
+from .llm import LazyServiceStatusLLM
 from .models import ResolvedLocation
 from .persistence import locking as persistence_locking
 from .service import BriefingService
@@ -389,15 +390,15 @@ async def run_service_status() -> None:
                 diagnostics,
             )
             deliveries = tuple(zip(settings.service_status_publishers, delivery_providers, strict=True))
-            translator = _llm_provider(settings, diagnostics)
-            stack.push_async_callback(translator.aclose)
+            service_status_llm = LazyServiceStatusLLM(lambda: _llm_provider(settings, diagnostics))
+            stack.push_async_callback(service_status_llm.aclose)
             with SQLiteStateStore(settings.state_path) as state:
                 monitor = ServiceStatusMonitor(
                     _service_status_providers(settings.service_status_providers, client),
                     state,
                     deliveries,
-                    translator,
-                    translator,
+                    service_status_llm,
+                    service_status_llm,
                     settings.service_status_language,
                 )
                 published = await monitor.run(pendulum.now(settings.timezone))

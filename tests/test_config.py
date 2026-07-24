@@ -1348,6 +1348,7 @@ class TestConfigErrorPaths:
         ("value", "message"),
         (
             ("", "cannot be empty"),
+            (", , ", "cannot be empty"),
             ("telegram,telegram", "cannot contain duplicates"),
             ("telegram,email", "unsupported publishers: email"),
         ),

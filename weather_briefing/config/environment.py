@@ -169,6 +169,8 @@ def configured_service_status_publishers(default: str) -> tuple[str, ...]:
     if not configured:
         raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot be empty")
     publishers = tuple(item.strip() for item in configured.split(",") if item.strip())
+    if not publishers:
+        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot be empty")
     unsupported = sorted(set(publishers) - SUPPORTED_PUBLISHERS)
     if unsupported:
         raise ConfigurationError("SERVICE_STATUS_PUBLISHERS contains unsupported publishers: " + ", ".join(unsupported))
