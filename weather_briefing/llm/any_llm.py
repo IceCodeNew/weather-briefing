@@ -7,7 +7,7 @@ from inspect import isawaitable
 from typing import Protocol
 
 from any_llm import AnyLLM
-from any_llm.exceptions import AnyLLMError
+from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
 from pydantic import BaseModel
 
 from ..api_client import api_call_context
@@ -62,6 +62,12 @@ class AnyLLMStructuredProvider:
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         """Request and decode one structured JSON response."""
         log_sensitive = _sensitive_llm_diagnostics_enabled(self._diagnostics)
+        _LOGGER.debug(
+            "LLM request prepared: provider=%s model=%r max_output_tokens=%d",
+            self._provider,
+            self._model,
+            self._max_output_tokens,
+        )
         if log_sensitive:
             _LOGGER.debug(
                 "Sensitive LLM request diagnostic: provider=%s model=%s system_prompt=%r payload=%r",
@@ -82,6 +88,15 @@ class AnyLLMStructuredProvider:
                     temperature=0.2,
                     max_tokens=self._max_output_tokens,
                 )
+        except LengthFinishReasonError as exc:
+            _LOGGER.warning(
+                "LLM response reached output token limit: provider=%s model=%r max_output_tokens=%d error_type=%s",
+                self._provider,
+                self._model,
+                self._max_output_tokens,
+                type(exc).__name__,
+            )
+            raise LLMRequestError("LLM response reached output token limit") from exc
         except AnyLLMError as exc:
             raise LLMRequestError("LLM request failed") from exc
         result_payload = decode_structured_response(response).model_dump(mode="json")
