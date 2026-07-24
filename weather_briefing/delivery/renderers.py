@@ -219,10 +219,11 @@ class BarkTextRenderer(PlainTextRenderer):
             {document.id: self._source_reference(document.name, document.url) for document in context}
         )
         numbered_references, source_footer = _bark_numbered_source_references(result, source_references)
-        lines = [
+        title = (
             f"{result.headline} "
             f"{_plain_attribution(result.headline_source_ids, numbered_references, labels, numbered=True)}"
-        ]
+        )
+        lines: list[str] = []
         lines.extend(_compact_plain_items(None, result.conclusions, numbered_references, labels))
         if result.active_warnings:
             lines.append(labels["warnings"])
@@ -235,7 +236,15 @@ class BarkTextRenderer(PlainTextRenderer):
         lines.extend(_compact_plain_items(labels["disasters"], result.disaster_tracking, numbered_references, labels))
         lines.extend(_compact_plain_items(labels["advice"], result.advice, numbered_references, labels))
         lines.append(source_footer)
-        return _plain_message("\n".join(lines).strip())
+        return _plain_message("\n".join(lines).strip(), title=title.strip())
+
+    def render_verbatim(self, article: Article) -> RenderedMessage:
+        """Render an article with its title in Bark's title field."""
+        return _plain_message(article.content.strip(), title=article.title)
+
+    def render_alert(self, title: str, body: str) -> RenderedMessage:
+        """Render an operational alert with separate Bark title and body fields."""
+        return _plain_message(body.strip(), title=title)
 
 
 def _html_text(value: str) -> str:
@@ -374,5 +383,10 @@ def _html_message(body: str) -> RenderedMessage:
     return RenderedMessage(body=body, visible_length=len(visible))
 
 
-def _plain_message(body: str) -> RenderedMessage:
-    return RenderedMessage(body=body, visible_length=len(body))
+def _plain_message(body: str, *, title: str | None = None) -> RenderedMessage:
+    normalized_title = title.strip() or None if title is not None else None
+    return RenderedMessage(
+        body=body,
+        visible_length=len(body) + len(normalized_title or ""),
+        title=normalized_title,
+    )

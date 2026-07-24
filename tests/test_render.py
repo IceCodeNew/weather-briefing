@@ -81,7 +81,8 @@ def test_bark_text_renderer_uses_numbered_sources_without_urls() -> None:
 
     rendered = BarkTextRenderer().render_briefing(result, (article,), (context,))
 
-    assert rendered.body == "Daily [1]\nRain [1][2]\n[1] Feed\n[2] Weather API"
+    assert rendered.title == "Daily [1]"
+    assert rendered.body == "Rain [1][2]\n[1] Feed\n[2] Weather API"
     assert article.url not in rendered.body
     assert context.url not in rendered.body
     assert "- " not in rendered.body
@@ -105,7 +106,8 @@ def test_bark_text_renderer_merges_source_ids_with_the_same_display_name() -> No
 
     rendered = BarkTextRenderer().render_briefing(result, (), (weather, air_quality))
 
-    assert rendered.body == "Daily [1]\nRain [1]\nAdvice\nLimit exposure [1]\n[1] Open-Meteo"
+    assert rendered.title == "Daily [1]"
+    assert rendered.body == "Rain [1]\nAdvice\nLimit exposure [1]\n[1] Open-Meteo"
     assert "[2]" not in rendered.body
     assert "Sources:" not in rendered.body
 
@@ -122,7 +124,8 @@ def test_bark_text_renderer_uses_source_ids_for_distinct_blank_names() -> None:
 
     rendered = BarkTextRenderer().render_briefing(result, (), (weather, air_quality))
 
-    assert rendered.body == ("Daily [1]\nRain [1][2]\n[1] weather:blank\n[2] air-quality:blank")
+    assert rendered.title == "Daily [1]"
+    assert rendered.body == ("Rain [1][2]\n[1] weather:blank\n[2] air-quality:blank")
 
 
 def test_bark_text_renderer_trims_outer_whitespace() -> None:
@@ -131,8 +134,9 @@ def test_bark_text_renderer_trims_outer_whitespace() -> None:
 
     rendered = BarkTextRenderer().render_briefing(result, (), (context,))
 
-    assert rendered.body == "Daily [1]\n[1] Weather API"
-    assert rendered.visible_length == len(rendered.body)
+    assert rendered.title == "Daily [1]"
+    assert rendered.body == "[1] Weather API"
+    assert rendered.visible_length == len(rendered.title) + len(rendered.body)
 
 
 def test_bark_text_renderer_compacts_warning_disaster_and_advice_sections() -> None:
@@ -150,8 +154,8 @@ def test_bark_text_renderer_compacts_warning_disaster_and_advice_sections() -> N
 
     rendered = BarkTextRenderer().render_briefing(result, (), (context,))
 
+    assert rendered.title == "Rain today [1]"
     assert rendered.body == (
-        "Rain today [1]\n"
         "Weather warnings\n"
         "Heavy rain (active): Avoid low areas [1]\n"
         "Natural disaster updates\n"
@@ -375,3 +379,38 @@ def test_plain_text_render_alert() -> None:
     rendered = PlainTextRenderer().render_alert("Alert Title", "Alert Body")
 
     assert rendered.body == "Alert Title\n\nAlert Body"
+
+
+def test_bark_text_render_verbatim_separates_title_and_body() -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article(
+        "source",
+        "feed",
+        "Feed",
+        "  Article title  ",
+        "https://example.invalid/a",
+        now,
+        "  Article body  ",
+    )
+
+    rendered = BarkTextRenderer().render_verbatim(article)
+
+    assert rendered.title == "Article title"
+    assert rendered.body == "Article body"
+    assert rendered.visible_length == len("Article titleArticle body")
+
+
+def test_bark_text_render_alert_separates_title_and_body() -> None:
+    rendered = BarkTextRenderer().render_alert("  Alert Title  ", "  Alert Body  ")
+
+    assert rendered.title == "Alert Title"
+    assert rendered.body == "Alert Body"
+    assert rendered.visible_length == len("Alert TitleAlert Body")
+
+
+def test_bark_text_render_alert_omits_blank_title() -> None:
+    rendered = BarkTextRenderer().render_alert("   ", "Alert Body")
+
+    assert rendered.title is None
+    assert rendered.body == "Alert Body"
+    assert rendered.visible_length == len("Alert Body")

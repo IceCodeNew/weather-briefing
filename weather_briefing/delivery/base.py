@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from typing import Protocol
@@ -70,6 +71,18 @@ class DeliveryProvider:
             return configured_limit
         return min(configured_limit, self.single_message_limit)
 
+    def briefing_fits(self, message: RenderedMessage, configured_limit: int | None = None) -> bool:
+        """Return whether a rendered briefing fits the configured chunk policy."""
+        if self.single_message_limit is None:
+            return configured_limit is None or message.visible_length <= configured_limit
+        per_message_limit = self.single_message_limit
+        if configured_limit is not None:
+            per_message_limit = min(configured_limit, per_message_limit)
+        if message.title is None:
+            return message.visible_length <= per_message_limit * self.briefing_max_messages
+        body_limit = per_message_limit - len(message.title)
+        return body_limit > 0 and len(split_plain_message(message.body, body_limit)) <= self.briefing_max_messages
+
     def render_briefing(
         self,
         result: BriefingResult,
@@ -92,10 +105,7 @@ class DeliveryProvider:
 
     async def publish_briefing(self, message: RenderedMessage, *, silent: bool = False) -> None:
         """Publish a briefing according to its platform chunk policy."""
-        if (
-            self.single_message_limit is not None
-            and message.visible_length > self.single_message_limit * self.briefing_max_messages
-        ):
+        if not self.briefing_fits(message):
             raise DeliveryError("Briefing exceeds the delivery limit", reason="message-too-long")
         await self.publish_rendered(
             message,
@@ -109,7 +119,7 @@ class DeliveryProvider:
         _LOGGER.debug(
             "Rendered verbatim message: visible_characters=%d payload_characters=%d",
             message.visible_length,
-            len(message.body),
+            len(message.body) + len(message.title or ""),
         )
         log_rendered_text(self.diagnostics, "verbatim", message.body)
         await self.publisher.publish(message, silent=silent)
@@ -133,6 +143,29 @@ class DeliveryError(RuntimeError):
         super().__init__(message)
         self.reason = reason
         self.channel_unavailable = channel_unavailable
+
+
+def split_plain_message(body: str, limit: int) -> tuple[str, ...]:
+    """Split text into the fewest chunks, consuming newlines used as boundaries."""
+    if limit <= 0:
+        raise ValueError("Message split limit must be positive")
+    if not body or len(body) <= limit:
+        return (body,)
+    chunks: list[str] = []
+    remaining = body
+    while len(remaining) > limit:
+        remaining_chunk_count = math.ceil(len(remaining) / limit)
+        earliest_split = len(remaining) - (remaining_chunk_count - 1) * limit
+        newline_at = remaining.rfind("\n", earliest_split, limit + 1)
+        if newline_at >= earliest_split:
+            chunks.append(remaining[:newline_at])
+            remaining = remaining[newline_at + 1 :]
+        else:
+            chunks.append(remaining[:limit])
+            remaining = remaining[limit:]
+    if remaining:
+        chunks.append(remaining)
+    return tuple(chunks)
 
 
 def log_rendered_text(diagnostics: RenderedTextDiagnostics | None, stage: str, body: str) -> None:

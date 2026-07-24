@@ -2,12 +2,14 @@ import json
 from typing import Any
 
 import httpx
+import pendulum
 import pytest
 
 from weather_briefing.api_client import LoggedAsyncClient
 from weather_briefing.data import resources as data_resources
 from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.delivery import (
+    BarkTextRenderer,
     DeliveryError,
     DeliveryProvider,
     PlainTextRenderer,
@@ -16,7 +18,7 @@ from weather_briefing.delivery import (
 )
 from weather_briefing.delivery.telegram import split_message
 from weather_briefing.delivery.telegram_reference import telegram_error_classification
-from weather_briefing.models import RenderedMessage
+from weather_briefing.models import Article, RenderedMessage
 
 
 class NoopPublisher:
@@ -146,6 +148,44 @@ async def test_delivery_provider_rejects_briefing_beyond_configured_chunk_count(
 
     assert error.value.reason == "message-too-long"
     assert publisher.messages == []
+
+
+async def test_delivery_provider_counts_repeated_titles_in_briefing_chunk_limit() -> None:
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher, 650, 2)
+    message = RenderedMessage("b" * 1281, 1300, "t" * 19)
+
+    with pytest.raises(DeliveryError, match="delivery limit") as error:
+        await delivery.publish_briefing(message)
+
+    assert error.value.reason == "message-too-long"
+    assert publisher.messages == []
+
+
+async def test_delivery_provider_logs_verbatim_title_in_payload_length(caplog) -> None:
+    article = Article(
+        "source",
+        "feed",
+        "Feed",
+        "Title",
+        "https://example.invalid/article",
+        pendulum.datetime(2026, 7, 24, tz="UTC"),
+        "Body",
+    )
+    delivery = DeliveryProvider(BarkTextRenderer(), RecordingPublisher())
+
+    with caplog.at_level("DEBUG", logger="weather_briefing.publishers"):
+        await delivery.publish_verbatim(article)
+
+    assert "Rendered verbatim message: visible_characters=9 payload_characters=9" in caplog.text
+
+
+def test_delivery_provider_applies_configured_limit_to_titled_briefing() -> None:
+    delivery = DeliveryProvider(PlainTextRenderer(), NoopPublisher(), 650, 2)
+
+    assert delivery.briefing_fits(RenderedMessage("b" * 960, 980, "t" * 20), 500)
+    assert delivery.briefing_fits(RenderedMessage("b" * 480 + "\n" + "b" * 480, 981, "t" * 20), 500)
+    assert not delivery.briefing_fits(RenderedMessage("b" * 961, 981, "t" * 20), 500)
 
 
 async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:

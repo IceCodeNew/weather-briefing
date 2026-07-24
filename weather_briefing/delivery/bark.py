@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 
 import httpx
 
@@ -12,7 +11,7 @@ from ..data.bark import BARK_MAX_MESSAGE_LENGTH, BARK_NOTIFICATION_LEVEL
 from ..data.service_endpoints import BARK_BASE_URL
 from ..models import RenderedMessage
 from .bark_crypto import BarkEncryptor
-from .base import DeliveryError, RenderedTextDiagnostics, rendered_text_logging_enabled
+from .base import DeliveryError, RenderedTextDiagnostics, rendered_text_logging_enabled, split_plain_message
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 
@@ -59,17 +58,20 @@ class BarkPublisher:
         silent: bool = False,
     ) -> None:
         """Publish one message, splitting it only when allowed."""
-        if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
+        title = message.title
+        title_length = len(title or "")
+        body_limit = self.MAX_MESSAGE_LENGTH - title_length
+        if body_limit <= 0 or (single_message and title_length + len(message.body) > self.MAX_MESSAGE_LENGTH):
             raise DeliveryError(
-                "Bark single message exceeds the platform limit",
+                "Bark message exceeds the platform limit",
                 reason="message-too-long",
             )
-        chunks = (message.body,) if single_message else split_plain_message(message.body, self.MAX_MESSAGE_LENGTH)
+        chunks = (message.body,) if single_message else split_plain_message(message.body, body_limit)
         _LOGGER.info(
             "Bark delivery prepared: visible_characters=%d payload_characters=%d chunks=%d "
             "single_message=%s silent=%s encrypted=%s",
             message.visible_length,
-            len(message.body),
+            sum(len(chunk) + title_length for chunk in chunks),
             len(chunks),
             single_message,
             silent,
@@ -79,9 +81,10 @@ class BarkPublisher:
         for index, chunk in enumerate(chunks, start=1):
             if log_rendered_text:
                 _LOGGER.debug(
-                    "Sensitive rendered text diagnostic: stage=bark-chunk-%d-of-%d body=%r",
+                    "Sensitive rendered text diagnostic: stage=bark-chunk-%d-of-%d title=%r body=%r",
                     index,
                     len(chunks),
+                    title,
                     chunk,
                 )
             parameters: dict[str, object] = {
@@ -89,6 +92,8 @@ class BarkPublisher:
                 "group": self._group,
                 "level": "passive" if silent else BARK_NOTIFICATION_LEVEL,
             }
+            if title:
+                parameters["title"] = title
             request_payload = {"device_key": self._device_key, **parameters}
             if self._encryptor is not None:
                 encrypted = self._encryptor.encrypt(parameters)
@@ -113,7 +118,7 @@ class BarkPublisher:
                     index,
                     len(chunks),
                     message.visible_length,
-                    len(chunk),
+                    title_length + len(chunk),
                     exc.response.status_code,
                     reason,
                 )
@@ -129,7 +134,7 @@ class BarkPublisher:
                     index,
                     len(chunks),
                     message.visible_length,
-                    len(chunk),
+                    title_length + len(chunk),
                     type(exc).__name__,
                 )
                 raise DeliveryError("Bark delivery failed (request-error)", reason="request-error") from None
@@ -145,7 +150,7 @@ class BarkPublisher:
                 "Bark chunk accepted: index=%d/%d payload_characters=%d",
                 index,
                 len(chunks),
-                len(chunk),
+                title_length + len(chunk),
             )
 
 
@@ -171,29 +176,6 @@ def bark_error_reason(response: httpx.Response) -> tuple[str, bool]:
         429: "rate-limited",
     }
     return status_reasons.get(response.status_code, "api-error"), response.status_code == 404
-
-
-def split_plain_message(body: str, limit: int) -> tuple[str, ...]:
-    """Split into display-ready chunks, consuming newlines used as boundaries."""
-    if limit <= 0:
-        raise ValueError("Message split limit must be positive")
-    if not body or len(body) <= limit:
-        return (body,)
-    chunks: list[str] = []
-    remaining = body
-    while len(remaining) > limit:
-        remaining_chunk_count = math.ceil(len(remaining) / limit)
-        earliest_split = len(remaining) - (remaining_chunk_count - 1) * limit
-        newline_at = remaining.rfind("\n", earliest_split, limit + 1)
-        if newline_at >= earliest_split:
-            chunks.append(remaining[:newline_at])
-            remaining = remaining[newline_at + 1 :]
-        else:
-            chunks.append(remaining[:limit])
-            remaining = remaining[limit:]
-    if remaining:
-        chunks.append(remaining)
-    return tuple(chunks)
 
 
 def _validate_success_response(response: httpx.Response) -> None:

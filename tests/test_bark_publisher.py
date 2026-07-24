@@ -80,7 +80,7 @@ async def test_bark_publisher_sends_plaintext_when_encryption_is_not_configured(
             base_url="https://bark.example.invalid/prefix",
             group="custom-group",
         )
-        await publisher.publish(RenderedMessage("Plain weather body", 18))
+        await publisher.publish(RenderedMessage("Plain weather body", 31, "Weather title"))
 
     request = requests[0]
     assert request.url.path == "/prefix/push"
@@ -89,7 +89,22 @@ async def test_bark_publisher_sends_plaintext_when_encryption_is_not_configured(
         "body": "Plain weather body",
         "group": "custom-group",
         "level": "timeSensitive",
+        "title": "Weather title",
     }
+
+
+async def test_bark_publisher_omits_empty_title() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"code": 200})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        publisher = BarkPublisher(client, "device")
+        await publisher.publish(RenderedMessage("Weather body", 12, ""))
+
+    assert "title" not in json.loads(requests[0].content)
 
 
 async def test_bark_publisher_rejects_empty_group() -> None:
@@ -117,7 +132,7 @@ async def test_bark_publisher_sends_only_encrypted_runtime_values(caplog) -> Non
                 base_url="https://bark.example.invalid",
                 encryptor=BarkEncryptor(key, "fixed-iv-123"),
             )
-            await publisher.publish(RenderedMessage("Private weather body", 20), silent=True)
+            await publisher.publish(RenderedMessage("Private weather body", 33, "Private title"), silent=True)
 
     request = requests[0]
     request_payload = json.loads(request.content)
@@ -132,12 +147,15 @@ async def test_bark_publisher_sends_only_encrypted_runtime_values(caplog) -> Non
         "body": "Private weather body",
         "group": "weather-briefing",
         "level": "passive",
+        "title": "Private title",
     }
     assert "Private weather body" not in request.content.decode()
+    assert "Private title" not in request.content.decode()
     assert "Private weather body" in caplog.text
+    assert "Private title" in caplog.text
     assert "private/device" not in caplog.text
     assert key not in caplog.text
-    assert "Bark chunk accepted: index=1/1 payload_characters=20" in caplog.text
+    assert "Bark chunk accepted: index=1/1 payload_characters=33" in caplog.text
 
 
 async def test_bark_publisher_reuses_the_configured_iv_for_each_chunk() -> None:
@@ -162,6 +180,48 @@ async def test_bark_rejects_oversized_single_message_before_delivery() -> None:
         publisher = BarkPublisher(client, "device", "k" * 32, "fixed-iv-123")
         with pytest.raises(DeliveryError, match="exceeds") as caught:
             await publisher.publish(RenderedMessage("x" * 651, 651), single_message=True)
+
+    assert caught.value.reason == "message-too-long"
+
+
+async def test_bark_publisher_repeats_title_and_reserves_its_length_for_each_chunk() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"code": 200})
+
+    title = "t" * 10
+    body = "b" * 641
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        publisher = BarkPublisher(client, "device")
+        await publisher.publish(RenderedMessage(body, 651, title))
+
+    payloads = [json.loads(request.content) for request in requests]
+    assert [payload["title"] for payload in payloads] == [title, title]
+    assert [len(payload["body"]) for payload in payloads] == [640, 1]
+    assert all(len(payload["title"]) + len(payload["body"]) <= 650 for payload in payloads)
+
+
+async def test_bark_publisher_logs_repeated_title_payload_characters(caplog) -> None:
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"code": 200}))
+    title = "t" * 10
+    body = "b" * 641
+
+    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
+        async with httpx.AsyncClient(transport=transport) as client:
+            publisher = BarkPublisher(client, "device")
+            await publisher.publish(RenderedMessage(body, 651, title))
+
+    assert "payload_characters=661 chunks=2" in caplog.text
+
+
+async def test_bark_publisher_rejects_title_that_leaves_no_body_capacity() -> None:
+    transport = httpx.MockTransport(lambda _: pytest.fail("Bark request reached transport"))
+    async with httpx.AsyncClient(transport=transport) as client:
+        publisher = BarkPublisher(client, "device")
+        with pytest.raises(DeliveryError, match="exceeds") as caught:
+            await publisher.publish(RenderedMessage("body", 654, "t" * 650))
 
     assert caught.value.reason == "message-too-long"
 
