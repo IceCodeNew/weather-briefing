@@ -14,6 +14,7 @@ from weather_briefing.llm import (
     LLMStructuredOutput,
     create_any_llm_provider,
 )
+from weather_briefing.llm.schema import ServiceStatusTranslationOutput
 
 
 class _CompletionClientStub:
@@ -47,7 +48,6 @@ async def test_any_llm_provider_uses_structured_chat_completion() -> None:
         "headline": "Briefing",
         "headline_source_ids": ["source"],
         "conclusions": [],
-        "service_status": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
         "advice": [],
@@ -79,6 +79,39 @@ async def test_any_llm_provider_uses_structured_chat_completion() -> None:
         }
     ]
     assert result == model_result
+
+
+async def test_any_llm_provider_translates_service_status_with_a_narrow_schema() -> None:
+    client = _CompletionClientStub(
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"text":"API error rates are elevated."}',
+                    )
+                )
+            ]
+        )
+    )
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="deepseek",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    result = await provider.translate_service_status("API 服务错误率升高。", "en")
+
+    assert result == "API error rates are elevated."
+    assert client.calls[0]["response_format"] is ServiceStatusTranslationOutput
+    assert client.calls[0]["temperature"] == 0.0
+    assert client.calls[0]["max_tokens"] == 2048
+    messages = client.calls[0]["messages"]
+    assert isinstance(messages, list)
+    assert messages[1] == {
+        "role": "user",
+        "content": '{"text":"API 服务错误率升高。"}',
+    }
 
 
 async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) -> None:
@@ -233,7 +266,6 @@ async def test_any_llm_deepseek_uses_injected_logged_http_client(caplog) -> None
         "headline": "Briefing",
         "headline_source_ids": ["source"],
         "conclusions": [],
-        "service_status": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
         "advice": [],

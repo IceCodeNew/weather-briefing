@@ -7,6 +7,7 @@ from typing import Protocol, TypeGuard
 
 import httpx
 
+from ..api_client import api_call_extensions
 from ..time_utils import parse_aware_datetime
 from .models import (
     ServiceComponentStatus,
@@ -52,7 +53,10 @@ class StatuspageProvider:
     async def fetch(self) -> ServiceStatusSnapshot:
         """Fetch and strictly validate one Statuspage summary."""
         try:
-            response = await self._client.get(self._api_url)
+            response = await self._client.get(
+                self._api_url,
+                extensions=api_call_extensions(self._provider_id, "status-summary"),
+            )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise ServiceStatusError(f"{self._provider_name} status request failed") from exc

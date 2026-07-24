@@ -34,7 +34,6 @@ _LOCALIZATION_FIELDS = {
     "briefing": frozenset(
         {
             "weather",
-            "service_status",
             "warnings",
             "disasters",
             "advice",
@@ -48,6 +47,19 @@ _LOCALIZATION_FIELDS = {
         }
     ),
     "qweather": frozenset({"day", "lifestyle", "unknown", "no_details"}),
+    "service_status": frozenset(
+        {
+            "active_incidents",
+            "api_services",
+            "generic_issue",
+            "incident",
+            "other_services",
+            "recovered",
+            "recovery_title",
+            "source",
+            "web_services",
+        }
+    ),
     "weather_document": frozenset(
         {
             "separator",

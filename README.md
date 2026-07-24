@@ -8,7 +8,7 @@
 
 [English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
-Weather Briefing periodically gathers weather, air quality, warnings, official AI service status, and optional private RSS content, then uses a large language model to produce a briefing that identifies its sources and includes source links when supported by the publisher.
+Weather Briefing uses a large language model to produce sourced briefings from weather, air quality, warnings, and optional private RSS content. It independently monitors official AI service status and directly publishes incident changes and recoveries.
 
 ## Core capabilities
 
@@ -31,7 +31,7 @@ Before deploying, you will need:
 
 The default weather services require no API key. Users in mainland China who want QWeather will also need a Project ID, Credential ID, a dedicated API Host, and a Base64-encoded Ed25519 private key. See the [QWeather JWT documentation](https://dev.qweather.com/docs/configuration/authentication/#json-web-token) for authentication details.
 
-Official AI service status is enabled by default and requires no credentials. Set `SERVICE_STATUS_PROVIDERS` to a comma-separated subset of `deepseek,openai,anthropic,kimi`, or to an empty value to disable it.
+Official AI service status is enabled by default and requires no status-page credentials. It runs independently from weather briefings every five minutes and directly publishes incident changes and recoveries. English incident explanations are forwarded without an LLM call; a configured LLM is used only to translate an official explanation when no English version is available. Set `SERVICE_STATUS_PROVIDERS` to a comma-separated subset of `deepseek,openai,anthropic,kimi`, or to an empty value to disable it. Set the independent five-field schedule with `SERVICE_STATUS_CRON` and choose `en`, `zh-CN`, or `ja` with `SERVICE_STATUS_LANGUAGE`.
 
 The repository provides the following configuration templates:
 
@@ -138,7 +138,7 @@ Recreate the container after adding the mount.
 
 ## Running and troubleshooting
 
-By default, the persistent scheduler sends a daily forecast at 08:00 and checks for weather changes from 09:00&ndash;23:00. Both the timezone and schedule can be adjusted in `.env`.
+By default, the persistent scheduler sends a daily forecast at 08:00, checks for weather changes from 09:00&ndash;23:00, and polls enabled AI service-status providers every five minutes. Weather and service-status jobs are enabled together but use independent schedules. Their timezone and schedules can be adjusted in `.env`.
 
 The default timezone is `Asia/Shanghai`. For other regions, change `BRIEFING_TIMEZONE`; the startup command above reads it from `.env` and passes the same value to the container as `TZ`.
 

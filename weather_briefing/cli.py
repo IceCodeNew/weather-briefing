@@ -22,7 +22,6 @@ from dotenv import load_dotenv
 
 from . import __version__
 from .api_client import LoggedAsyncClient
-from .application.collection import collect_service_status_documents
 from .composition.providers import delivery_provider as _delivery_provider
 from .composition.providers import llm_provider as _llm_provider
 from .composition.providers import weather_context_provider as _weather_context_provider
@@ -38,6 +37,7 @@ from .geocoding import (
 from .models import ResolvedLocation
 from .persistence import locking as persistence_locking
 from .service import BriefingService
+from .service_status import ServiceStatusMonitor
 from .service_status import service_status_providers as _service_status_providers
 from .sources import RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
@@ -62,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_time_group.add_argument("--at", help="Override run time with an ISO-8601 timestamp including UTC offset")
     run_time_group.add_argument("--date", help="Generate a forecast for a local date in YYYY-MM-DD format")
     subparsers.add_parser("daemon")
+    subparsers.add_parser("service-status")
     diagnostics_parser = subparsers.add_parser("diagnostics")
     diagnostics_topics = diagnostics_parser.add_subparsers(dest="diagnostics_topic", required=True)
     rendered_text_parser = diagnostics_topics.add_parser("rendered-text")
@@ -319,9 +320,6 @@ async def _run_unlocked(
         resolutions = [await resolver.resolve_with_metadata(location) for location in settings.locations]
         locations = tuple(resolution.location for resolution in resolutions)
         await asyncio.to_thread(_save_resolved_location_fields, settings, locations)
-        service_status_documents = await collect_service_status_documents(
-            _service_status_providers(settings.service_status_providers, client)
-        )
         for resolution in resolutions:
             location = resolution.location
             if location.precision_reduced and not resolution.from_cache:
@@ -355,7 +353,6 @@ async def _run_unlocked(
                     delivery,
                     delivery,
                     _weather_context_provider(settings, client, location),
-                    service_status_documents,
                 )
                 body = await service.run(
                     kind,
@@ -368,6 +365,35 @@ async def _run_unlocked(
                     _LOGGER.info("Location %s %s published (%d characters)", location.id, kind, len(body))
                 else:
                     _LOGGER.info("Location %s %s skipped (no content)", location.id, kind)
+
+
+async def run_service_status() -> None:
+    """Poll and directly publish official service-status changes."""
+    state_path = state_path_from_env()
+    async with persistence_locking.serialized_state_run(state_path):
+        settings = await asyncio.to_thread(Settings.from_env)
+        _configure_logging(debug=settings.debug)
+        if not settings.service_status_providers:
+            _LOGGER.info("Skipping service-status run because no providers are configured")
+            return
+        async with AsyncExitStack() as stack:
+            diagnostics = stack.enter_context(_runtime_diagnostics(settings.state_path))
+            client = await stack.enter_async_context(
+                LoggedAsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
+            )
+            delivery = _delivery_provider(settings, client, diagnostics)
+            translator = _llm_provider(settings, diagnostics)
+            stack.push_async_callback(translator.aclose)
+            with SQLiteStateStore(settings.state_path) as state:
+                monitor = ServiceStatusMonitor(
+                    _service_status_providers(settings.service_status_providers, client),
+                    state,
+                    delivery,
+                    translator,
+                    settings.service_status_language,
+                )
+                published = await monitor.run(pendulum.now(settings.timezone))
+            _LOGGER.info("Service-status run published %d notification(s)", published)
 
 
 def _location_state_path(base_path: Path, location: ResolvedLocation, location_count: int) -> Path:
@@ -436,6 +462,15 @@ async def _daemon(state_path: Path) -> None:
         args=("briefing", True),
         max_instances=1,
     )
+    if settings.service_status_providers:
+        scheduler.add_job(
+            run_service_status,
+            CronTrigger.from_crontab(
+                settings.service_status_cron,
+                timezone=settings.timezone,
+            ),
+            max_instances=1,
+        )
     scheduler.start()
     await asyncio.Event().wait()
 
@@ -477,6 +512,8 @@ def main() -> None:
     try:
         if args.command == "daemon":
             asyncio.run(daemon())
+        elif args.command == "service-status":
+            asyncio.run(run_service_status())
         elif args.command == "diagnostics":
             _manage_rendered_text_diagnostics(
                 args.diagnostics_action,

@@ -48,21 +48,12 @@ def test_prompt_compares_primary_language_before_translating() -> None:
 
 
 def test_prompt_condenses_the_overview_into_the_headline() -> None:
-    assert "概括当下最重要且需要行动的信息" in SYSTEM_PROMPT
-    assert "服务故障更紧急时可以作为标题" in SYSTEM_PROMPT
+    assert "将当下最重要的天气概况浓缩其中" in SYSTEM_PROMPT
     assert "不要另写摘要段落" in SYSTEM_PROMPT
     assert "conclusions 通常合并为 1 至 2 项" in SYSTEM_PROMPT
     assert "不得重复 headline 已表达的事实" in SYSTEM_PROMPT
     assert "- overview:" not in SYSTEM_PROMPT
     assert "overview_source_ids" not in SYSTEM_PROMPT
-
-
-def test_prompt_keeps_service_status_separate_and_surface_specific() -> None:
-    assert "- service_status:" in SYSTEM_PROMPT
-    assert "只写入 service_status" in SYSTEM_PROMPT
-    assert "网页服务与 API 服务必须分别表述" in SYSTEM_PROMPT
-    assert "不得把一个服务面的故障泛化为整个厂商故障" in SYSTEM_PROMPT
-    assert "当前各服务面均正常且没有未解决事件时 service_status 必须为空" in SYSTEM_PROMPT
 
 
 def test_prompt_keeps_each_advice_topic_concise() -> None:

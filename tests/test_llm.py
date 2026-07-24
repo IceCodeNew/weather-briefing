@@ -19,6 +19,10 @@ from weather_briefing.llm import (
     SensitiveLLMDiagnostics,
     parse_result,
 )
+from weather_briefing.llm.schema import (
+    ServiceStatusTranslationOutput,
+    decode_service_status_translation,
+)
 
 
 class _CompletionClientStub:
@@ -79,7 +83,6 @@ def _valid_payload() -> dict[str, Any]:
         "headline": "Briefing",
         "headline_source_ids": ["source"],
         "conclusions": [],
-        "service_status": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
         "disaster_tracking": [],
@@ -433,3 +436,84 @@ async def test_provider_does_not_mask_programming_errors() -> None:
 
     with pytest.raises(AttributeError, match="adapter bug"):
         await provider.summarize("prompt", {})
+
+
+async def test_service_status_translation_rejects_unsupported_language() -> None:
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with pytest.raises(ValueError, match="Unsupported service-status translation language: fr"):
+        await provider.translate_service_status("障害", "fr")
+
+
+@pytest.mark.parametrize(
+    ("error", "exception", "message"),
+    (
+        (ProviderError("upstream failed"), LLMRequestError, "translation request failed"),
+        (
+            LengthFinishReasonError(completion=ParsedChatCompletion[object].model_construct()),
+            LLMOutputLimitError,
+            "translation reached output token limit",
+        ),
+    ),
+)
+async def test_service_status_translation_wraps_sdk_failures(
+    error: BaseException,
+    exception: type[Exception],
+    message: str,
+) -> None:
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(error=error),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with pytest.raises(exception, match=message):
+        await provider.translate_service_status("障害", "en")
+
+
+def test_service_status_translation_decoder_accepts_parsed_output() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    parsed=ServiceStatusTranslationOutput(text="API errors are elevated."),
+                )
+            )
+        ]
+    )
+
+    assert decode_service_status_translation(response) == "API errors are elevated."
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    (
+        (SimpleNamespace(choices=[]), "no completion choices"),
+        (SimpleNamespace(choices=[SimpleNamespace(message=None)]), "missing a message"),
+        (
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))]),
+            "empty JSON content",
+        ),
+    ),
+)
+def test_service_status_translation_decoder_rejects_incomplete_response(
+    response: object,
+    message: str,
+) -> None:
+    with pytest.raises(LLMRequestError, match=message):
+        decode_service_status_translation(response)
+
+
+def test_service_status_translation_decoder_rejects_invalid_schema() -> None:
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+    )
+
+    with pytest.raises(LLMError, match="schema validation failed at text"):
+        decode_service_status_translation(response)

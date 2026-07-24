@@ -12,7 +12,12 @@ from pydantic import BaseModel
 
 from ..api_client import api_call_context
 from .base import LLMOutputLimitError, LLMRequestError, SensitiveLLMDiagnostics, serialize_llm_payload
-from .schema import LLMStructuredOutput, decode_structured_response
+from .schema import (
+    LLMStructuredOutput,
+    ServiceStatusTranslationOutput,
+    decode_service_status_translation,
+    decode_structured_response,
+)
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
@@ -108,6 +113,40 @@ class AnyLLMStructuredProvider:
                 result_payload,
             )
         return result_payload
+
+    async def translate_service_status(self, text: str, target_language: str) -> str:
+        """Translate one non-English official incident explanation."""
+        language_name = {
+            "en": "English",
+            "ja": "Japanese",
+            "zh-CN": "Simplified Chinese",
+        }.get(target_language)
+        if language_name is None:
+            raise ValueError(f"Unsupported service-status translation language: {target_language}")
+        try:
+            with api_call_context(self._provider, "chat-completions"):
+                response = await self._client.acompletion(
+                    model=self._model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                f"Translate the official service-incident explanation into concise {language_name}. "
+                                "Preserve product names, incident facts, status, times, and technical terms. "
+                                "Do not add analysis, advice, or facts. Return only the requested JSON object."
+                            ),
+                        },
+                        {"role": "user", "content": serialize_llm_payload({"text": text})},
+                    ],
+                    response_format=ServiceStatusTranslationOutput,
+                    temperature=0.0,
+                    max_tokens=min(self._max_output_tokens, 2048),
+                )
+        except LengthFinishReasonError as exc:
+            raise LLMOutputLimitError("LLM translation reached output token limit") from exc
+        except AnyLLMError as exc:
+            raise LLMRequestError("LLM translation request failed") from exc
+        return decode_service_status_translation(response)
 
     async def aclose(self) -> None:
         """Close transports owned by an any-llm client created by this adapter."""

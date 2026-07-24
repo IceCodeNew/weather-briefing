@@ -28,6 +28,16 @@ class VerbatimDelivery:
     silent: bool
 
 
+@dataclass(frozen=True, slots=True)
+class ServiceStatusState:
+    """Track the last observed and successfully notified provider states."""
+
+    observed_fingerprint: str
+    observed_unhealthy: bool
+    notified_fingerprint: str | None
+    notified_unhealthy: bool | None
+
+
 class SQLiteStateStore(HealthStateOperations):
     """Persist briefing history, warnings, articles, and health state."""
 
@@ -193,6 +203,66 @@ class SQLiteStateStore(HealthStateOperations):
     def save_context_documents(self, documents: tuple[SourceDocument, ...], observed_at: pendulum.DateTime) -> None:
         """Persist context documents observed during a successful run."""
         self._insert_context_documents(documents, observed_at)
+        self._connection.commit()
+
+    def service_status_state(self, source_id: str) -> ServiceStatusState | None:
+        """Return durable delivery state for one official status source."""
+        row = self._connection.execute(
+            """SELECT observed_fingerprint, observed_unhealthy, notified_fingerprint, notified_unhealthy
+            FROM service_status_state WHERE source_id = ?""",
+            (source_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        notified_unhealthy = row["notified_unhealthy"]
+        return ServiceStatusState(
+            observed_fingerprint=str(row["observed_fingerprint"]),
+            observed_unhealthy=bool(row["observed_unhealthy"]),
+            notified_fingerprint=(
+                str(row["notified_fingerprint"]) if row["notified_fingerprint"] is not None else None
+            ),
+            notified_unhealthy=bool(notified_unhealthy) if notified_unhealthy is not None else None,
+        )
+
+    def observe_service_status(
+        self,
+        source_id: str,
+        fingerprint: str,
+        unhealthy: bool,
+        observed_at: pendulum.DateTime,
+    ) -> None:
+        """Persist a provider observation without claiming delivery succeeded."""
+        self._connection.execute(
+            """INSERT INTO service_status_state(
+                source_id, observed_fingerprint, observed_unhealthy, observed_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_id) DO UPDATE SET
+                observed_fingerprint = excluded.observed_fingerprint,
+                observed_unhealthy = excluded.observed_unhealthy,
+                observed_at = excluded.observed_at""",
+            (source_id, fingerprint, int(unhealthy), storage_time(observed_at)),
+        )
+        self._connection.commit()
+
+    def mark_service_status_notified(
+        self,
+        source_id: str,
+        fingerprint: str,
+        unhealthy: bool,
+        notified_at: pendulum.DateTime,
+    ) -> None:
+        """Mark one observed state as delivered or intentionally silent."""
+        cursor = self._connection.execute(
+            """UPDATE service_status_state SET
+                notified_fingerprint = ?,
+                notified_unhealthy = ?,
+                notified_at = ?
+            WHERE source_id = ? AND observed_fingerprint = ?""",
+            (fingerprint, int(unhealthy), storage_time(notified_at), source_id, fingerprint),
+        )
+        if cursor.rowcount != 1:
+            self._connection.rollback()
+            raise RuntimeError("Service-status observation changed before notification was recorded")
         self._connection.commit()
 
     def _insert_context_documents(

@@ -8,7 +8,7 @@
 
 [English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
-Weather Briefing 定时汇总天气、空气质量、预警和可选信息源，再通过大语言模型生成标明信息来源的简报，并在投递平台支持时附上来源链接。
+Weather Briefing 定时汇总天气、空气质量、预警和可选私密 RSS 内容，再通过大语言模型生成标明来源的简报。它还会独立监控官方 AI 服务状态，直接推送故障变化和恢复信息。
 
 ## 核心能力
 
@@ -17,6 +17,7 @@ Weather Briefing 定时汇总天气、空气质量、预警和可选信息源，
 - 保存历史、未发送信息和有效预警，避免重复或遗漏重要变化。
 - 支持多个地点和多种输出语言，各地点的状态互不影响。
 - 按地区组合全球与当地天气服务，并在主要来源失败时降级。
+- 独立监控 DeepSeek、OpenAI、Anthropic 和 Kimi 官方状态页，并区分网页服务与 API 服务。
 - 可以补充私密 RSS 内容，每条结论都保留可核验的来源链接。
 
 ## 部署前准备
@@ -29,6 +30,8 @@ Weather Briefing 定时汇总天气、空气质量、预警和可选信息源，
 - 一个可持久保存运行状态和定位结果的目录。
 
 默认天气服务不需要密钥。中国大陆用户如需使用和风天气，还要准备项目 ID、凭据 ID、专属 API Host 和 Base64 编码的 Ed25519 私钥。认证方式见[和风天气 JWT 文档](https://dev.qweather.com/docs/configuration/authentication/#json-web-token)。
+
+官方 AI 服务状态默认开启，不需要状态页凭据，并与天气简报独立地每五分钟运行一次。官方英文故障说明会直接推送；只有缺少英文说明时才使用已配置的大语言模型做忠实翻译。`SERVICE_STATUS_PROVIDERS` 用于选择 `deepseek,openai,anthropic,kimi` 的子集，留空可关闭；`SERVICE_STATUS_CRON` 设置独立的五段 cron，`SERVICE_STATUS_LANGUAGE` 可选择 `en`、`zh-CN` 或 `ja`。
 
 仓库提供以下配置模板：
 
@@ -135,7 +138,7 @@ RSS 是可选功能，默认不会挂载。需要启用时，参考 [`rss-source
 
 ## 运行与排障
 
-常驻调度器默认每天 08:00 发送预报，并在 09:00&ndash;23:00 检查天气变化。具体时区和时间可在 `.env` 中调整。
+常驻调度器默认每天 08:00 发送预报，在 09:00&ndash;23:00 检查天气变化，并每五分钟轮询已启用的 AI 服务状态。天气和服务状态任务可以同时启用，但调度策略相互独立。具体时区、`BRIEFING_CRON` 和 `SERVICE_STATUS_CRON` 均可在 `.env` 中调整。
 
 默认时区为 `Asia/Shanghai`。其他地区只需修改 `BRIEFING_TIMEZONE`；上述启动命令会从 `.env` 读取该值，并以 `TZ` 传入容器。
 

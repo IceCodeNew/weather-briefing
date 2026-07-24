@@ -42,6 +42,15 @@ def initialize_state(connection: sqlite3.Connection) -> None:
                 CREATE TABLE IF NOT EXISTS context_budget_alert (
                     source_id TEXT PRIMARY KEY, content_fingerprint TEXT NOT NULL, alerted_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS service_status_state (
+                    source_id TEXT PRIMARY KEY,
+                    observed_fingerprint TEXT NOT NULL,
+                    observed_unhealthy INTEGER NOT NULL CHECK (observed_unhealthy IN (0, 1)),
+                    observed_at TEXT NOT NULL,
+                    notified_fingerprint TEXT,
+                    notified_unhealthy INTEGER CHECK (notified_unhealthy IN (0, 1)),
+                    notified_at TEXT
+                );
                 CREATE TABLE IF NOT EXISTS source_health (
                     source_id TEXT PRIMARY KEY, first_checked_at TEXT NOT NULL,
                     last_article_at TEXT, stale_alerted_at TEXT

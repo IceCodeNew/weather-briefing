@@ -20,8 +20,10 @@ from .environment import (
     bounded_integer,
     bounded_positive_integer,
     clean_env,
+    configured_service_status_language,
     configured_service_status_providers,
     configured_weather_providers,
+    cron_expression,
     cron_hour,
     first_configured,
     number,
@@ -57,6 +59,7 @@ class Settings:
     feeds: tuple[FeedConfig, ...]
     weather_providers: tuple[str, ...] | None
     service_status_providers: tuple[str, ...]
+    service_status_language: str
     qweather_project_id: str | None
     qweather_credential_id: str | None
     qweather_private_key: str | None
@@ -87,6 +90,7 @@ class Settings:
     greeting_hour: int
     greeting_minute: int
     hourly_cron: str
+    service_status_cron: str
     debug: bool
 
     @classmethod
@@ -120,6 +124,7 @@ class Settings:
         daily_cron_hour = bounded_integer("GREETING_HOUR", 8, 0, 23)
         daily_cron_minute = bounded_integer("GREETING_MINUTE", 0, 0, 59)
         hourly_cron = cron_hour("BRIEFING_CRON", "9-23")
+        service_status_cron = cron_expression("SERVICE_STATUS_CRON", "*/5 * * * *")
         llm_provider = clean_env(os.getenv("LLM_PROVIDER", "deepseek"))
         if llm_provider not in AnyLLM.get_supported_providers():
             raise ConfigurationError(f"Unsupported LLM_PROVIDER: {llm_provider}")
@@ -210,6 +215,7 @@ class Settings:
             feeds=feeds,
             weather_providers=configured_weather_providers(),
             service_status_providers=configured_service_status_providers(),
+            service_status_language=configured_service_status_language(),
             qweather_project_id=clean_env(os.getenv("QWEATHER_PROJECT_ID")) or None,
             qweather_credential_id=clean_env(os.getenv("QWEATHER_CREDENTIAL_ID")) or None,
             qweather_private_key=clean_env(os.getenv("QWEATHER_PRIVATE_KEY")) or None,
@@ -240,5 +246,6 @@ class Settings:
             greeting_hour=daily_cron_hour,
             greeting_minute=daily_cron_minute,
             hourly_cron=hourly_cron,
+            service_status_cron=service_status_cron,
             debug=boolean("DEBUG", False),
         )

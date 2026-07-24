@@ -50,32 +50,6 @@ def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
     assert "<b>" not in rendered.body
 
 
-@pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer(), BarkTextRenderer()))
-def test_renderers_keep_service_status_separate_from_weather(
-    renderer: TelegramHTMLRenderer | PlainTextRenderer | BarkTextRenderer,
-) -> None:
-    context = SourceDocument("service-status:openai", "OpenAI Status", "https://status.openai.com", "")
-    result = BriefingResult(
-        "OpenAI API is degraded",
-        ("service-status:openai",),
-        (),
-        service_status=(
-            Conclusion(
-                "The API is degraded while web services remain operational.",
-                ("service-status:openai",),
-            ),
-        ),
-        output_language="en",
-    )
-
-    rendered = renderer.render_briefing(result, (), (context,))
-    combined = f"{rendered.title or ''}\n{rendered.body}"
-
-    assert "Service status" in combined
-    assert "Weather information" not in combined
-    assert "The API is degraded while web services remain operational." in combined
-
-
 def test_plain_text_renderer_supports_numbered_source_names() -> None:
     context = SourceDocument("source", "Weather API", "https://example.invalid/source", "")
     result = BriefingResult(

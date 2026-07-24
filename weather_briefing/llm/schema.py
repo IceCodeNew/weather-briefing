@@ -49,13 +49,18 @@ class AdvicePayload(SourcedTextPayload):
     topic: Literal["clothing", "dehumidification", "exercise", "mask", "allergen"]
 
 
+class ServiceStatusTranslationOutput(_StrictLLMPayload):
+    """Return one faithful English rendering of an official incident update."""
+
+    text: NonEmptyString
+
+
 class LLMStructuredOutput(_StrictLLMPayload):
     """Define the complete, strict response contract requested from every LLM."""
 
     headline: NonEmptyString
     headline_source_ids: CitedSourceIds
     conclusions: list[SourcedTextPayload]
-    service_status: list[SourcedTextPayload]
     active_warnings: list[WarningPayload]
     resolved_warning_ids: list[NonEmptyString]
     disaster_tracking: list[SourcedTextPayload]
@@ -88,6 +93,27 @@ def decode_structured_response(response: object) -> LLMStructuredOutput:
         raise LLMRequestError("LLM returned empty JSON content")
     try:
         return LLMStructuredOutput.model_validate_json(content)
+    except ValidationError as exc:
+        location = ".".join(str(part) for part in exc.errors()[0]["loc"])
+        raise LLMError(f"LLM response schema validation failed at {location}") from exc
+
+
+def decode_service_status_translation(response: object) -> str:
+    """Decode one strict service-status translation response."""
+    choices = getattr(response, "choices", None)
+    if not isinstance(choices, list) or not choices:
+        raise LLMRequestError("LLM returned no completion choices")
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        raise LLMRequestError("LLM completion choice is missing a message")
+    parsed = getattr(message, "parsed", None)
+    if isinstance(parsed, ServiceStatusTranslationOutput):
+        return parsed.text
+    content = getattr(message, "content", None)
+    if not isinstance(content, str) or not content.strip():
+        raise LLMRequestError("LLM returned empty JSON content")
+    try:
+        return ServiceStatusTranslationOutput.model_validate_json(content).text
     except ValidationError as exc:
         location = ".".join(str(part) for part in exc.errors()[0]["loc"])
         raise LLMError(f"LLM response schema validation failed at {location}") from exc

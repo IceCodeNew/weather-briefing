@@ -109,7 +109,6 @@ class BriefingService:
         delivery: DeliveryProvider,
         ops_delivery: DeliveryProvider,
         weather_context_provider: WeatherContextProvider | None = None,
-        service_status_documents: tuple[SourceDocument, ...] = (),
     ) -> None:
         """Compose briefing orchestration from its location-scoped dependencies."""
         self._settings = settings
@@ -120,7 +119,6 @@ class BriefingService:
         self._delivery = delivery
         self._ops_delivery = ops_delivery
         self._weather_context_provider = weather_context_provider
-        self._service_status_documents = service_status_documents
 
     async def run(
         self,
@@ -243,12 +241,7 @@ class BriefingService:
             article for article in bootstrap_candidates if article.id not in known and article.id not in deferred_ids
         )
         unpublished_articles = _unique_articles((*deferred_articles, *new_articles, *bootstrap_articles))
-        weather_context = await collect_weather_documents(
-            self._weather_context_provider,
-            self._location,
-            forecast_date,
-        )
-        context = (*weather_context, *self._service_status_documents)
+        context = await collect_weather_documents(self._weather_context_provider, self._location, forecast_date)
         historical_context = self._state.recent_context_documents(now, self._settings.history_hours)
         bounded_history = _bounded_context_history(
             historical_context,
@@ -337,7 +330,6 @@ class BriefingService:
                 len(serialize_llm_payload(payload)),
             )
         allergen_source_ids = {document.id for document in context if document.has_allergen_information}
-        service_status_source_ids = {document.id for document in context if document.id.startswith("service-status:")}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
 
         def validate_result(candidate: BriefingResult) -> None:
@@ -346,7 +338,6 @@ class BriefingService:
                 raise LLMError("briefing must not repeat lifestyle advice")
             if kind == "forecast" and not candidate.should_publish:
                 raise LLMError("forecast must set should_publish=true")
-            _validate_service_status_sections(candidate, service_status_source_ids)
             missing_advice_topics = set(required_advice_topics) - {item.topic for item in candidate.advice}
             if missing_advice_topics:
                 missing = ", ".join(sorted(topic.value for topic in missing_advice_topics))
@@ -530,23 +521,6 @@ class BriefingService:
 
 def _format_context_overflows(overflows: list[_HistoricalContextOverflow]) -> str:
     return ", ".join(f"{overflow.source_id} ({overflow.role})" for overflow in overflows)
-
-
-def _validate_service_status_sections(
-    result: BriefingResult,
-    service_status_source_ids: set[str],
-) -> None:
-    """Keep official service status out of weather-owned result sections."""
-    if any(service_status_source_ids.isdisjoint(item.source_ids) for item in result.service_status):
-        raise LLMError("service status must cite a current official service-status source")
-    weather_owned_items = (
-        *result.conclusions,
-        *result.active_warnings,
-        *result.disaster_tracking,
-        *result.advice,
-    )
-    if any(not service_status_source_ids.isdisjoint(item.source_ids) for item in weather_owned_items):
-        raise LLMError("weather-owned sections must not cite service-status sources")
 
 
 def _unique_articles(articles: tuple[Article, ...]) -> tuple[Article, ...]:

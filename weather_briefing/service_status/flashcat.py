@@ -10,6 +10,7 @@ import httpx
 import pendulum
 from bs4 import BeautifulSoup
 
+from ..api_client import api_call_extensions
 from .models import (
     ServiceComponentStatus,
     ServiceIncident,
@@ -41,7 +42,10 @@ class FlashcatStatusProvider:
     async def fetch(self) -> ServiceStatusSnapshot:
         """Fetch and strictly validate the server-rendered status snapshot."""
         try:
-            response = await self._client.get(self._page_url)
+            response = await self._client.get(
+                self._page_url,
+                extensions=api_call_extensions(self._provider_id, "status-page"),
+            )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise ServiceStatusError(f"{self._provider_name} status request failed") from exc

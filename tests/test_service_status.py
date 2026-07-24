@@ -1,32 +1,39 @@
 import asyncio
 import json
+from dataclasses import replace
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import httpx
 import pendulum
 import pytest
 
-from weather_briefing.application.collection import collect_service_status_documents
 from weather_briefing.llm import LLMError
-from weather_briefing.models import BriefingResult, Conclusion
-from weather_briefing.service import _validate_service_status_sections
 from weather_briefing.service_status import (
     AnthropicStatusProvider,
     DeepSeekStatusProvider,
     FlashcatStatusProvider,
     KimiStatusProvider,
     OpenAIStatusProvider,
+    ServiceComponentStatus,
+    ServiceIncident,
     ServiceStatusError,
+    ServiceStatusMonitor,
+    ServiceStatusSnapshot,
     ServiceSurface,
     StatuspageProvider,
+    collect_service_status,
+    has_english_explanation,
+    render_service_status_notification,
+    service_status_fingerprint,
     service_status_providers,
-    service_status_to_document,
 )
 from weather_briefing.service_status.flashcat import (
     _find_snapshot_props,
     _greatest_impact,
     _snapshot_props,
 )
+from weather_briefing.state import SQLiteStateStore
 
 
 def _summary_payload() -> dict[str, object]:
@@ -169,6 +176,26 @@ async def test_flashcat_provider_parses_embedded_snapshot_and_incident() -> None
     assert snapshot.incidents[0].impact == "degraded"
     assert snapshot.incidents[0].surfaces == (ServiceSurface.API,)
     assert snapshot.incidents[0].detail == "A fix is being monitored."
+
+
+async def test_flashcat_provider_classifies_status_page_request() -> None:
+    seen_identity: object = None
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_identity
+        seen_identity = request.extensions.get("weather_briefing.api_call")
+        return httpx.Response(200, text=_flashcat_html())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        await FlashcatStatusProvider(
+            client,
+            provider_id="test",
+            provider_name="Test",
+            page_url="https://status.example.invalid",
+            classify_component=_surface,
+        ).fetch()
+
+    assert seen_identity == ("test", "status-page")
 
 
 async def test_flashcat_provider_rejects_missing_embedded_snapshot() -> None:
@@ -399,6 +426,27 @@ async def test_statuspage_provider_parses_components_and_active_incidents() -> N
     assert snapshot.incidents[0].detail == "A fix has been applied."
 
 
+async def test_statuspage_provider_classifies_summary_request() -> None:
+    seen_identity: object = None
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_identity
+        seen_identity = request.extensions.get("weather_briefing.api_call")
+        return httpx.Response(200, json=_summary_payload())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        await StatuspageProvider(
+            client,
+            provider_id="test",
+            provider_name="Test",
+            api_url="https://status.example.invalid/api/v2/summary.json",
+            page_url="https://status.example.invalid",
+            classify_component=_surface,
+        ).fetch()
+
+    assert seen_identity == ("test", "status-summary")
+
+
 async def test_statuspage_provider_rejects_invalid_external_response() -> None:
     payload = _summary_payload()
     payload["components"] = [{"name": "API Service", "status": 7, "updated_at": "2026-07-24T09:31:00Z"}]
@@ -587,56 +635,16 @@ async def test_statuspage_provider_wraps_http_failure_without_exposing_endpoint(
     assert "secret diagnostic" not in str(caught.value)
 
 
-async def test_service_status_document_separates_web_and_api_services() -> None:
-    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=_summary_payload()))
-    async with httpx.AsyncClient(transport=transport) as client:
-        snapshot = await StatuspageProvider(
-            client,
-            provider_id="test",
-            provider_name="Test",
-            api_url="https://status.example.invalid/api/v2/summary.json",
-            page_url="https://status.example.invalid",
-            classify_component=_surface,
-        ).fetch()
-
-    document = service_status_to_document(snapshot)
-
-    assert "Web services:\n- Web Chat: operational" in document.content
-    assert "API services:\n- API Service: degraded_performance" in document.content
-    assert "Active incidents:\n- Elevated API errors" in document.content
-    assert document.history_value is not None
-    assert "Updated at:" not in document.history_value
-
-
-async def test_service_status_document_reports_no_active_incidents() -> None:
-    payload = _summary_payload()
-    payload["incidents"] = []
-    transport = httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
-    async with httpx.AsyncClient(transport=transport) as client:
-        snapshot = await StatuspageProvider(
-            client,
-            provider_id="test",
-            provider_name="Test",
-            api_url="https://status.example.invalid/api/v2/summary.json",
-            page_url="https://status.example.invalid",
-            classify_component=_surface,
-        ).fetch()
-
-    document = service_status_to_document(snapshot)
-
-    assert "Active incidents: none" in document.content
-
-
 async def test_collection_keeps_successful_status_when_an_optional_provider_fails(caplog) -> None:
     working = AsyncMock()
     failing = AsyncMock()
     working.fetch.return_value = await _snapshot()
     failing.fetch.side_effect = ServiceStatusError("Unavailable")
 
-    with caplog.at_level("WARNING", logger="weather_briefing.service"):
-        documents = await collect_service_status_documents((working, failing))
+    with caplog.at_level("WARNING", logger="weather_briefing.service_status"):
+        snapshots = await collect_service_status((working, failing))
 
-    assert [document.id for document in documents] == ["service-status:test"]
+    assert [snapshot.source_id for snapshot in snapshots] == ["service-status:test"]
     assert "Service-status provider failed: Unavailable" in caplog.text
 
 
@@ -647,7 +655,7 @@ async def test_collection_preserves_cancellation() -> None:
     second_canceled.fetch.side_effect = asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
-        await collect_service_status_documents((first_canceled, second_canceled))
+        await collect_service_status((first_canceled, second_canceled))
 
 
 async def _snapshot():
@@ -706,35 +714,258 @@ async def test_other_concrete_component_classifiers_cover_declared_surfaces() ->
     assert kimi("Model") is ServiceSurface.OTHER
 
 
-def test_service_status_result_requires_an_official_status_source() -> None:
-    result = BriefingResult(
-        "Status update",
-        ("weather:test",),
-        (),
-        service_status=(Conclusion("API degraded", ("weather:test",)),),
+def _direct_snapshot(
+    *,
+    web_status: str = "operational",
+    api_status: str = "operational",
+    detail: str | None = None,
+    observed_at: pendulum.DateTime | None = None,
+) -> ServiceStatusSnapshot:
+    observed_at = observed_at or pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+    incidents = (
+        (
+            ServiceIncident(
+                name="Elevated API errors",
+                status="monitoring",
+                impact="minor",
+                updated_at=observed_at,
+                detail=detail,
+                surfaces=(ServiceSurface.API,),
+            ),
+        )
+        if detail is not None
+        else ()
+    )
+    return ServiceStatusSnapshot(
+        source_id="service-status:test",
+        source_name="Test Status",
+        source_url="https://status.example.invalid",
+        observed_at=observed_at,
+        components=(
+            ServiceComponentStatus("Web Chat", ServiceSurface.WEB, web_status, observed_at),
+            ServiceComponentStatus("API Service", ServiceSurface.API, api_status, observed_at),
+        ),
+        incidents=incidents,
     )
 
-    with pytest.raises(LLMError, match="must cite a current official service-status source"):
-        _validate_service_status_sections(result, {"service-status:test"})
 
-
-def test_weather_result_sections_reject_service_status_sources() -> None:
-    result = BriefingResult(
-        "Status update",
-        ("service-status:test",),
-        (Conclusion("API degraded", ("service-status:test",)),),
+def test_direct_notification_separates_surfaces_and_keeps_official_detail() -> None:
+    title, body = render_service_status_notification(
+        _direct_snapshot(
+            web_status="partial_outage",
+            api_status="degraded_performance",
+            detail="A fix has been applied and the API is recovering.",
+        ),
+        recovered=False,
     )
 
-    with pytest.raises(LLMError, match="weather-owned sections must not cite service-status sources"):
-        _validate_service_status_sections(result, {"service-status:test"})
+    assert title == "Test Status"
+    assert "Web services:\n- Web Chat: partial_outage" in body
+    assert "API services:\n- API Service: degraded_performance" in body
+    assert "A fix has been applied and the API is recovering." in body
+    assert "Source: https://status.example.invalid" in body
 
 
-def test_service_status_result_accepts_separate_source_ownership() -> None:
-    result = BriefingResult(
-        "Rain and API degradation",
-        ("weather:test", "service-status:test"),
-        (Conclusion("Rain later", ("weather:test",)),),
-        service_status=(Conclusion("API degraded", ("service-status:test",)),),
+def test_recovery_notification_uses_predefined_text() -> None:
+    title, body = render_service_status_notification(_direct_snapshot(), recovered=True)
+
+    assert title == "Test Status recovered"
+    assert "All monitored services are operational" in body
+
+
+def test_direct_notification_has_safe_fallback_for_unclassified_issue() -> None:
+    _, body = render_service_status_notification(_direct_snapshot(), recovered=False)
+
+    assert "The official status page reports an active service issue." in body
+
+
+@pytest.mark.parametrize(
+    ("language", "web_label", "recovery_text"),
+    (
+        ("en", "Web services", "All monitored services are operational"),
+        ("zh-CN", "网页服务", "所有受监控服务均已恢复正常"),
+        ("ja", "Web サービス", "監視対象のサービスはすべて正常"),
+    ),
+)
+def test_predefined_notifications_cover_readme_languages(
+    language: str,
+    web_label: str,
+    recovery_text: str,
+) -> None:
+    _, issue_body = render_service_status_notification(
+        _direct_snapshot(web_status="partial_outage"),
+        recovered=False,
+        language=language,
+    )
+    _, recovery_body = render_service_status_notification(
+        _direct_snapshot(),
+        recovered=True,
+        language=language,
     )
 
-    _validate_service_status_sections(result, {"service-status:test"})
+    assert web_label in issue_body
+    assert recovery_text in recovery_body
+
+
+def test_fingerprint_ignores_observation_times_and_component_order() -> None:
+    first = _direct_snapshot(api_status="degraded_performance", detail="API errors are elevated.")
+    later = first.observed_at.add(minutes=5)
+    second = replace(
+        first,
+        observed_at=later,
+        components=tuple(replace(component, updated_at=later) for component in reversed(first.components)),
+        incidents=tuple(replace(incident, updated_at=later) for incident in first.incidents),
+    )
+
+    assert service_status_fingerprint(first) == service_status_fingerprint(second)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    (
+        ("A fix has been applied and API error rates are recovering.", True),
+        ("API 服务错误率升高，正在处理。", False),
+        ("API 障害を確認しています。", False),
+        ("503", False),
+    ),
+)
+def test_english_explanation_detection(text: str, expected: bool) -> None:
+    assert has_english_explanation(text) is expected
+
+
+async def test_monitor_records_initial_healthy_state_without_publishing(tmp_path: Path) -> None:
+    provider = AsyncMock()
+    provider.fetch.return_value = _direct_snapshot()
+    delivery = AsyncMock()
+
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        published = await ServiceStatusMonitor((provider,), state, delivery).run(
+            pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+        )
+        stored = state.service_status_state("service-status:test")
+
+    assert published == 0
+    delivery.publish_alert.assert_not_awaited()
+    assert stored is not None
+    assert stored.notified_unhealthy is False
+
+
+def test_state_rejects_notification_for_an_unobserved_fingerprint(tmp_path: Path) -> None:
+    with (
+        SQLiteStateStore(tmp_path / "state.sqlite3") as state,
+        pytest.raises(
+            RuntimeError,
+            match="observation changed before notification was recorded",
+        ),
+    ):
+        state.mark_service_status_notified(
+            "service-status:test",
+            "missing",
+            True,
+            pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC"),
+        )
+
+
+async def test_monitor_publishes_issue_once_then_recovery(tmp_path: Path) -> None:
+    provider = AsyncMock()
+    issue = _direct_snapshot(
+        api_status="degraded_performance",
+        detail="API error rates are elevated and a fix is being monitored.",
+    )
+    provider.fetch.return_value = issue
+    delivery = AsyncMock()
+    now = pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        monitor = ServiceStatusMonitor((provider,), state, delivery)
+        assert await monitor.run(now) == 1
+        assert await monitor.run(now.add(minutes=5)) == 0
+        provider.fetch.return_value = _direct_snapshot(observed_at=now.add(minutes=10))
+        assert await monitor.run(now.add(minutes=10)) == 1
+
+    assert delivery.publish_alert.await_count == 2
+    recovery_call = delivery.publish_alert.await_args_list[-1]
+    assert recovery_call.args[0] == "Test Status recovered"
+
+
+async def test_monitor_retries_delivery_before_marking_state_notified(tmp_path: Path) -> None:
+    provider = AsyncMock()
+    provider.fetch.return_value = _direct_snapshot(
+        api_status="partial_outage",
+        detail="API requests are failing for some customers.",
+    )
+    delivery = AsyncMock()
+    delivery.publish_alert.side_effect = [RuntimeError("delivery failed"), None]
+    now = pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        monitor = ServiceStatusMonitor((provider,), state, delivery)
+        with pytest.raises(RuntimeError, match="delivery failed"):
+            await monitor.run(now)
+        failed_state = state.service_status_state("service-status:test")
+        assert failed_state is not None
+        assert failed_state.notified_fingerprint is None
+        assert await monitor.run(now.add(minutes=5)) == 1
+
+
+async def test_monitor_translates_only_non_english_incident_details(tmp_path: Path) -> None:
+    provider = AsyncMock()
+    provider.fetch.return_value = _direct_snapshot(
+        api_status="degraded_performance",
+        detail="API 服务错误率升高，正在处理。",
+    )
+    delivery = AsyncMock()
+    translator = AsyncMock()
+    translator.translate_service_status.return_value = "API error rates are elevated and remediation is in progress."
+
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        await ServiceStatusMonitor((provider,), state, delivery, translator).run(
+            pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+        )
+
+    translator.translate_service_status.assert_awaited_once_with(
+        "API 服务错误率升高，正在处理。",
+        "en",
+    )
+    assert "API error rates are elevated" in delivery.publish_alert.await_args.args[1]
+
+
+async def test_monitor_uses_english_official_detail_without_llm(tmp_path: Path) -> None:
+    provider = AsyncMock()
+    provider.fetch.return_value = _direct_snapshot(
+        api_status="degraded_performance",
+        detail="API error rates are elevated and remediation is in progress.",
+    )
+    delivery = AsyncMock()
+    translator = AsyncMock()
+
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        await ServiceStatusMonitor((provider,), state, delivery, translator).run(
+            pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+        )
+
+    translator.translate_service_status.assert_not_awaited()
+
+
+async def test_monitor_falls_back_to_official_text_when_translation_fails(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    provider = AsyncMock()
+    official_detail = "API 服务错误率升高，正在处理。"
+    provider.fetch.return_value = _direct_snapshot(
+        api_status="degraded_performance",
+        detail=official_detail,
+    )
+    delivery = AsyncMock()
+    translator = AsyncMock()
+    translator.translate_service_status.side_effect = LLMError("translation unavailable")
+
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        await ServiceStatusMonitor((provider,), state, delivery, translator).run(
+            pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+        )
+
+    assert official_detail in delivery.publish_alert.await_args.args[1]
+    assert "using the official original text" in caplog.text
+    assert "translation unavailable" not in caplog.text

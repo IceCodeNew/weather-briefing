@@ -55,7 +55,6 @@ def parse_result(
         headline=structured.headline,
         headline_source_ids=cited_source_ids(structured.headline_source_ids),
         conclusions=sourced_text_items(structured.conclusions),
-        service_status=sourced_text_items(structured.service_status),
         active_warnings=warnings,
         resolved_warning_ids=tuple(structured.resolved_warning_ids),
         advice=advice,

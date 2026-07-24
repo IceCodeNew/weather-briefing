@@ -155,15 +155,17 @@ Open-Meteo 的逐小时空气质量和花粉预报按目标日峰值生成生活
 
 文章 ID 同时包含来源身份，用于去重和模型引用。同一内容出现在不同来源时保留不同 ID，以维持来源隔离。
 
-天气、服务状态和 RSS 都会转换为 `SourceDocument`，其中包含供模型引用的来源 ID、名称、语言和核验链接。模型输出中的来源 ID 必须属于本轮输入。渲染时按显示名称和 URL 去重。
+天气和 RSS 都会转换为 `SourceDocument`，其中包含供模型引用的来源 ID、名称、语言和核验链接。模型输出中的来源 ID 必须属于本轮输入。渲染时按显示名称和 URL 去重。
 
 ## AI 服务状态
 
-`ServiceStatusProvider` 与 `WeatherContextProvider` 同级，返回平台无关的 `ServiceStatusSnapshot`。每个厂商有独立 provider；当前注册 DeepSeek、OpenAI、Anthropic 和 Kimi。运行时通过 `SERVICE_STATUS_PROVIDERS` 选择，默认启用全部，空值关闭。
+`ServiceStatusProvider` 与 `WeatherContextProvider` 同级，返回平台无关的 `ServiceStatusSnapshot`。每个厂商适配器在独立模块中；当前注册 DeepSeek、OpenAI、Anthropic 和 Kimi。运行时通过 `SERVICE_STATUS_PROVIDERS` 选择，默认启用全部，空值关闭。
 
-OpenAI、Anthropic 和 Kimi provider 从官方状态页的 summary JSON 读取当前组件和未解决事件。DeepSeek 当前页面没有公开等价 JSON API，因此它的 provider 读取官方页面服务端渲染时内嵌的结构化快照。适配器严格校验响应，并把组件分类为 `web`、`api` 或 `other`；只有官方名称能明确归类的组件才进入前两类，未知组件不做推断。状态页失败属于可选来源失败，不阻断天气采集。服务状态与地点无关，因此每轮运行只采集一次，再把同一组不可变来源文档交给各地点编排。
+OpenAI、Anthropic 和 Kimi provider 从官方状态页的 summary JSON 读取当前组件和未解决事件。DeepSeek 当前页面没有公开等价 JSON API，因此它的 provider 读取官方页面服务端渲染时内嵌的结构化快照。适配器严格校验响应，并把组件分类为 `web`、`api` 或 `other`；只有官方名称能明确归类的组件才进入前两类，未知组件不做推断。状态页失败属于可选来源失败，不阻断其他状态源或天气任务。
 
-快照转换为独立来源文档并进入统一历史预算。`history_value` 排除页面更新时间，只保留组件状态和事件内容，避免没有状态变化时产生伪变化。结构化模型输出有独立的 `service_status` 字段，各投递端渲染为与天气并列的“服务状态”章节。
+服务状态使用 `SERVICE_STATUS_CRON` 独立调度，默认 `*/5 * * * *`。调度器可以同时注册天气和服务状态任务；两者只共享进程级状态锁，避免并发写入持久化状态。每个 provider 的组件状态和事件内容生成排除更新时间的稳定指纹。首次正常状态只建立基线；故障、故障说明变化和明确恢复通过现有投递通道直接发送，成功投递后才更新通知指纹，因此投递失败可以重试。
+
+直接提醒保留官方故障说明和核验链接。预定义通知文本从本地化资源读取，`SERVICE_STATUS_LANGUAGE` 允许选择 `en`、`zh-CN` 或 `ja`，默认 `en`。说明具备足够英文正文时不调用大语言模型；没有英文说明时只请求向通知语言忠实翻译，并在翻译失败时回退到官方原文。服务状态不进入天气 `SourceDocument`、历史预算或简报结构化输出。
 
 ## 大语言模型
 

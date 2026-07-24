@@ -4,6 +4,11 @@
       "zh": "zh-CN",
       "zh-Hans": "zh-CN",
       "zh-Hant": "zh-TW"
+    },
+    "service_status": {
+      "zh": "zh-CN",
+      "zh-Hans": "zh-CN",
+      "zh-Hant": "zh-TW"
     }
   },
   "tables": {
@@ -119,7 +124,6 @@
         "disasters": "Natural disaster updates",
         "html_source_separator": ", ",
         "plain_source_separator": "; ",
-        "service_status": "Service status",
         "sources": "Sources",
         "status_close": ")",
         "status_open": " (",
@@ -133,7 +137,6 @@
         "disasters": "自然災害情報",
         "html_source_separator": "、",
         "plain_source_separator": "；",
-        "service_status": "サービス状態",
         "sources": "出典",
         "status_close": "）",
         "status_open": "（",
@@ -147,7 +150,6 @@
         "disasters": "自然灾害动态",
         "html_source_separator": "、",
         "plain_source_separator": "；",
-        "service_status": "服务状态",
         "sources": "来源",
         "status_close": "）",
         "status_open": "（",
@@ -161,7 +163,6 @@
         "disasters": "自然災害動態",
         "html_source_separator": "、",
         "plain_source_separator": "；",
-        "service_status": "服務狀態",
         "sources": "來源",
         "status_close": "）",
         "status_open": "（",
@@ -193,6 +194,52 @@
         "lifestyle": "{name}（{category}）：{text}",
         "no_details": "無詳細建議",
         "unknown": "未知"
+      }
+    },
+    "service_status": {
+      "en": {
+        "active_incidents": "Active incidents",
+        "api_services": "API services",
+        "generic_issue": "The official status page reports an active service issue.",
+        "incident": "- {name} ({status}, {impact}): {detail}",
+        "other_services": "Other services",
+        "recovered": "All monitored services are operational and no active incidents remain.",
+        "recovery_title": "{source_name} recovered",
+        "source": "Source: {url}",
+        "web_services": "Web services"
+      },
+      "ja": {
+        "active_incidents": "進行中の障害",
+        "api_services": "API サービス",
+        "generic_issue": "公式ステータスページでサービス障害が報告されています。",
+        "incident": "- {name}（{status}、{impact}）：{detail}",
+        "other_services": "その他のサービス",
+        "recovered": "監視対象のサービスはすべて正常で、進行中の障害はありません。",
+        "recovery_title": "{source_name} 復旧",
+        "source": "出典：{url}",
+        "web_services": "Web サービス"
+      },
+      "zh-CN": {
+        "active_incidents": "当前故障",
+        "api_services": "API 服务",
+        "generic_issue": "官方状态页报告了正在发生的服务故障。",
+        "incident": "- {name}（{status}，{impact}）：{detail}",
+        "other_services": "其他服务",
+        "recovered": "所有受监控服务均已恢复正常，当前没有未解决故障。",
+        "recovery_title": "{source_name} 已恢复",
+        "source": "来源：{url}",
+        "web_services": "网页服务"
+      },
+      "zh-TW": {
+        "active_incidents": "目前故障",
+        "api_services": "API 服務",
+        "generic_issue": "官方狀態頁回報了正在發生的服務故障。",
+        "incident": "- {name}（{status}，{impact}）：{detail}",
+        "other_services": "其他服務",
+        "recovered": "所有受監控服務均已恢復正常，目前沒有未解決故障。",
+        "recovery_title": "{source_name} 已恢復",
+        "source": "來源：{url}",
+        "web_services": "網頁服務"
       }
     },
     "weather_document": {

@@ -9,6 +9,7 @@ from typing import overload
 from apscheduler.triggers.cron import CronTrigger
 
 from ..data.resources import reference_string_tuple
+from ..languages import normalize_language_tag
 from ..models import ResolvedLocation
 from ..registries import (
     LOCAL_WEATHER_CAPABILITY_PROVIDERS,
@@ -20,6 +21,7 @@ from .base import ConfigurationError
 
 SUPPORTED_WEATHER_PROVIDERS = frozenset(WeatherProviderName)
 SUPPORTED_SERVICE_STATUS_PROVIDERS = frozenset(ServiceStatusProviderName)
+SUPPORTED_SERVICE_STATUS_LANGUAGES = frozenset({"en", "ja", "zh-CN"})
 SUPPORTED_PUBLISHERS = frozenset(PublisherName)
 
 
@@ -93,6 +95,18 @@ def cron_hour(name: str, default: str) -> str:
     return value
 
 
+def cron_expression(name: str, default: str) -> str:
+    """Read and validate a standard five-field cron expression."""
+    value = clean_env(os.getenv(name, default))
+    if not value:
+        raise ConfigurationError(f"{name} must not be empty")
+    try:
+        CronTrigger.from_crontab(value)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be a valid five-field cron expression") from exc
+    return value
+
+
 def number(name: str, default: float) -> float:
     """Read one floating-point environment value."""
     try:
@@ -147,6 +161,19 @@ def configured_service_status_providers() -> tuple[str, ...]:
     if len(providers) != len(set(providers)):
         raise ConfigurationError("SERVICE_STATUS_PROVIDERS cannot contain duplicates")
     return providers
+
+
+def configured_service_status_language() -> str:
+    """Read the language used for direct service-status notifications."""
+    value = clean_env(os.getenv("SERVICE_STATUS_LANGUAGE", "en"))
+    try:
+        language = normalize_language_tag(value)
+    except ValueError as exc:
+        raise ConfigurationError("SERVICE_STATUS_LANGUAGE must be a supported language tag") from exc
+    if language not in SUPPORTED_SERVICE_STATUS_LANGUAGES:
+        supported = ", ".join(sorted(SUPPORTED_SERVICE_STATUS_LANGUAGES))
+        raise ConfigurationError(f"SERVICE_STATUS_LANGUAGE must be one of: {supported}")
+    return language
 
 
 def validate_weather_provider_order(providers: tuple[str, ...]) -> None:

@@ -1089,6 +1089,8 @@ class TestScheduleSettings:
         assert settings.greeting_hour == 8
         assert settings.greeting_minute == 0
         assert settings.hourly_cron == "9-23"
+        assert settings.service_status_cron == "*/5 * * * *"
+        assert settings.service_status_language == "en"
 
     def test_custom_greeting(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
@@ -1113,6 +1115,35 @@ class TestScheduleSettings:
         monkeypatch.setenv("BRIEFING_CRON", "")
 
         with pytest.raises(ConfigurationError, match="BRIEFING_CRON must not be empty"):
+            Settings.from_env()
+
+    def test_custom_service_status_cron(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_CRON", "*/2 8-20 * * 1-5")
+
+        assert Settings.from_env().service_status_cron == "*/2 8-20 * * 1-5"
+
+    @pytest.mark.parametrize("value", ("en", "zh-CN", "ja"))
+    def test_service_status_notification_language(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_LANGUAGE", value)
+
+        assert Settings.from_env().service_status_language == value
+
+    @pytest.mark.parametrize("value", ("", "fr", "zh-Hant", "not_a_language"))
+    def test_invalid_service_status_notification_language_rejected(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_LANGUAGE", value)
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_LANGUAGE"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("value", ("", "*/5", "60 * * * *", "* * * * * *"))
+    def test_invalid_service_status_cron_rejected(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_CRON", value)
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_CRON"):
             Settings.from_env()
 
     @pytest.mark.parametrize("value", ("foo", "24", "9-", "9 - 18"))
