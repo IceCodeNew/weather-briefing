@@ -50,11 +50,11 @@
 
 ## LLM 自定义 header 复用 SDK client 配置
 
-any-llm 1.x 没有跨 provider 的统一 HTTP header 接口，但官方镜像预装的 DeepSeek、OpenAI 和 OpenRouter 共用 OpenAI-compatible client，并接受 `default_headers`。应用只在用户配置非空 header 映射时传入这个 client 参数，不创建或接管额外 HTTP transport，因此未使用该功能的其他 any-llm provider 保持原有初始化行为和资源生命周期。
+当前假设与约束是：官方镜像固定的 any-llm 1.x 没有跨 provider 的统一 HTTP header 接口，而已验证会把 `default_headers` 交给 OpenAI-compatible client 的 provider 只有 DeepSeek、OpenAI 和 OpenRouter。因此，配置入口只允许这三个 provider 使用自定义 header；应用只在映射非空时传入这个 client 参数，也不创建或接管额外 HTTP transport。
 
-自定义 header 可以承载网关凭据，也可以覆盖 SDK 生成的 `Authorization`、`User-Agent` 等字段。配置入口因此只接受合法 ASCII HTTP 字段，并且日志和错误不能包含 header 名称或值；覆盖认证字段后的正确性由部署者负责。
+这个限制目前可以接受，因为它覆盖镜像内需要该能力且已经验证构造参数和资源生命周期的 provider，同时让其他 any-llm provider 继续使用原有初始化路径，而不是冒险向未知构造函数传参。自定义 header 可以承载网关凭据，也可以覆盖 SDK 生成的 `Authorization`、`User-Agent` 等字段；配置入口因此只接受合法 ASCII HTTP 字段，并且日志和错误不能包含 header 名称或值，覆盖认证字段后的正确性由部署者负责。
 
-如果 any-llm 提供统一且带能力声明的 header 配置接口，就改用该接口并重新评估官方支持范围。在此之前，不能把当前透传能力描述为适用于所有 provider。
+出现以下任一可检查变化时必须复查：升级 any-llm 固定版本；DeepSeek、OpenAI 或 OpenRouter 不再通过接受 `default_headers` 的 OpenAI-compatible client；新增 provider 需要自定义 header；或者 any-llm 提供统一且带能力声明的 header 接口。届时应重新验证 provider 构造和请求行为，更新允许列表，或者改用统一接口；在此之前，不能把当前透传能力描述为适用于所有 provider。
 
 ## FallbackLLMProvider 在进程内保持粘性
 

@@ -26,6 +26,8 @@ from .schema import (
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
+DEFAULT_HEADERS_PROVIDERS = frozenset({"deepseek", "openai", "openrouter"})
+
 
 class LLMCompletionClient(Protocol):
     """Expose the any-llm completion operation used by the application adapter."""
@@ -267,6 +269,8 @@ def create_any_llm_provider(
     provider_class = AnyLLM.get_provider_class(provider)
     if not provider_class.SUPPORTS_COMPLETION:
         raise ValueError(f"any-llm provider does not support completion: {provider}")
+    if extra_headers and provider not in DEFAULT_HEADERS_PROVIDERS:
+        raise ValueError(f"Custom headers are not supported for any-llm provider: {provider}")
     client_options: dict[str, object] = {"api_key": api_key, "api_base": api_base}
     if extra_headers:
         client_options["default_headers"] = extra_headers

@@ -13,6 +13,7 @@ from any_llm import AnyLLM
 
 from ..data.bark import BARK_DEFAULT_LLM_MAX_OUTPUT_TOKENS, BARK_MAX_MESSAGE_LENGTH
 from ..data.service_endpoints import BARK_BASE_URL
+from ..llm.any_llm import DEFAULT_HEADERS_PROVIDERS
 from ..models import FeedConfig, LocationSpec
 from ..registries import PublisherName
 from .base import ConfigurationError
@@ -167,6 +168,7 @@ class Settings:
         if not llm_model:
             raise ConfigurationError("Missing required environment variable: LLM_MODEL")
         llm_extra_headers = headers_from_env("LLM_EXTRA_HEADERS")
+        _validate_llm_headers_provider("LLM_EXTRA_HEADERS", "LLM_PROVIDER", llm_provider, llm_extra_headers)
         llm_fallback_provider = clean_env(os.getenv("LLM_FALLBACK_PROVIDER")) or None
         llm_fallback_model = clean_env(os.getenv("LLM_FALLBACK_MODEL")) or None
         if (llm_fallback_provider is None) != (llm_fallback_model is None):
@@ -182,6 +184,13 @@ class Settings:
         llm_fallback_extra_headers = headers_from_env("LLM_FALLBACK_EXTRA_HEADERS")
         if llm_fallback_extra_headers and llm_fallback_provider is None:
             raise ConfigurationError("LLM_FALLBACK_EXTRA_HEADERS requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL")
+        if llm_fallback_provider is not None:
+            _validate_llm_headers_provider(
+                "LLM_FALLBACK_EXTRA_HEADERS",
+                "LLM_FALLBACK_PROVIDER",
+                llm_fallback_provider,
+                llm_fallback_extra_headers,
+            )
         locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
@@ -307,3 +316,15 @@ def _validate_llm_provider(setting_name: str, provider: str) -> None:
         raise ConfigurationError(f"Unsupported {setting_name}: {provider}")
     if not AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION:
         raise ConfigurationError(f"{setting_name} does not support completion: {provider}")
+
+
+def _validate_llm_headers_provider(
+    headers_setting_name: str,
+    provider_setting_name: str,
+    provider: str,
+    headers: Mapping[str, str],
+) -> None:
+    """Limit custom headers to providers with a verified SDK client option."""
+    if headers and provider not in DEFAULT_HEADERS_PROVIDERS:
+        supported = ", ".join(sorted(DEFAULT_HEADERS_PROVIDERS))
+        raise ConfigurationError(f"{headers_setting_name} requires {provider_setting_name} to be one of: {supported}")

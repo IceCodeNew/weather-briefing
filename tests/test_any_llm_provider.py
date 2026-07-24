@@ -223,6 +223,21 @@ async def test_factory_passes_configured_headers_as_client_defaults(monkeypatch)
     ]
 
 
+def test_factory_rejects_headers_for_an_unsupported_provider(monkeypatch) -> None:
+    create = Mock()
+    monkeypatch.setattr(AnyLLM, "create", create)
+
+    with pytest.raises(ValueError, match="Custom headers are not supported for any-llm provider: mistral"):
+        create_any_llm_provider(
+            "mistral",
+            "model",
+            1024,
+            extra_headers={"User-Agent": "weather-briefing/1"},
+        )
+
+    create.assert_not_called()
+
+
 async def test_factory_owned_provider_closes_underlying_sdk_clients(monkeypatch) -> None:
     closed: list[str] = []
 

@@ -1090,6 +1090,32 @@ def test_llm_extra_headers_are_loaded_as_immutable_mappings(monkeypatch) -> None
     assert not hasattr(settings.llm_extra_headers, "__setitem__")
 
 
+def test_llm_extra_headers_reject_an_unsupported_primary_provider(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "mistral")
+    monkeypatch.setenv("LLM_MODEL", "generic-model")
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1"}')
+
+    with pytest.raises(
+        ConfigurationError,
+        match="LLM_EXTRA_HEADERS requires LLM_PROVIDER to be one of: deepseek, openai, openrouter",
+    ):
+        Settings.from_env()
+
+
+def test_llm_extra_headers_reject_an_unsupported_fallback_provider(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "mistral")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "generic-model")
+    monkeypatch.setenv("LLM_FALLBACK_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1"}')
+
+    with pytest.raises(
+        ConfigurationError,
+        match=("LLM_FALLBACK_EXTRA_HEADERS requires LLM_FALLBACK_PROVIDER to be one of: deepseek, openai, openrouter"),
+    ):
+        Settings.from_env()
+
+
 @pytest.mark.parametrize(
     ("configured", "message"),
     (
