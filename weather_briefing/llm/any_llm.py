@@ -136,6 +136,14 @@ class AnyLLMStructuredProvider:
                     max_tokens=min(self._max_output_tokens, 256),
                 )
         except LengthFinishReasonError as exc:
+            _LOGGER.warning(
+                "LLM notification decision reached output token limit: "
+                "provider=%s model=%r max_output_tokens=%d error_type=%s",
+                self._provider,
+                self._model,
+                min(self._max_output_tokens, 256),
+                type(exc).__name__,
+            )
             raise LLMOutputLimitError("LLM notification decision reached output token limit") from exc
         except AnyLLMError as exc:
             raise LLMRequestError("LLM notification decision request failed") from exc
@@ -178,6 +186,13 @@ class AnyLLMStructuredProvider:
                     max_tokens=min(self._max_output_tokens, 2048),
                 )
         except LengthFinishReasonError as exc:
+            _LOGGER.warning(
+                "LLM translation reached output token limit: provider=%s model=%r max_output_tokens=%d error_type=%s",
+                self._provider,
+                self._model,
+                min(self._max_output_tokens, 2048),
+                type(exc).__name__,
+            )
             raise LLMOutputLimitError("LLM translation reached output token limit") from exc
         except AnyLLMError as exc:
             raise LLMRequestError("LLM translation request failed") from exc

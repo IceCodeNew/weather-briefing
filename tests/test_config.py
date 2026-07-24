@@ -20,6 +20,8 @@ def _required_environment(monkeypatch) -> None:
     values = {
         "DEEPSEEK_API_KEY": "test-key",
         "LLM_MODEL": "test-model",
+        "TELEGRAM_BOT_TOKEN": "test-token",
+        "TELEGRAM_CHAT_ID": "test-chat",
         "BRIEFING_LOCATIONS_FILE": str(Path(__file__).parents[1] / "locations.example.json"),
         "RSS_SOURCES_FILE": str(Path(__file__).parents[1] / "rss-sources.example.json"),
     }
@@ -1332,6 +1334,33 @@ class TestConfigErrorPaths:
 
         assert Settings.from_env().service_status_providers == ()
 
+    def test_service_status_only_mode_does_not_require_locations_or_rss(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai")
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(tmp_path / "missing-locations.json"))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "missing-rss.json"))
+
+        settings = Settings.from_env()
+
+        assert not settings.weather_briefings_enabled
+        assert settings.locations == ()
+        assert settings.feeds == ()
+
+    def test_missing_locations_remains_an_error_without_explicit_status_sources(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.delenv("SERVICE_STATUS_PROVIDERS", raising=False)
+        monkeypatch.setenv(
+            "BRIEFING_LOCATIONS_FILE",
+            str(tmp_path / "missing-locations.json"),
+        )
+
+        with pytest.raises(ConfigurationError, match="Configure at least one location"):
+            Settings.from_env()
+
     def test_service_status_publishers_accept_multiple_platforms(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("PUBLISHER", "stdout")
@@ -1343,6 +1372,35 @@ class TestConfigErrorPaths:
         assert settings.service_status_publishers == ("telegram", "bark")
         assert settings.briefing_max_characters == 3500
         assert settings.llm_max_output_tokens == 8192
+
+    @pytest.mark.parametrize(
+        ("missing_name", "message"),
+        (
+            ("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"),
+            ("TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID"),
+        ),
+    )
+    def test_service_status_telegram_requires_credentials(
+        self,
+        monkeypatch,
+        missing_name: str,
+        message: str,
+    ) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram")
+        monkeypatch.delenv(missing_name)
+
+        with pytest.raises(ConfigurationError, match=message):
+            Settings.from_env()
+
+    def test_weather_telegram_requires_credentials(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "telegram")
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+
+        with pytest.raises(ConfigurationError, match="TELEGRAM_BOT_TOKEN"):
+            Settings.from_env()
 
     @pytest.mark.parametrize(
         ("value", "message"),

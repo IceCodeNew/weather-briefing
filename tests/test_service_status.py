@@ -464,19 +464,22 @@ async def test_changed_revision_supplies_previous_official_message_to_decision(t
     assert payload["current"]["status"] == "resolved"
 
 
-async def test_delivery_failure_retries_the_same_revision(tmp_path: Path) -> None:
+async def test_delivery_failure_retries_the_same_revision(tmp_path: Path, caplog) -> None:
     message = _message()
     provider, delivery, decision, translator = _monitor_dependencies(_snapshot(message))
     delivery.publish_alert.side_effect = [RuntimeError("down"), None]
-    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+    with (
+        SQLiteStateStore(tmp_path / "state.sqlite3") as state,
+        caplog.at_level("ERROR", logger="weather_briefing.service_status"),
+    ):
         monitor = ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator)
-        with pytest.raises(RuntimeError, match="down"):
-            await monitor.run(pendulum.now("UTC"))
+        assert await monitor.run(pendulum.now("UTC")) == 0
         stored = state.service_status_message_state("service-status:test", message.incident_id)
         assert stored is not None and stored.handled_revision_id is None
         assert await monitor.run(pendulum.now("UTC")) == 1
 
     assert delivery.publish_alert.await_count == 2
+    assert "source=service-status:test incident=incident-1" in caplog.text
 
 
 async def test_partial_delivery_failure_retries_only_pending_publishers(tmp_path: Path) -> None:
@@ -492,8 +495,7 @@ async def test_partial_delivery_failure_retries_only_pending_publishers(tmp_path
             decision,
             translator,
         )
-        with pytest.raises(RuntimeError, match="down"):
-            await monitor.run(pendulum.now("UTC"))
+        assert await monitor.run(pendulum.now("UTC")) == 0
         assert state.service_status_delivered_publishers(
             "service-status:test",
             message.incident_id,
@@ -504,6 +506,28 @@ async def test_partial_delivery_failure_retries_only_pending_publishers(tmp_path
     first.publish_alert.assert_awaited_once()
     assert second.publish_alert.await_count == 2
     decision.assess_notification.assert_awaited_once()
+
+
+async def test_message_failure_does_not_block_remaining_messages(tmp_path: Path) -> None:
+    first_message = _message(incident_id="first")
+    second_message = _message(incident_id="second")
+    provider, delivery, decision, translator = _monitor_dependencies(_snapshot(first_message, second_message))
+    delivery.publish_alert.side_effect = [RuntimeError("down"), None]
+    with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
+        monitor = ServiceStatusMonitor(
+            (provider,),
+            state,
+            (("test", delivery),),
+            decision,
+            translator,
+        )
+        assert await monitor.run(pendulum.now("UTC")) == 1
+        first_state = state.service_status_message_state("service-status:test", "first")
+        second_state = state.service_status_message_state("service-status:test", "second")
+
+    assert first_state is not None and first_state.handled_revision_id is None
+    assert second_state is not None
+    assert second_state.handled_revision_id == second_message.revision_id
 
 
 async def test_mismatched_official_language_is_translated(tmp_path: Path) -> None:
@@ -552,6 +576,8 @@ async def test_translation_failure_falls_back_to_official_text(tmp_path: Path, c
     ("title", "body", "target", "expected"),
     (
         ("API incident", "We are investigating elevated errors.", "zh-CN", True),
+        ("Resolved", "Resolved.", "en", True),
+        ("Resolved", "Resolved.", "zh-CN", True),
         ("搜索请求出现大量报错", "This incident has been resolved.", "en", True),
         ("搜索服务故障", "搜索服务发生错误。", "zh-CN", True),
         ("検索障害", "検索サービスでエラーが発生しています。", "ja", True),

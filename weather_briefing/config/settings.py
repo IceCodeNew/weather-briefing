@@ -58,6 +58,7 @@ class Settings:
     geocoding_cache_path: Path
     rss_sources_path: Path
     feeds: tuple[FeedConfig, ...]
+    weather_briefings_enabled: bool
     weather_providers: tuple[str, ...] | None
     service_status_providers: tuple[str, ...]
     service_status_publishers: tuple[str, ...]
@@ -100,7 +101,14 @@ class Settings:
         """Load and validate application settings from the environment."""
         locations_path = path_from_env("BRIEFING_LOCATIONS_FILE", "locations.json")
         rss_sources_path = path_from_env("RSS_SOURCES_FILE", "rss-sources.json")
-        feeds = load_feeds(rss_sources_path)
+        service_status_providers = configured_service_status_providers()
+        weather_briefings_enabled = locations_path.is_file()
+        service_status_only_requested = os.getenv("SERVICE_STATUS_PROVIDERS") is not None and bool(
+            service_status_providers
+        )
+        if not weather_briefings_enabled and not service_status_only_requested:
+            load_locations(locations_path)
+        feeds = load_feeds(rss_sources_path) if weather_briefings_enabled else ()
         try:
             timezone = pendulum.timezone(clean_env(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai")))
         except (ValueError, KeyError) as exc:
@@ -113,6 +121,16 @@ class Settings:
         service_status_publishers = configured_service_status_publishers(selected_publisher)
         bark_selected = selected_publisher == PublisherName.BARK
         bark_configured = selected_publisher == PublisherName.BARK or PublisherName.BARK in service_status_publishers
+        telegram_configured = (
+            selected_publisher == PublisherName.TELEGRAM or PublisherName.TELEGRAM in service_status_publishers
+        )
+        telegram_bot_token = clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None
+        telegram_chat_id = clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None
+        if telegram_configured:
+            if telegram_bot_token is None:
+                raise ConfigurationError("Missing required environment variable: TELEGRAM_BOT_TOKEN")
+            if telegram_chat_id is None:
+                raise ConfigurationError("Missing required environment variable: TELEGRAM_CHAT_ID")
         if bark_selected:
             briefing_max_characters = bounded_positive_integer(
                 "BRIEFING_MAX_CHARACTERS",
@@ -144,7 +162,7 @@ class Settings:
             llm_base_url = None
         if not llm_model:
             raise ConfigurationError("Missing required environment variable: LLM_MODEL")
-        locations = load_locations(locations_path)
+        locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
             location_id for feed in feeds for location_id in feed.location_ids if location_id not in location_ids
@@ -217,8 +235,9 @@ class Settings:
             geocoding_cache_path=path_from_env("GEOCODING_CACHE_PATH", "state/geocoding.json"),
             rss_sources_path=rss_sources_path,
             feeds=feeds,
+            weather_briefings_enabled=weather_briefings_enabled,
             weather_providers=configured_weather_providers(),
-            service_status_providers=configured_service_status_providers(),
+            service_status_providers=service_status_providers,
             service_status_publishers=service_status_publishers,
             service_status_language=configured_service_status_language(),
             qweather_project_id=clean_env(os.getenv("QWEATHER_PROJECT_ID")) or None,
@@ -231,8 +250,8 @@ class Settings:
             aqicn_api_token=clean_env(os.getenv("AQICN_API_TOKEN")) or None,
             state_path=state_path_from_env(),
             publisher=selected_publisher,
-            telegram_bot_token=clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,
-            telegram_chat_id=clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None,
+            telegram_bot_token=telegram_bot_token,
+            telegram_chat_id=telegram_chat_id,
             bark_device_key=bark_device_key,
             bark_base_url=bark_base_url,
             bark_group=bark_group,

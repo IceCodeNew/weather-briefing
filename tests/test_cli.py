@@ -297,6 +297,7 @@ class TestInSchedule:
         monkeypatch.setenv("GREETING_MINUTE", "30")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
         monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+        monkeypatch.setenv("PUBLISHER", "stdout")
         monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(Path(__file__).parents[1] / "locations.example.json"))
         monkeypatch.setenv("RSS_SOURCES_FILE", str(Path(__file__).parents[1] / "rss-sources.example.json"))
 
@@ -311,6 +312,7 @@ class TestInSchedule:
         monkeypatch.setenv("BRIEFING_CRON", "10-18")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
         monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+        monkeypatch.setenv("PUBLISHER", "stdout")
         monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(Path(__file__).parents[1] / "locations.example.json"))
         monkeypatch.setenv("RSS_SOURCES_FILE", str(Path(__file__).parents[1] / "rss-sources.example.json"))
 
@@ -770,6 +772,7 @@ _DEFAULT_SETTINGS = Settings(
     geocoding_cache_path=Path("state/geocoding.json"),
     rss_sources_path=Path("rss-sources.json"),
     feeds=(),
+    weather_briefings_enabled=True,
     weather_providers=None,
     service_status_providers=("deepseek", "openai", "anthropic", "kimi"),
     service_status_publishers=("stdout",),
@@ -1607,14 +1610,19 @@ def test_publisher_builders_cover_declared_configuration_names() -> None:
 
 
 @pytest.mark.parametrize(
-    ("service_status_providers", "expected_status_job"),
-    ((("openai",), True), ((), False)),
+    ("weather_briefings_enabled", "service_status_providers", "expected_jobs"),
+    (
+        (True, ("openai",), ((run, ("forecast", True)), (run, ("briefing", True)), (run_service_status, ()))),
+        (True, (), ((run, ("forecast", True)), (run, ("briefing", True)))),
+        (False, ("openai",), ((run_service_status, ()),)),
+    ),
 )
 async def test_daemon_schedules_weather_and_optional_service_status_without_running_immediately(
     monkeypatch,
     tmp_path: Path,
+    weather_briefings_enabled: bool,
     service_status_providers: tuple[str, ...],
-    expected_status_job: bool,
+    expected_jobs: tuple[tuple[object, tuple[object, ...]], ...],
 ) -> None:
     from unittest.mock import patch
 
@@ -1651,6 +1659,7 @@ async def test_daemon_schedules_weather_and_optional_service_status_without_runn
     settings = replace(
         _make_fake_settings(),
         state_path=state_path,
+        weather_briefings_enabled=weather_briefings_enabled,
         service_status_providers=service_status_providers,
     )
 
@@ -1661,13 +1670,7 @@ async def test_daemon_schedules_weather_and_optional_service_status_without_runn
     with patch.object(Settings, "from_env", classmethod(load_settings)):
         await daemon()
 
-    expected_jobs = [
-        (run, ("forecast", True)),
-        (run, ("briefing", True)),
-    ]
-    if expected_status_job:
-        expected_jobs.append((run_service_status, ()))
-    assert jobs == expected_jobs
+    assert jobs == list(expected_jobs)
     assert not lock_is_held
 
 

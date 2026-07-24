@@ -451,26 +451,27 @@ async def _daemon(state_path: Path) -> None:
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    scheduler.add_job(
-        run,
-        CronTrigger(
-            hour=settings.greeting_hour,
-            minute=settings.greeting_minute,
-            timezone=settings.timezone,
-        ),
-        args=("forecast", True),
-        max_instances=1,
-    )
-    scheduler.add_job(
-        run,
-        CronTrigger(
-            hour=settings.hourly_cron,
-            minute=0,
-            timezone=settings.timezone,
-        ),
-        args=("briefing", True),
-        max_instances=1,
-    )
+    if settings.weather_briefings_enabled:
+        scheduler.add_job(
+            run,
+            CronTrigger(
+                hour=settings.greeting_hour,
+                minute=settings.greeting_minute,
+                timezone=settings.timezone,
+            ),
+            args=("forecast", True),
+            max_instances=1,
+        )
+        scheduler.add_job(
+            run,
+            CronTrigger(
+                hour=settings.hourly_cron,
+                minute=0,
+                timezone=settings.timezone,
+            ),
+            args=("briefing", True),
+            max_instances=1,
+        )
     if settings.service_status_providers:
         scheduler.add_job(
             run_service_status,

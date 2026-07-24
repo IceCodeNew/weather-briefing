@@ -16,6 +16,7 @@ from .models import ServiceStatusMessage, ServiceStatusSnapshot
 from .statuspage import ServiceStatusProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service_status")
+_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
 _ASCII_LETTER = re.compile(r"[A-Za-z]")
 _HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _KANA = re.compile(r"[\u3040-\u30ff]")
@@ -136,8 +137,15 @@ class ServiceStatusMonitor:
         published = 0
         for snapshot in snapshots:
             for message in snapshot.messages:
-                if await self._process_message(snapshot, message, now):
-                    published += 1
+                try:
+                    if await self._process_message(snapshot, message, now):
+                        published += 1
+                except Exception:
+                    _LOGGER.exception(
+                        "Service-status message processing failed source=%s incident=%s",
+                        snapshot.source_id,
+                        message.incident_id,
+                    )
         return published
 
     async def _process_message(
@@ -276,10 +284,13 @@ def official_message_matches(message: ServiceStatusMessage, target_language: str
         return bool(_HAN.search(text)) and not _KANA.search(text)
     if target_language == "ja":
         return bool(_KANA.search(text))
-    return target_language == "en" and _looks_english(text)
+    return False
 
 
 def _looks_english(text: str) -> bool:
+    letters = len(_LETTER.findall(text))
     ascii_letters = len(_ASCII_LETTER.findall(text))
-    language_markers = len(_HAN.findall(text)) + len(_KANA.findall(text))
-    return ascii_letters >= 20 and (language_markers == 0 or ascii_letters >= language_markers * 3)
+    non_ascii_letters = letters - ascii_letters
+    if non_ascii_letters == 0:
+        return ascii_letters > 0
+    return ascii_letters >= 20 and ascii_letters / letters >= 0.75

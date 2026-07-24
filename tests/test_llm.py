@@ -467,6 +467,7 @@ async def test_service_status_translation_wraps_sdk_failures(
     error: BaseException,
     exception: type[Exception],
     message: str,
+    caplog,
 ) -> None:
     provider = AnyLLMStructuredProvider(
         _CompletionClientStub(error=error),
@@ -475,8 +476,15 @@ async def test_service_status_translation_wraps_sdk_failures(
         max_output_tokens=1024,
     )
 
-    with pytest.raises(exception, match=message):
+    with (
+        caplog.at_level(logging.WARNING, logger="weather_briefing.llm"),
+        pytest.raises(exception, match=message),
+    ):
         await provider.translate_service_status("障害", "調査中です。", "en")
+
+    if isinstance(error, LengthFinishReasonError):
+        assert "LLM translation reached output token limit" in caplog.text
+        assert "provider=openai model='model'" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -494,6 +502,7 @@ async def test_notification_decision_wraps_sdk_failures(
     error: BaseException,
     exception: type[Exception],
     message: str,
+    caplog,
 ) -> None:
     provider = AnyLLMStructuredProvider(
         _CompletionClientStub(error=error),
@@ -502,8 +511,15 @@ async def test_notification_decision_wraps_sdk_failures(
         max_output_tokens=1024,
     )
 
-    with pytest.raises(exception, match=message):
+    with (
+        caplog.at_level(logging.WARNING, logger="weather_briefing.llm"),
+        pytest.raises(exception, match=message),
+    ):
         await provider.assess_notification({"notification_kind": "service_status"})
+
+    if isinstance(error, LengthFinishReasonError):
+        assert "LLM notification decision reached output token limit" in caplog.text
+        assert "provider=openai model='model'" in caplog.text
 
 
 def test_service_status_translation_decoder_accepts_parsed_output() -> None:
