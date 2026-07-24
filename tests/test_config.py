@@ -1318,8 +1318,15 @@ class TestConfigErrorPaths:
         ):
             Settings.from_env()
 
-    def test_service_status_providers_default_to_official_sources(self, monkeypatch) -> None:
+    def test_service_status_providers_default_to_disabled(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
+        monkeypatch.delenv("SERVICE_STATUS_PROVIDERS", raising=False)
+
+        assert Settings.from_env().service_status_providers == ()
+
+    def test_service_status_providers_accept_official_sources(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "deepseek,openai,anthropic,kimi")
 
         assert Settings.from_env().service_status_providers == (
             "deepseek",
@@ -1364,6 +1371,7 @@ class TestConfigErrorPaths:
     def test_service_status_publishers_accept_multiple_platforms(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai")
         monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram,bark")
         monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
 
@@ -1402,6 +1410,7 @@ class TestConfigErrorPaths:
     ) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai")
         monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram")
         monkeypatch.delenv(missing_name)
 

@@ -150,8 +150,7 @@ def configured_weather_providers() -> tuple[str, ...] | None:
 
 def configured_service_status_providers() -> tuple[str, ...]:
     """Read the enabled official service-status providers."""
-    default = ",".join(ServiceStatusProviderName)
-    configured = clean_env(os.getenv("SERVICE_STATUS_PROVIDERS", default))
+    configured = clean_env(os.getenv("SERVICE_STATUS_PROVIDERS", ""))
     if not configured:
         return ()
     providers = tuple(item.strip() for item in configured.split(",") if item.strip())
