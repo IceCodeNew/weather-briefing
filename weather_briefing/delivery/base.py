@@ -48,6 +48,10 @@ class DeliveryProvider:
 
     def __post_init__(self) -> None:
         """Validate the delivery policy independently of the transport."""
+        if self.single_message_limit is not None and (
+            type(self.single_message_limit) is not int or self.single_message_limit <= 0
+        ):
+            raise ValueError("single_message_limit must be positive")
         if type(self.briefing_max_messages) is not int or self.briefing_max_messages <= 0:
             raise ValueError("briefing_max_messages must be positive")
         if self.briefing_max_messages > 1 and self.single_message_limit is None:

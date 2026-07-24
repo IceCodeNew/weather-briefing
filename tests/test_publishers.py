@@ -103,6 +103,16 @@ def test_delivery_provider_rejects_invalid_briefing_chunk_policy(
         )
 
 
+@pytest.mark.parametrize("single_message_limit", (0, -1, False, True, 1.5, "650"))
+def test_delivery_provider_rejects_invalid_single_message_limit(single_message_limit: Any) -> None:
+    with pytest.raises(ValueError, match="single_message_limit must be positive"):
+        DeliveryProvider(
+            PlainTextRenderer(),
+            NoopPublisher(),
+            single_message_limit=single_message_limit,
+        )
+
+
 @pytest.mark.parametrize(("single_message_limit", "briefing_max_messages"), ((None, 1), (650, 2)))
 def test_delivery_provider_accepts_positive_integer_briefing_chunk_policy(
     single_message_limit: int | None,
