@@ -67,7 +67,7 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
 
 @pytest.mark.parametrize(
     ("selected_publisher", "briefing_max_characters", "llm_max_output_tokens"),
-    (("bark", 650, 2048), ("stdout", 3500, 8192), ("telegram", 3500, 8192)),
+    (("bark", 650, 4096), ("stdout", 3500, 8192), ("telegram", 3500, 8192)),
 )
 def test_publisher_selects_generation_defaults(
     monkeypatch,
@@ -109,7 +109,7 @@ def test_bark_llm_token_default_is_independent_of_briefing_limit(monkeypatch) ->
     settings = Settings.from_env()
 
     assert settings.briefing_max_characters == 500
-    assert settings.llm_max_output_tokens == 2048
+    assert settings.llm_max_output_tokens == 4096
 
 
 @pytest.mark.parametrize("selected_publisher", ("stdout", "telegram"))

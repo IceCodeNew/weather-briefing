@@ -50,8 +50,15 @@ def test_prompt_compares_primary_language_before_translating() -> None:
 def test_prompt_condenses_the_overview_into_the_headline() -> None:
     assert "将当下最重要的天气概况浓缩其中" in SYSTEM_PROMPT
     assert "不要另写摘要段落" in SYSTEM_PROMPT
+    assert "conclusions 通常合并为 1 至 2 项" in SYSTEM_PROMPT
+    assert "不得重复 headline 已表达的事实" in SYSTEM_PROMPT
     assert "- overview:" not in SYSTEM_PROMPT
     assert "overview_source_ids" not in SYSTEM_PROMPT
+
+
+def test_prompt_keeps_each_advice_topic_concise() -> None:
+    assert "每个 advice topic 只写一个短句" in SYSTEM_PROMPT
+    assert "只保留明确行动和不可省略的数值或等级" in SYSTEM_PROMPT
 
 
 def test_prompt_uses_a_soft_briefing_target_and_hard_output_limits() -> None:

@@ -347,9 +347,13 @@ class BriefingService:
                 for item in candidate.advice
             ):
                 raise LLMError("allergen advice must cite a current allergen-capable source")
-            if candidate_message.visible_length > briefing_limit:
+            if not self._delivery.briefing_fits(
+                candidate_message,
+                self._settings.briefing_max_characters,
+            ):
                 raise LLMError(
-                    f"briefing has {candidate_message.visible_length} visible characters; limit is {briefing_limit}"
+                    f"briefing has {candidate_message.visible_length} visible characters; "
+                    f"limit is {briefing_limit}; rendered fields do not fit the delivery chunks"
                 )
 
         result = await summarize_validated(

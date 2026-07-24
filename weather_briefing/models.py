@@ -256,3 +256,4 @@ class RenderedMessage:
 
     body: str
     visible_length: int
+    title: str | None = None

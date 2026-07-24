@@ -14,6 +14,10 @@ class LLMRequestError(LLMError):
     """Raised when an LLM request fails independently of the output contract."""
 
 
+class LLMOutputLimitError(LLMError):
+    """Raised when an LLM response is truncated at its output token limit."""
+
+
 class LLMProvider(Protocol):
     """Produce a structured briefing payload from validated source context."""
 
