@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import httpx
 import pytest
@@ -51,6 +52,7 @@ class CountingDiagnostics:
 class RecordingPublisher:
     def __init__(self) -> None:
         self.messages: list[RenderedMessage] = []
+        self.hints: list[tuple[bool, bool]] = []
 
     async def publish(
         self,
@@ -60,15 +62,90 @@ class RecordingPublisher:
         silent: bool = False,
     ) -> None:
         self.messages.append(message)
+        self.hints.append((single_message, silent))
 
 
 def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config() -> None:
     unrestricted = DeliveryProvider(PlainTextRenderer(), NoopPublisher())
     telegram_like = DeliveryProvider(PlainTextRenderer(), NoopPublisher(), 4096)
+    bark_like = DeliveryProvider(PlainTextRenderer(), NoopPublisher(), 650, 2)
 
     assert unrestricted.briefing_limit(5000) == 5000
     assert telegram_like.briefing_limit(5000) == 4096
     assert telegram_like.briefing_limit(3500) == 3500
+    assert bark_like.briefing_target(1300) == 650
+    assert bark_like.briefing_limit(5000) == 1300
+    assert bark_like.briefing_limit(500) == 1000
+
+
+@pytest.mark.parametrize(
+    ("single_message_limit", "briefing_max_messages", "message"),
+    (
+        (None, 0, "must be positive"),
+        (None, -1, "must be positive"),
+        (None, False, "must be positive"),
+        (None, True, "must be positive"),
+        (None, 1.5, "must be positive"),
+        (None, 2, "require a single_message_limit"),
+    ),
+)
+def test_delivery_provider_rejects_invalid_briefing_chunk_policy(
+    single_message_limit: int | None,
+    briefing_max_messages: Any,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        DeliveryProvider(
+            PlainTextRenderer(),
+            NoopPublisher(),
+            single_message_limit=single_message_limit,
+            briefing_max_messages=briefing_max_messages,
+        )
+
+
+@pytest.mark.parametrize("single_message_limit", (0, -1, False, True, 1.5, "650"))
+def test_delivery_provider_rejects_invalid_single_message_limit(single_message_limit: Any) -> None:
+    with pytest.raises(ValueError, match="single_message_limit must be positive"):
+        DeliveryProvider(
+            PlainTextRenderer(),
+            NoopPublisher(),
+            single_message_limit=single_message_limit,
+        )
+
+
+@pytest.mark.parametrize(("single_message_limit", "briefing_max_messages"), ((None, 1), (650, 2)))
+def test_delivery_provider_accepts_positive_integer_briefing_chunk_policy(
+    single_message_limit: int | None,
+    briefing_max_messages: int,
+) -> None:
+    delivery = DeliveryProvider(
+        PlainTextRenderer(),
+        NoopPublisher(),
+        single_message_limit=single_message_limit,
+        briefing_max_messages=briefing_max_messages,
+    )
+
+    assert delivery.briefing_max_messages == briefing_max_messages
+
+
+async def test_delivery_provider_allows_configured_briefing_splits() -> None:
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher, 650, 2)
+
+    await delivery.publish_briefing(RenderedMessage("briefing", 8), silent=True)
+
+    assert publisher.hints == [(False, True)]
+
+
+async def test_delivery_provider_rejects_briefing_beyond_configured_chunk_count() -> None:
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher, 650, 2)
+
+    with pytest.raises(DeliveryError, match="delivery limit") as error:
+        await delivery.publish_briefing(RenderedMessage("x" * 1301, 1301))
+
+    assert error.value.reason == "message-too-long"
+    assert publisher.messages == []
 
 
 async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:

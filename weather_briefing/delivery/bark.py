@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 
 import httpx
 
@@ -181,8 +182,10 @@ def split_plain_message(body: str, limit: int) -> tuple[str, ...]:
     chunks: list[str] = []
     remaining = body
     while len(remaining) > limit:
-        split_at = remaining.rfind("\n", 0, limit + 1)
-        if split_at <= 0:
+        remaining_chunk_count = math.ceil(len(remaining) / limit)
+        earliest_split = len(remaining) - (remaining_chunk_count - 1) * limit
+        split_at = remaining.rfind("\n", earliest_split, limit + 1)
+        if split_at < earliest_split:
             split_at = limit
         chunks.append(remaining[:split_at])
         remaining = remaining[split_at:]

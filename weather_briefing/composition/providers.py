@@ -111,6 +111,7 @@ def _build_bark_publisher(
             group=settings.bark_group,
         ),
         single_message_limit=BarkPublisher.MAX_MESSAGE_LENGTH,
+        briefing_max_messages=2,
         diagnostics=diagnostics,
     )
 

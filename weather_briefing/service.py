@@ -1,5 +1,7 @@
 """Core briefing orchestration and output contract enforcement."""
 
+# FILE_LENGTH_EXCEPTION: Keep the briefing transaction and its failure boundaries together.
+
 from __future__ import annotations
 
 import logging
@@ -81,6 +83,11 @@ class BriefingSettings(Protocol):
     @property
     def briefing_max_characters(self) -> int:
         """Return the configured briefing character budget."""
+        ...
+
+    @property
+    def llm_max_output_tokens(self) -> int:
+        """Return the configured structured output token budget."""
         ...
 
     @property
@@ -310,7 +317,11 @@ class BriefingService:
         active_warning_ids = {warning.id for warning in active_warnings}
         payload["allowed_resolved_warning_ids"] = sorted(active_warning_ids)
         briefing_limit = self._delivery.briefing_limit(self._settings.briefing_max_characters)
-        payload["output_constraints"] = {"briefing_max_characters": briefing_limit}
+        payload["output_constraints"] = {
+            "briefing_target_characters": self._delivery.briefing_target(self._settings.briefing_max_characters),
+            "briefing_max_characters": briefing_limit,
+            "llm_max_output_tokens": self._settings.llm_max_output_tokens,
+        }
         required_advice_topics = _required_advice_topics(kind, context)
         payload["required_advice_topics"] = [topic.value for topic in required_advice_topics]
         if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -382,7 +393,7 @@ class BriefingService:
             return None
 
         publish_silently = silent and kind == "briefing" and not result.should_publish
-        await self._delivery.publish_rendered(message, single_message=True, silent=publish_silently)
+        await self._delivery.publish_briefing(message, silent=publish_silently)
         self._save_result_state(
             kind,
             now,

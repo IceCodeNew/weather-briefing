@@ -6,7 +6,8 @@ from typing import Any
 
 import pendulum
 import pytest
-from any_llm.exceptions import ProviderError
+from any_llm.exceptions import LengthFinishReasonError, ProviderError
+from any_llm.types.completion import ParsedChatCompletion
 from pydantic import BaseModel
 
 from weather_briefing.llm import (
@@ -393,6 +394,30 @@ async def test_provider_wraps_sdk_error() -> None:
 
     with pytest.raises(LLMRequestError, match="LLM request"):
         await provider.summarize("prompt", {})
+
+
+async def test_provider_classifies_output_token_limit_without_logging_content(caplog) -> None:
+    truncated_completion = ParsedChatCompletion[object].model_construct()
+    client = _CompletionClientStub(error=LengthFinishReasonError(completion=truncated_completion))
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="openai",
+        model="test-model",
+        max_output_tokens=4096,
+    )
+
+    with (
+        caplog.at_level(logging.DEBUG, logger="weather_briefing.llm"),
+        pytest.raises(LLMRequestError, match="output token limit"),
+    ):
+        await provider.summarize("private prompt", {"content": "private body"})
+
+    assert "provider=openai" in caplog.text
+    assert "model='test-model'" in caplog.text
+    assert "max_output_tokens=4096" in caplog.text
+    assert "error_type=LengthFinishReasonError" in caplog.text
+    assert "private prompt" not in caplog.text
+    assert "private body" not in caplog.text
 
 
 async def test_provider_does_not_mask_programming_errors() -> None:
