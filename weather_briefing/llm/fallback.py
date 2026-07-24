@@ -67,13 +67,15 @@ class FallbackLLMProvider:
             return await fallback_call()
         try:
             return await primary_call()
-        except LLMRequestError:
+        except LLMRequestError as exc:
             self._using_fallback = True
+            error_type = type(exc.__cause__ or exc).__name__
             _LOGGER.warning(
-                "Primary LLM request failed; trying fallback operation=%s primary=%s fallback=%s",
+                "Primary LLM request failed; trying fallback operation=%s primary=%s fallback=%s error_type=%s",
                 operation,
                 self._primary_name,
                 self._fallback_name,
+                error_type,
             )
             return await fallback_call()
 

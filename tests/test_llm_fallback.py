@@ -145,7 +145,12 @@ async def test_fallback_failure_preserves_primary_as_context() -> None:
 async def test_fallback_log_excludes_exception_details(caplog) -> None:
     primary = _provider()
     fallback = _provider()
-    primary.summarize.side_effect = LLMRequestError("private upstream detail")
+    try:
+        raise RuntimeError("private upstream detail")
+    except RuntimeError as exc:
+        request_error = LLMRequestError("private request detail")
+        request_error.__cause__ = exc
+    primary.summarize.side_effect = request_error
     provider = FallbackLLMProvider(
         primary,
         fallback,
@@ -157,7 +162,9 @@ async def test_fallback_log_excludes_exception_details(caplog) -> None:
         await provider.summarize("system", {"input": "value"})
 
     assert "operation=summarize primary=primary fallback=fallback" in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
     assert "private upstream detail" not in caplog.text
+    assert "private request detail" not in caplog.text
 
 
 async def test_close_releases_both_providers() -> None:
