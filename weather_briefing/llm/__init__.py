@@ -9,12 +9,15 @@ from .base import (
     SensitiveLLMDiagnostics,
     serialize_llm_payload,
 )
+from .fallback import CompleteLLMProvider, FallbackLLMProvider
 from .lazy import LazyServiceStatusLLM
 from .result import parse_result
 from .schema import LLMStructuredOutput
 
 __all__ = [
     "AnyLLMStructuredProvider",
+    "CompleteLLMProvider",
+    "FallbackLLMProvider",
     "LLMError",
     "LLMOutputLimitError",
     "LLMProvider",

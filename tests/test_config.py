@@ -61,6 +61,10 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert [feed.id for feed in settings.feeds] == ["authority-weather"]
     assert settings.llm_provider == "deepseek"
     assert settings.llm_base_url is None
+    assert settings.llm_fallback_provider is None
+    assert settings.llm_fallback_model is None
+    assert settings.llm_fallback_api_key is None
+    assert settings.llm_fallback_base_url is None
     assert settings.llm_max_attempts == 3
     assert settings.qweather_jwt_lifetime_seconds == 900
     assert settings.llm_history_max_documents == 8
@@ -1052,6 +1056,37 @@ def test_any_llm_provider_uses_sdk_managed_configuration(monkeypatch) -> None:
     assert settings.llm_base_url is None
 
 
+def test_llm_fallback_provider_and_model_are_loaded(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "gpt-fallback")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_fallback_provider == "openai"
+    assert settings.llm_fallback_model == "gpt-fallback"
+    assert settings.llm_fallback_api_key is None
+    assert settings.llm_fallback_base_url is None
+
+
+@pytest.mark.parametrize("base_name", ("DEEPSEEK_API_BASE", "DEEPSEEK_BASE_URL"))
+def test_deepseek_fallback_uses_normalized_connection_settings(monkeypatch, base_name: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_MODEL", "primary-model")
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "deepseek-fallback")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "'fallback-key'")
+    monkeypatch.delenv("DEEPSEEK_API_BASE", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+    monkeypatch.setenv(base_name, "https://deepseek.example/v1/")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_fallback_api_key == "fallback-key"
+    assert settings.llm_fallback_base_url == "https://deepseek.example/v1"
+
+
 def test_deepseek_model_name_remains_compatible(monkeypatch) -> None:
     _required_environment(monkeypatch)
     monkeypatch.delenv("LLM_MODEL")
@@ -1195,6 +1230,42 @@ class TestConfigErrorPaths:
         monkeypatch.setenv("LLM_PROVIDER", "voyage")
 
         with pytest.raises(ConfigurationError, match="does not support completion"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize(
+        ("configured_name", "missing_name"),
+        (
+            ("LLM_FALLBACK_PROVIDER", "LLM_FALLBACK_MODEL"),
+            ("LLM_FALLBACK_MODEL", "LLM_FALLBACK_PROVIDER"),
+        ),
+    )
+    def test_incomplete_llm_fallback_configuration_raises_error(
+        self,
+        monkeypatch,
+        configured_name: str,
+        missing_name: str,
+    ) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv(configured_name, "openai")
+        monkeypatch.delenv(missing_name, raising=False)
+
+        with pytest.raises(ConfigurationError, match="must be configured together"):
+            Settings.from_env()
+
+    def test_unsupported_llm_fallback_provider_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "unsupported")
+        monkeypatch.setenv("LLM_FALLBACK_MODEL", "fallback-model")
+
+        with pytest.raises(ConfigurationError, match="Unsupported LLM_FALLBACK_PROVIDER"):
+            Settings.from_env()
+
+    def test_llm_fallback_provider_without_completion_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "voyage")
+        monkeypatch.setenv("LLM_FALLBACK_MODEL", "fallback-model")
+
+        with pytest.raises(ConfigurationError, match="LLM_FALLBACK_PROVIDER does not support completion"):
             Settings.from_env()
 
     def test_invalid_float_env_value_raises_error(self, monkeypatch) -> None:

@@ -21,7 +21,7 @@ from ..delivery import (
     TelegramHTMLRenderer,
     TelegramPublisher,
 )
-from ..llm import AnyLLMStructuredProvider, SensitiveLLMDiagnostics, any_llm
+from ..llm import CompleteLLMProvider, FallbackLLMProvider, SensitiveLLMDiagnostics, any_llm
 from ..models import ResolvedLocation
 from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 from ..weather import (
@@ -45,15 +45,31 @@ _LOGGER = logging.getLogger("weather_briefing")
 def llm_provider(
     settings: Settings,
     diagnostics: SensitiveLLMDiagnostics | None = None,
-) -> AnyLLMStructuredProvider:
-    """Build the configured any-llm adapter."""
-    return any_llm.create_any_llm_provider(
+) -> CompleteLLMProvider:
+    """Build the configured primary and optional fallback LLM adapters."""
+    primary = any_llm.create_any_llm_provider(
         settings.llm_provider,
         settings.llm_model,
         settings.llm_max_output_tokens,
         api_key=settings.api_key,
         api_base=settings.llm_base_url,
         diagnostics=diagnostics,
+    )
+    if settings.llm_fallback_provider is None or settings.llm_fallback_model is None:
+        return primary
+    fallback = any_llm.create_any_llm_provider(
+        settings.llm_fallback_provider,
+        settings.llm_fallback_model,
+        settings.llm_max_output_tokens,
+        api_key=settings.llm_fallback_api_key,
+        api_base=settings.llm_fallback_base_url,
+        diagnostics=diagnostics,
+    )
+    return FallbackLLMProvider(
+        primary,
+        fallback,
+        primary_name=settings.llm_provider,
+        fallback_name=settings.llm_fallback_provider,
     )
 
 

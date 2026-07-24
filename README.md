@@ -115,6 +115,7 @@ See [`docs/jma-office-codes.md`](docs/jma-office-codes.md) for the forecast offi
 At minimum, configure the following in `.env`:
 
 - `LLM_PROVIDER` and `LLM_MODEL`;
+- optionally, both `LLM_FALLBACK_PROVIDER` and `LLM_FALLBACK_MODEL`;
 - the credentials required by your chosen model service;
 - for Telegram delivery: `PUBLISHER=telegram`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`; or
 - for Bark delivery: `PUBLISHER=bark` and `BARK_DEVICE_KEY`, plus both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV` when encryption is enabled.
@@ -126,6 +127,8 @@ Bark sends plaintext when the encryption variables are absent. Encryption is rec
 To enable it, set both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV`. Follow the official documentation linked from [`env.example`](env.example) to generate the initial values and configure the Bark app. Each encrypted push carries a newly generated IV that the app uses for that message.
 
 Model calls are handled by any-llm. The credential variables needed by each service follow the [any-llm provider documentation](https://docs.mozilla.ai/any-llm/providers). The official image ships with the components required for DeepSeek, OpenAI, and OpenRouter.
+
+Fallback is disabled by default. Configure both fallback variables to retry a primary-provider request failure with the fallback. After the first such failure, the current run keeps using the fallback for all later LLM operations, including repairs, notification decisions, service-status translations, and briefings for other locations. The next scheduled or CLI run tries the primary again. Responses that violate the structured output contract stay with the provider that returned them and use the normal bounded repair attempts.
 
 RSS is optional and is not mounted by default. To enable RSS, create `rss-sources.json` based on [`rss-sources.example.json`](rss-sources.example.json), then add source names, URLs, and applicable locations. Add the following option to the `docker run` command before the image name:
 
