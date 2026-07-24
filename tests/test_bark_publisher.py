@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 
 import httpx
 import pytest
@@ -25,11 +26,17 @@ class EnabledDiagnostics:
         ("k" * 32, "a9CkBbe9d0qkskyAzKyb4pV/WjH6D1J/JLm0EOUTMcoTpJEs10gqANkkLKaOPqVXL0yo0AaxElYjmLmynw=="),
     ),
 )
-def test_bark_encryptor_matches_the_app_gcm_wire_format(key: str, expected_ciphertext: str) -> None:
-    encryptor = BarkEncryptor(key, "fixed-iv-123")
+def test_bark_encryptor_matches_the_app_gcm_wire_format(
+    key: str,
+    expected_ciphertext: str,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("secrets.token_urlsafe", lambda _: "fixed-iv-123")
+    encryptor = BarkEncryptor(key, "initial-iv-1")
 
     encrypted = encryptor.encrypt({"body": "Encrypted weather", "level": "active"})
 
+    assert encrypted.iv == "fixed-iv-123"
     assert encrypted.ciphertext == expected_ciphertext
     plaintext = AESGCM(key.encode()).decrypt(
         encrypted.iv.encode(),
@@ -136,6 +143,8 @@ async def test_bark_publisher_sends_only_encrypted_runtime_values(caplog) -> Non
 
     request = requests[0]
     request_payload = json.loads(request.content)
+    assert len(request_payload["iv"]) == 12
+    assert re.fullmatch(r"[A-Za-z0-9_-]{12}", request_payload["iv"])
     plaintext = AESGCM(key.encode()).decrypt(
         request_payload["iv"].encode(),
         base64.b64decode(request_payload["ciphertext"]),
@@ -158,8 +167,10 @@ async def test_bark_publisher_sends_only_encrypted_runtime_values(caplog) -> Non
     assert "Bark chunk accepted: index=1/1 payload_characters=33" in caplog.text
 
 
-async def test_bark_publisher_reuses_the_configured_iv_for_each_chunk() -> None:
+async def test_bark_publisher_rotates_the_iv_for_each_chunk(monkeypatch) -> None:
     requests: list[httpx.Request] = []
+    generated_ivs = iter(("abcdefghijkl", "mnopqrstuvwx"))
+    monkeypatch.setattr("secrets.token_urlsafe", lambda _: next(generated_ivs))
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -171,7 +182,7 @@ async def test_bark_publisher_reuses_the_configured_iv_for_each_chunk() -> None:
         await publisher.publish(RenderedMessage(body, len(body)))
 
     ivs = [json.loads(request.content)["iv"] for request in requests]
-    assert ivs == ["fixed-iv-123", "fixed-iv-123"]
+    assert ivs == ["abcdefghijkl", "mnopqrstuvwx"]
 
 
 async def test_bark_rejects_oversized_single_message_before_delivery() -> None:
