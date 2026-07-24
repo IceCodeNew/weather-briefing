@@ -111,15 +111,17 @@ class FallbackLLMProvider:
         errors: list[Exception] = []
         try:
             await self._primary.aclose()
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancellation:
             try:
                 await self._fallback.aclose()
+            except asyncio.CancelledError:
+                _LOGGER.warning("Fallback LLM provider cleanup was cancelled while preserving primary cancellation")
             except Exception as exc:
                 _LOGGER.warning(
                     "Failed to close fallback LLM provider during cancellation error_type=%s",
                     type(exc).__name__,
                 )
-            raise
+            raise cancellation
         except Exception as exc:
             errors.append(exc)
         try:

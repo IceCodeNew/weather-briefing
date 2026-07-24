@@ -255,3 +255,29 @@ async def test_fallback_close_failure_does_not_mask_primary_cancellation(caplog)
     assert exc_info.value is cancellation
     assert "error_type=RuntimeError" in caplog.text
     assert "private cleanup detail" not in caplog.text
+
+
+async def test_fallback_cancellation_does_not_replace_primary_cancellation(caplog) -> None:
+    primary = _provider()
+    fallback = _provider()
+    primary_cancellation = asyncio.CancelledError("secret-primary-detail")
+    fallback_cancellation = asyncio.CancelledError("secret-fallback-detail")
+    primary.aclose.side_effect = primary_cancellation
+    fallback.aclose.side_effect = fallback_cancellation
+    provider = FallbackLLMProvider(
+        primary,
+        fallback,
+        primary_name="primary",
+        fallback_name="fallback",
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="weather_briefing.llm"),
+        pytest.raises(asyncio.CancelledError) as exc_info,
+    ):
+        await provider.aclose()
+
+    assert exc_info.value is primary_cancellation
+    assert "cleanup was cancelled while preserving primary cancellation" in caplog.text
+    assert "secret-primary-detail" not in caplog.text
+    assert "secret-fallback-detail" not in caplog.text
