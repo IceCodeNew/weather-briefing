@@ -184,11 +184,13 @@ def split_plain_message(body: str, limit: int) -> tuple[str, ...]:
     while len(remaining) > limit:
         remaining_chunk_count = math.ceil(len(remaining) / limit)
         earliest_split = len(remaining) - (remaining_chunk_count - 1) * limit
-        split_at = remaining.rfind("\n", earliest_split, limit + 1)
-        if split_at < earliest_split:
-            split_at = limit
-        chunks.append(remaining[:split_at])
-        remaining = remaining[split_at:]
+        newline_at = remaining.rfind("\n", earliest_split, limit + 1)
+        if newline_at >= earliest_split:
+            chunks.append(remaining[:newline_at])
+            remaining = remaining[newline_at + 1 :]
+        else:
+            chunks.append(remaining[:limit])
+            remaining = remaining[limit:]
     chunks.append(remaining)
     return tuple(chunks)
 

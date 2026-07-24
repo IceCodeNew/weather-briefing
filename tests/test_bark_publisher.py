@@ -258,7 +258,11 @@ async def test_bark_request_error_does_not_log_private_detail(caplog) -> None:
 
 
 def test_split_plain_message_prefers_line_boundary() -> None:
-    assert split_plain_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
+    chunks = split_plain_message("first line\nsecond line", 12)
+
+    assert chunks == ("first line", "second line")
+    assert all(not chunk.startswith("\n") and not chunk.endswith("\n") for chunk in chunks)
+    assert "\n".join(chunks) == "first line\nsecond line"
 
 
 def test_split_plain_message_uses_the_minimum_number_of_chunks() -> None:
