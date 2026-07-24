@@ -125,7 +125,7 @@ async def test_status_feed_parses_flashcat_label_and_bilingual_message() -> None
 
     assert message.status == "resolved"
     assert message.body == "本次问题已解决，服务已恢复。 The incident has been resolved."
-    assert message.surfaces == (ServiceSurface.API, ServiceSurface.WEB)
+    assert message.surfaces == (ServiceSurface.WEB, ServiceSurface.API)
 
 
 @pytest.mark.parametrize("status", (404, 503))
@@ -186,6 +186,32 @@ def test_revision_ignores_publication_time_only_changes() -> None:
 
     assert first.published_at != timestamp_only.published_at
     assert first.revision_id == timestamp_only.revision_id
+
+
+def test_revision_ignores_affected_component_order() -> None:
+    async def fetch(components: str) -> ServiceStatusMessage:
+        summary = (
+            "<b>Status: Monitoring</b><br/><br/>"
+            "We are monitoring the mitigation."
+            f"<br/><br/><b>Affected components</b><ul>{components}</ul>"
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, content=_rss(summary=summary)))
+        ) as client:
+            return (await _provider(client).fetch()).messages[0]
+
+    first = asyncio.run(fetch("<li>ChatGPT (Operational)</li><li>Responses API (Operational)</li>"))
+    reordered = asyncio.run(fetch("<li>Responses API (Operational)</li><li>ChatGPT (Operational)</li>"))
+
+    assert (
+        first.surfaces
+        == reordered.surfaces
+        == (
+            ServiceSurface.WEB,
+            ServiceSurface.API,
+        )
+    )
+    assert first.revision_id == reordered.revision_id
 
 
 async def test_classic_feed_accepts_update_without_hyphen_separator() -> None:
