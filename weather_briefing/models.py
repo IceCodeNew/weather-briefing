@@ -241,7 +241,6 @@ class BriefingResult:
     resolved_warning_ids: tuple[str, ...] = ()
     advice: tuple[Advice, ...] = ()
     disaster_tracking: tuple[Conclusion, ...] = ()
-    should_publish: bool = True
     output_language: str = "en"
     raw_payload: dict[str, object] = field(default_factory=dict, compare=False)
 

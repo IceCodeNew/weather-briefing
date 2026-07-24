@@ -31,7 +31,7 @@ Weather Briefing は、天気・大気質・警報・任意のプライベート
 
 天気サービスの API キーを設定しなくても、本プロジェクトは利用できます。中国本土で QWeather を利用する場合は、プロジェクト ID、認証情報 ID、専用 API ホスト、Base64 エンコードされた Ed25519 秘密鍵も必要です。認証方式は [QWeather JWT ドキュメント](https://dev.qweather.com/docs/configuration/authentication/#json-web-token)を参照してください。
 
-公式 AI サービスのステータス監視はデフォルトで有効で、ステータスページ用の認証情報は不要です。天気ブリーフィングとは独立して5分ごとに実行されます。公式の英語による障害説明はそのまま通知し、英語説明がない場合だけ設定済みの大規模言語モデルで忠実に翻訳します。`SERVICE_STATUS_PROVIDERS` で `deepseek,openai,anthropic,kimi` の一部を選択でき、空にすると無効になります。独立した5フィールド cron は `SERVICE_STATUS_CRON`、通知言語 `en`、`zh-CN`、`ja` は `SERVICE_STATUS_LANGUAGE` で設定します。
+公式 AI サービスのステータス監視はデフォルトで有効で、ステータスページ用の認証情報は不要です。天気ブリーフィングとは独立して5分ごとに実行し、公式メッセージごとに通知する価値があるかを判断して、意味のある障害変化と復旧だけを通知します。英語または指定言語のメッセージはそのまま転送し、それ以外だけ大規模言語モデルで忠実に翻訳します。`SERVICE_STATUS_PROVIDERS` で `deepseek,openai,anthropic,kimi` の一部を選択でき、空にすると無効になります。独立した5フィールド cron は `SERVICE_STATUS_CRON`、通知言語は `SERVICE_STATUS_LANGUAGE`、複数の配信先はカンマ区切りの `SERVICE_STATUS_PUBLISHERS` で設定でき、未指定時は `PUBLISHER` を使用します。
 
 リポジトリには以下の設定テンプレートが含まれています：
 

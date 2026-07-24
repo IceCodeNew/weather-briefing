@@ -11,6 +11,7 @@ import pendulum
 from ..data.prompts import SYSTEM_PROMPT
 from ..llm import LLMError, LLMProvider, LLMRequestError, parse_result
 from ..models import BriefingResult
+from ..notifications import NotificationDecision
 
 _LOGGER = logging.getLogger("weather_briefing.service")
 
@@ -24,8 +25,8 @@ async def summarize_validated(
     *,
     max_attempts: int,
     output_language: str,
-    validator: Callable[[BriefingResult], None],
-) -> BriefingResult:
+    validator: Callable[[BriefingResult, NotificationDecision], None],
+) -> tuple[BriefingResult, NotificationDecision]:
     """Summarize and retry only responses that violate the output contract."""
     instructions = SYSTEM_PROMPT
     current_payload: dict[str, object] = payload
@@ -35,13 +36,14 @@ async def summarize_validated(
         try:
             _LOGGER.debug("LLM summarization attempt %d/%d", attempt + 1, max_attempts)
             raw_result = await provider.summarize(instructions, current_payload)
+            parsed_result, decision = parse_result(raw_result, now, valid_source_ids)
             result = replace(
-                parse_result(raw_result, now, valid_source_ids),
+                parsed_result,
                 output_language=output_language,
             )
-            validator(result)
+            validator(result, decision)
             _LOGGER.debug("LLM summarization successful on attempt %d/%d", attempt + 1, max_attempts)
-            return result
+            return result, decision
         except LLMRequestError:
             raise
         except LLMError as exc:

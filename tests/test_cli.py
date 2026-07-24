@@ -23,6 +23,7 @@ from weather_briefing.cli import (
     _briefing_sent_today,
     _configure_logging,
     _delivery_provider,
+    _delivery_providers,
     _hour_in_cron,
     _in_schedule,
     _llm_provider,
@@ -771,6 +772,7 @@ _DEFAULT_SETTINGS = Settings(
     feeds=(),
     weather_providers=None,
     service_status_providers=("deepseek", "openai", "anthropic", "kimi"),
+    service_status_publishers=("stdout",),
     service_status_language="en",
     qweather_project_id=None,
     qweather_credential_id=None,
@@ -1247,6 +1249,31 @@ class TestDeliveryProvider:
         with pytest.raises(ValueError, match="Unsupported publisher"):
             _delivery_provider(settings, async_client)
 
+    async def test_multiple_publishers_preserve_configured_order(
+        self,
+        async_client: httpx.AsyncClient,
+    ) -> None:
+        settings = _make_fake_settings(
+            publisher="stdout",
+            telegram_bot_token="test-token",
+            telegram_chat_id="test-chat",
+        )
+
+        providers = _delivery_providers(
+            settings,
+            async_client,
+            ("stdout", "telegram"),
+        )
+
+        assert [provider.single_message_limit for provider in providers] == [None, 4096]
+
+    async def test_multiple_publishers_reject_an_empty_group(
+        self,
+        async_client: httpx.AsyncClient,
+    ) -> None:
+        with pytest.raises(ValueError, match="At least one publisher"):
+            _delivery_providers(_make_fake_settings(), async_client, ())
+
 
 class TestWeatherContextProvider:
     async def test_qweather_not_configured_skips_when_auto(self, async_client: httpx.AsyncClient) -> None:
@@ -1648,7 +1675,7 @@ async def test_service_status_run_is_independent_from_weather_orchestration(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from weather_briefing.service_status import ServiceComponentStatus, ServiceStatusSnapshot, ServiceSurface
+    from weather_briefing.service_status import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
 
     state_path = tmp_path / "weather.sqlite3"
     settings = replace(
@@ -1663,21 +1690,24 @@ async def test_service_status_run_is_independent_from_weather_orchestration(
         source_name="OpenAI Status",
         source_url="https://status.openai.com",
         observed_at=observed_at,
-        components=(
-            ServiceComponentStatus(
-                "Responses",
-                ServiceSurface.API,
-                "operational",
-                observed_at,
+        messages=(
+            ServiceStatusMessage(
+                incident_id="incident",
+                revision_id="revision",
+                title="API incident",
+                status="resolved",
+                body="This incident has been resolved.",
+                url="https://status.openai.com/incidents/incident",
+                published_at=observed_at,
+                surfaces=(ServiceSurface.API,),
             ),
         ),
-        incidents=(),
     )
     delivery = AsyncMock()
     translator = AsyncMock()
     monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: settings))
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
-    monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda *args: delivery)
+    monkeypatch.setattr("weather_briefing.cli._delivery_providers", lambda *args: (delivery,))
     monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda *args: translator)
     monkeypatch.setattr("weather_briefing.cli._service_status_providers", lambda names, client: (provider,))
 
@@ -1687,7 +1717,7 @@ async def test_service_status_run_is_independent_from_weather_orchestration(
     delivery.publish_alert.assert_not_awaited()
     translator.aclose.assert_awaited_once()
     with SQLiteStateStore(state_path) as state:
-        assert state.service_status_state("service-status:openai") is not None
+        assert state.service_status_message_state("service-status:openai", "incident") is not None
 
 
 async def test_service_status_run_skips_when_no_provider_is_configured(

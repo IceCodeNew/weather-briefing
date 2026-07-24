@@ -22,6 +22,7 @@ from .environment import (
     clean_env,
     configured_service_status_language,
     configured_service_status_providers,
+    configured_service_status_publishers,
     configured_weather_providers,
     cron_expression,
     cron_hour,
@@ -59,6 +60,7 @@ class Settings:
     feeds: tuple[FeedConfig, ...]
     weather_providers: tuple[str, ...] | None
     service_status_providers: tuple[str, ...]
+    service_status_publishers: tuple[str, ...]
     service_status_language: str
     qweather_project_id: str | None
     qweather_credential_id: str | None
@@ -108,7 +110,9 @@ class Settings:
         if retry_min < 0 or retry_max < retry_min:
             raise ConfigurationError("RSS retry delay range is invalid")
         selected_publisher = publisher()
+        service_status_publishers = configured_service_status_publishers(selected_publisher)
         bark_selected = selected_publisher == PublisherName.BARK
+        bark_configured = selected_publisher == PublisherName.BARK or PublisherName.BARK in service_status_publishers
         if bark_selected:
             briefing_max_characters = bounded_positive_integer(
                 "BRIEFING_MAX_CHARACTERS",
@@ -154,7 +158,7 @@ class Settings:
         bark_group = "weather-briefing"
         bark_encryption_key = None
         bark_encryption_iv = None
-        if selected_publisher == "bark":
+        if bark_configured:
             bark_device_key = clean_env(os.getenv("BARK_DEVICE_KEY")) or None
             if bark_device_key is None:
                 raise ConfigurationError("Missing required environment variable: BARK_DEVICE_KEY")
@@ -215,6 +219,7 @@ class Settings:
             feeds=feeds,
             weather_providers=configured_weather_providers(),
             service_status_providers=configured_service_status_providers(),
+            service_status_publishers=service_status_publishers,
             service_status_language=configured_service_status_language(),
             qweather_project_id=clean_env(os.getenv("QWEATHER_PROJECT_ID")) or None,
             qweather_credential_id=clean_env(os.getenv("QWEATHER_CREDENTIAL_ID")) or None,

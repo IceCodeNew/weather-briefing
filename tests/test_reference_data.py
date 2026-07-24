@@ -305,7 +305,6 @@ def test_reference_string_tuple_does_not_copy_the_cached_list(monkeypatch) -> No
                         "allergen",
                         "briefing",
                         "qweather",
-                        "service_status",
                         "weather_document",
                     )
                 },

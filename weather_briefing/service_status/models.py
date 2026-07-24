@@ -1,4 +1,4 @@
-"""Provider-neutral service-status domain models."""
+"""Provider-neutral official service-status message models."""
 
 from __future__ import annotations
 
@@ -17,34 +17,25 @@ class ServiceSurface(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ServiceComponentStatus:
-    """Represent the current state of one published service component."""
+class ServiceStatusMessage:
+    """Represent the latest official message for one incident."""
 
-    name: str
-    surface: ServiceSurface
+    incident_id: str
+    revision_id: str
+    title: str
     status: str
-    updated_at: pendulum.DateTime
-
-
-@dataclass(frozen=True, slots=True)
-class ServiceIncident:
-    """Represent one unresolved incident and its latest official update."""
-
-    name: str
-    status: str
-    impact: str
-    updated_at: pendulum.DateTime
-    detail: str
+    body: str
+    url: str
+    published_at: pendulum.DateTime
     surfaces: tuple[ServiceSurface, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class ServiceStatusSnapshot:
-    """Collect one provider's current component and incident status."""
+    """Collect the official incident messages currently exposed by one provider."""
 
     source_id: str
     source_name: str
     source_url: str
     observed_at: pendulum.DateTime
-    components: tuple[ServiceComponentStatus, ...]
-    incidents: tuple[ServiceIncident, ...]
+    messages: tuple[ServiceStatusMessage, ...]

@@ -2,46 +2,30 @@
 
 from .collection import collect_service_status
 from .composition import service_status_providers
-from .flashcat import FlashcatStatusProvider
-from .formatting import render_service_status_notification
-from .models import (
-    ServiceComponentStatus,
-    ServiceIncident,
-    ServiceStatusSnapshot,
-    ServiceSurface,
-)
-from .monitor import (
-    ServiceStatusMonitor,
-    has_english_explanation,
-    service_status_fingerprint,
-    service_status_is_unhealthy,
-)
+from .feed import StatusFeedProvider
+from .models import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
+from .monitor import ServiceStatusMonitor, official_message_matches
 from .providers import (
     AnthropicStatusProvider,
     DeepSeekStatusProvider,
     KimiStatusProvider,
     OpenAIStatusProvider,
 )
-from .statuspage import ServiceStatusError, ServiceStatusProvider, StatuspageProvider
+from .statuspage import ServiceStatusError, ServiceStatusProvider
 
 __all__ = [
     "AnthropicStatusProvider",
     "DeepSeekStatusProvider",
-    "FlashcatStatusProvider",
     "KimiStatusProvider",
     "OpenAIStatusProvider",
-    "ServiceComponentStatus",
-    "ServiceIncident",
     "ServiceStatusError",
+    "ServiceStatusMessage",
     "ServiceStatusProvider",
     "ServiceStatusSnapshot",
     "ServiceSurface",
-    "StatuspageProvider",
+    "StatusFeedProvider",
     "ServiceStatusMonitor",
     "collect_service_status",
-    "has_english_explanation",
-    "render_service_status_notification",
-    "service_status_fingerprint",
-    "service_status_is_unhealthy",
+    "official_message_matches",
     "service_status_providers",
 ]

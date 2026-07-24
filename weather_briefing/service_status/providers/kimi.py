@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import httpx
 
-from ...data.service_endpoints import KIMI_STATUS_API_URL, KIMI_STATUS_PAGE_URL
+from ...data.service_endpoints import KIMI_STATUS_FEED_URL, KIMI_STATUS_PAGE_URL
 from ...registries import ServiceStatusProviderName
+from ..feed import StatusFeedProvider
 from ..models import ServiceSurface
-from ..statuspage import StatuspageProvider
 
 _API_COMPONENTS = frozenset({"API Service", "Open API"})
 _WEB_COMPONENTS = frozenset(
@@ -29,7 +29,7 @@ def _kimi_surface(name: str) -> ServiceSurface:
     return ServiceSurface.OTHER
 
 
-class KimiStatusProvider(StatuspageProvider):
+class KimiStatusProvider(StatusFeedProvider):
     """Fetch Moonshot Kimi web-product and API status."""
 
     def __init__(self, client: httpx.AsyncClient) -> None:
@@ -38,7 +38,7 @@ class KimiStatusProvider(StatuspageProvider):
             client,
             provider_id=ServiceStatusProviderName.KIMI,
             provider_name="Kimi",
-            api_url=KIMI_STATUS_API_URL,
+            feed_url=KIMI_STATUS_FEED_URL,
             page_url=KIMI_STATUS_PAGE_URL,
             classify_component=_kimi_surface,
         )

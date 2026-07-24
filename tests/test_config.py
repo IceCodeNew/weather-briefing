@@ -1091,6 +1091,7 @@ class TestScheduleSettings:
         assert settings.hourly_cron == "9-23"
         assert settings.service_status_cron == "*/5 * * * *"
         assert settings.service_status_language == "en"
+        assert settings.service_status_publishers == ("telegram",)
 
     def test_custom_greeting(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
@@ -1330,6 +1331,38 @@ class TestConfigErrorPaths:
         monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "")
 
         assert Settings.from_env().service_status_providers == ()
+
+    def test_service_status_publishers_accept_multiple_platforms(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram,bark")
+        monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
+
+        settings = Settings.from_env()
+
+        assert settings.service_status_publishers == ("telegram", "bark")
+        assert settings.briefing_max_characters == 3500
+        assert settings.llm_max_output_tokens == 8192
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        (
+            ("", "cannot be empty"),
+            ("telegram,telegram", "cannot contain duplicates"),
+            ("telegram,email", "unsupported publishers: email"),
+        ),
+    )
+    def test_invalid_service_status_publishers_are_rejected(
+        self,
+        monkeypatch,
+        value: str,
+        message: str,
+    ) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", value)
+
+        with pytest.raises(ConfigurationError, match=message):
+            Settings.from_env()
 
     def test_unsupported_service_status_provider_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)

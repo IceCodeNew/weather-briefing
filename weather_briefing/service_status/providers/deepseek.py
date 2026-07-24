@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import httpx
 
-from ...data.service_endpoints import DEEPSEEK_STATUS_PAGE_URL
+from ...data.service_endpoints import DEEPSEEK_STATUS_FEED_URL, DEEPSEEK_STATUS_PAGE_URL
 from ...registries import ServiceStatusProviderName
-from ..flashcat import FlashcatStatusProvider
+from ..feed import StatusFeedProvider
 from ..models import ServiceSurface
 
 
@@ -16,7 +16,7 @@ def _deepseek_surface(name: str) -> ServiceSurface:
     return ServiceSurface.WEB
 
 
-class DeepSeekStatusProvider(FlashcatStatusProvider):
+class DeepSeekStatusProvider(StatusFeedProvider):
     """Fetch DeepSeek web-chat and API status."""
 
     def __init__(self, client: httpx.AsyncClient) -> None:
@@ -25,6 +25,7 @@ class DeepSeekStatusProvider(FlashcatStatusProvider):
             client,
             provider_id=ServiceStatusProviderName.DEEPSEEK,
             provider_name="DeepSeek",
+            feed_url=DEEPSEEK_STATUS_FEED_URL,
             page_url=DEEPSEEK_STATUS_PAGE_URL,
             classify_component=_deepseek_surface,
         )

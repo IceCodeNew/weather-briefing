@@ -14,7 +14,7 @@ from weather_briefing.llm import (
     LLMStructuredOutput,
     create_any_llm_provider,
 )
-from weather_briefing.llm.schema import ServiceStatusTranslationOutput
+from weather_briefing.llm.schema import NotificationDecisionOutput, ServiceStatusTranslationOutput
 
 
 class _CompletionClientStub:
@@ -87,7 +87,7 @@ async def test_any_llm_provider_translates_service_status_with_a_narrow_schema()
             choices=[
                 SimpleNamespace(
                     message=SimpleNamespace(
-                        content='{"text":"API error rates are elevated."}',
+                        content='{"title":"API incident","body":"API error rates are elevated."}',
                     )
                 )
             ]
@@ -100,9 +100,13 @@ async def test_any_llm_provider_translates_service_status_with_a_narrow_schema()
         max_output_tokens=4096,
     )
 
-    result = await provider.translate_service_status("API 服务错误率升高。", "en")
+    result = await provider.translate_service_status(
+        "API 服务异常",
+        "API 服务错误率升高。",
+        "en",
+    )
 
-    assert result == "API error rates are elevated."
+    assert result == ("API incident", "API error rates are elevated.")
     assert client.calls[0]["response_format"] is ServiceStatusTranslationOutput
     assert client.calls[0]["temperature"] == 0.0
     assert client.calls[0]["max_tokens"] == 2048
@@ -110,8 +114,38 @@ async def test_any_llm_provider_translates_service_status_with_a_narrow_schema()
     assert isinstance(messages, list)
     assert messages[1] == {
         "role": "user",
-        "content": '{"text":"API 服务错误率升高。"}',
+        "content": '{"title":"API 服务异常","body":"API 服务错误率升高。"}',
     }
+
+
+async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema() -> None:
+    client = _CompletionClientStub(
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"should_notify":false}'),
+                )
+            ]
+        )
+    )
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="deepseek",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    result = await provider.assess_notification(
+        {
+            "notification_kind": "service_status",
+            "current": {"status": "monitoring"},
+        }
+    )
+
+    assert not result.should_notify
+    assert client.calls[0]["response_format"] is NotificationDecisionOutput
+    assert client.calls[0]["temperature"] == 0.0
+    assert client.calls[0]["max_tokens"] == 256
 
 
 async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) -> None:

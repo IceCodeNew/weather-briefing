@@ -163,6 +163,20 @@ def configured_service_status_providers() -> tuple[str, ...]:
     return providers
 
 
+def configured_service_status_publishers(default: str) -> tuple[str, ...]:
+    """Read comma-separated service-status publishers with a weather fallback."""
+    configured = clean_env(os.getenv("SERVICE_STATUS_PUBLISHERS", default))
+    if not configured:
+        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot be empty")
+    publishers = tuple(item.strip() for item in configured.split(",") if item.strip())
+    unsupported = sorted(set(publishers) - SUPPORTED_PUBLISHERS)
+    if unsupported:
+        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS contains unsupported publishers: " + ", ".join(unsupported))
+    if len(publishers) != len(set(publishers)):
+        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot contain duplicates")
+    return publishers
+
+
 def configured_service_status_language() -> str:
     """Read the language used for direct service-status notifications."""
     value = clean_env(os.getenv("SERVICE_STATUS_LANGUAGE", "en"))

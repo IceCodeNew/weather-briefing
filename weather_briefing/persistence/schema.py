@@ -42,14 +42,30 @@ def initialize_state(connection: sqlite3.Connection) -> None:
                 CREATE TABLE IF NOT EXISTS context_budget_alert (
                     source_id TEXT PRIMARY KEY, content_fingerprint TEXT NOT NULL, alerted_at TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS service_status_state (
-                    source_id TEXT PRIMARY KEY,
-                    observed_fingerprint TEXT NOT NULL,
-                    observed_unhealthy INTEGER NOT NULL CHECK (observed_unhealthy IN (0, 1)),
+                CREATE TABLE IF NOT EXISTS service_status_message_state (
+                    source_id TEXT NOT NULL,
+                    incident_id TEXT NOT NULL,
+                    observed_revision_id TEXT NOT NULL,
+                    observed_title TEXT NOT NULL,
+                    observed_status TEXT NOT NULL,
+                    observed_body TEXT NOT NULL,
                     observed_at TEXT NOT NULL,
-                    notified_fingerprint TEXT,
-                    notified_unhealthy INTEGER CHECK (notified_unhealthy IN (0, 1)),
-                    notified_at TEXT
+                    decided_revision_id TEXT,
+                    should_notify INTEGER CHECK (should_notify IN (0, 1)),
+                    handled_revision_id TEXT,
+                    handled_title TEXT,
+                    handled_status TEXT,
+                    handled_body TEXT,
+                    handled_at TEXT,
+                    PRIMARY KEY(source_id, incident_id)
+                );
+                CREATE TABLE IF NOT EXISTS service_status_message_delivery (
+                    source_id TEXT NOT NULL,
+                    incident_id TEXT NOT NULL,
+                    revision_id TEXT NOT NULL,
+                    publisher_id TEXT NOT NULL,
+                    delivered_at TEXT NOT NULL,
+                    PRIMARY KEY(source_id, incident_id, revision_id, publisher_id)
                 );
                 CREATE TABLE IF NOT EXISTS source_health (
                     source_id TEXT PRIMARY KEY, first_checked_at TEXT NOT NULL,

@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from . import __version__
 from .api_client import LoggedAsyncClient
 from .composition.providers import delivery_provider as _delivery_provider
+from .composition.providers import delivery_providers as _delivery_providers
 from .composition.providers import llm_provider as _llm_provider
 from .composition.providers import weather_context_provider as _weather_context_provider
 from .config import ConfigurationError, Settings, backfill_location_fields, state_path_from_env
@@ -381,14 +382,21 @@ async def run_service_status() -> None:
             client = await stack.enter_async_context(
                 LoggedAsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
             )
-            delivery = _delivery_provider(settings, client, diagnostics)
+            delivery_providers = _delivery_providers(
+                settings,
+                client,
+                settings.service_status_publishers,
+                diagnostics,
+            )
+            deliveries = tuple(zip(settings.service_status_publishers, delivery_providers, strict=True))
             translator = _llm_provider(settings, diagnostics)
             stack.push_async_callback(translator.aclose)
             with SQLiteStateStore(settings.state_path) as state:
                 monitor = ServiceStatusMonitor(
                     _service_status_providers(settings.service_status_providers, client),
                     state,
-                    delivery,
+                    deliveries,
+                    translator,
                     translator,
                     settings.service_status_language,
                 )

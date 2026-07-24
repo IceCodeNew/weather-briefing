@@ -29,13 +29,16 @@ class VerbatimDelivery:
 
 
 @dataclass(frozen=True, slots=True)
-class ServiceStatusState:
-    """Track the last observed and successfully notified provider states."""
+class ServiceStatusMessageState:
+    """Track the last observed and successfully handled official message."""
 
-    observed_fingerprint: str
-    observed_unhealthy: bool
-    notified_fingerprint: str | None
-    notified_unhealthy: bool | None
+    observed_revision_id: str
+    decided_revision_id: str | None
+    should_notify: bool | None
+    handled_revision_id: str | None
+    handled_title: str | None
+    handled_status: str | None
+    handled_body: str | None
 
 
 class SQLiteStateStore(HealthStateOperations):
@@ -205,64 +208,140 @@ class SQLiteStateStore(HealthStateOperations):
         self._insert_context_documents(documents, observed_at)
         self._connection.commit()
 
-    def service_status_state(self, source_id: str) -> ServiceStatusState | None:
-        """Return durable delivery state for one official status source."""
+    def service_status_message_state(
+        self,
+        source_id: str,
+        incident_id: str,
+    ) -> ServiceStatusMessageState | None:
+        """Return durable handling state for one official incident."""
         row = self._connection.execute(
-            """SELECT observed_fingerprint, observed_unhealthy, notified_fingerprint, notified_unhealthy
-            FROM service_status_state WHERE source_id = ?""",
-            (source_id,),
+            """SELECT observed_revision_id, decided_revision_id, should_notify,
+            handled_revision_id, handled_title, handled_status, handled_body
+            FROM service_status_message_state WHERE source_id = ? AND incident_id = ?""",
+            (source_id, incident_id),
         ).fetchone()
         if row is None:
             return None
-        notified_unhealthy = row["notified_unhealthy"]
-        return ServiceStatusState(
-            observed_fingerprint=str(row["observed_fingerprint"]),
-            observed_unhealthy=bool(row["observed_unhealthy"]),
-            notified_fingerprint=(
-                str(row["notified_fingerprint"]) if row["notified_fingerprint"] is not None else None
-            ),
-            notified_unhealthy=bool(notified_unhealthy) if notified_unhealthy is not None else None,
+        return ServiceStatusMessageState(
+            observed_revision_id=str(row["observed_revision_id"]),
+            decided_revision_id=(str(row["decided_revision_id"]) if row["decided_revision_id"] is not None else None),
+            should_notify=bool(row["should_notify"]) if row["should_notify"] is not None else None,
+            handled_revision_id=(str(row["handled_revision_id"]) if row["handled_revision_id"] is not None else None),
+            handled_title=str(row["handled_title"]) if row["handled_title"] is not None else None,
+            handled_status=str(row["handled_status"]) if row["handled_status"] is not None else None,
+            handled_body=str(row["handled_body"]) if row["handled_body"] is not None else None,
         )
 
-    def observe_service_status(
+    def observe_service_status_message(
         self,
         source_id: str,
-        fingerprint: str,
-        unhealthy: bool,
+        incident_id: str,
+        revision_id: str,
+        title: str,
+        status: str,
+        body: str,
         observed_at: pendulum.DateTime,
     ) -> None:
-        """Persist a provider observation without claiming delivery succeeded."""
+        """Persist an official message without claiming handling succeeded."""
         self._connection.execute(
-            """INSERT INTO service_status_state(
-                source_id, observed_fingerprint, observed_unhealthy, observed_at
-            ) VALUES (?, ?, ?, ?)
-            ON CONFLICT(source_id) DO UPDATE SET
-                observed_fingerprint = excluded.observed_fingerprint,
-                observed_unhealthy = excluded.observed_unhealthy,
+            """INSERT INTO service_status_message_state(
+                source_id, incident_id, observed_revision_id, observed_title,
+                observed_status, observed_body, observed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, incident_id) DO UPDATE SET
+                observed_revision_id = excluded.observed_revision_id,
+                observed_title = excluded.observed_title,
+                observed_status = excluded.observed_status,
+                observed_body = excluded.observed_body,
                 observed_at = excluded.observed_at""",
-            (source_id, fingerprint, int(unhealthy), storage_time(observed_at)),
+            (source_id, incident_id, revision_id, title, status, body, storage_time(observed_at)),
         )
         self._connection.commit()
 
-    def mark_service_status_notified(
+    def mark_service_status_message_decided(
         self,
         source_id: str,
-        fingerprint: str,
-        unhealthy: bool,
-        notified_at: pendulum.DateTime,
+        incident_id: str,
+        revision_id: str,
+        should_notify: bool,
     ) -> None:
-        """Mark one observed state as delivered or intentionally silent."""
+        """Persist notification value so partial delivery retries remain deterministic."""
         cursor = self._connection.execute(
-            """UPDATE service_status_state SET
-                notified_fingerprint = ?,
-                notified_unhealthy = ?,
-                notified_at = ?
-            WHERE source_id = ? AND observed_fingerprint = ?""",
-            (fingerprint, int(unhealthy), storage_time(notified_at), source_id, fingerprint),
+            """UPDATE service_status_message_state SET
+                decided_revision_id = ?,
+                should_notify = ?
+            WHERE source_id = ? AND incident_id = ? AND observed_revision_id = ?""",
+            (revision_id, int(should_notify), source_id, incident_id, revision_id),
         )
         if cursor.rowcount != 1:
             self._connection.rollback()
-            raise RuntimeError("Service-status observation changed before notification was recorded")
+            raise RuntimeError("Service-status message changed before its decision was recorded")
+        self._connection.commit()
+
+    def service_status_delivered_publishers(
+        self,
+        source_id: str,
+        incident_id: str,
+        revision_id: str,
+    ) -> frozenset[str]:
+        """Return publishers that already accepted this exact message revision."""
+        rows = self._connection.execute(
+            """SELECT publisher_id FROM service_status_message_delivery
+            WHERE source_id = ? AND incident_id = ? AND revision_id = ?""",
+            (source_id, incident_id, revision_id),
+        )
+        return frozenset(str(row["publisher_id"]) for row in rows)
+
+    def mark_service_status_message_delivered(
+        self,
+        source_id: str,
+        incident_id: str,
+        revision_id: str,
+        publisher_id: str,
+        delivered_at: pendulum.DateTime,
+    ) -> None:
+        """Record successful delivery to one configured publisher."""
+        self._connection.execute(
+            """INSERT OR IGNORE INTO service_status_message_delivery(
+                source_id, incident_id, revision_id, publisher_id, delivered_at
+            ) VALUES (?, ?, ?, ?, ?)""",
+            (source_id, incident_id, revision_id, publisher_id, storage_time(delivered_at)),
+        )
+        self._connection.commit()
+
+    def mark_service_status_message_handled(
+        self,
+        source_id: str,
+        incident_id: str,
+        revision_id: str,
+        title: str,
+        status: str,
+        body: str,
+        handled_at: pendulum.DateTime,
+    ) -> None:
+        """Mark one observed message as delivered or intentionally skipped."""
+        cursor = self._connection.execute(
+            """UPDATE service_status_message_state SET
+                handled_revision_id = ?,
+                handled_title = ?,
+                handled_status = ?,
+                handled_body = ?,
+                handled_at = ?
+            WHERE source_id = ? AND incident_id = ? AND observed_revision_id = ?""",
+            (
+                revision_id,
+                title,
+                status,
+                body,
+                storage_time(handled_at),
+                source_id,
+                incident_id,
+                revision_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            self._connection.rollback()
+            raise RuntimeError("Service-status message changed before handling was recorded")
         self._connection.commit()
 
     def _insert_context_documents(

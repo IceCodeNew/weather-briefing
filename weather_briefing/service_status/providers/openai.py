@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import httpx
 
-from ...data.service_endpoints import OPENAI_STATUS_API_URL, OPENAI_STATUS_PAGE_URL
+from ...data.service_endpoints import OPENAI_STATUS_FEED_URL, OPENAI_STATUS_PAGE_URL
 from ...registries import ServiceStatusProviderName
+from ..feed import StatusFeedProvider
 from ..models import ServiceSurface
-from ..statuspage import StatuspageProvider
 
 _API_COMPONENTS = frozenset(
     {
@@ -49,7 +49,7 @@ def _openai_surface(name: str) -> ServiceSurface:
     return ServiceSurface.OTHER
 
 
-class OpenAIStatusProvider(StatuspageProvider):
+class OpenAIStatusProvider(StatusFeedProvider):
     """Fetch OpenAI web-product and API status."""
 
     def __init__(self, client: httpx.AsyncClient) -> None:
@@ -58,7 +58,7 @@ class OpenAIStatusProvider(StatuspageProvider):
             client,
             provider_id=ServiceStatusProviderName.OPENAI,
             provider_name="OpenAI",
-            api_url=OPENAI_STATUS_API_URL,
+            feed_url=OPENAI_STATUS_FEED_URL,
             page_url=OPENAI_STATUS_PAGE_URL,
             classify_component=_openai_surface,
         )

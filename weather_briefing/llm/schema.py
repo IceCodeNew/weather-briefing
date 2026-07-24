@@ -50,9 +50,16 @@ class AdvicePayload(SourcedTextPayload):
 
 
 class ServiceStatusTranslationOutput(_StrictLLMPayload):
-    """Return one faithful English rendering of an official incident update."""
+    """Return one faithful rendering of an official incident update."""
 
-    text: NonEmptyString
+    title: NonEmptyString
+    body: NonEmptyString
+
+
+class NotificationDecisionOutput(_StrictLLMPayload):
+    """Return an information-type-neutral notification decision."""
+
+    should_notify: bool
 
 
 class LLMStructuredOutput(_StrictLLMPayload):
@@ -98,7 +105,7 @@ def decode_structured_response(response: object) -> LLMStructuredOutput:
         raise LLMError(f"LLM response schema validation failed at {location}") from exc
 
 
-def decode_service_status_translation(response: object) -> str:
+def decode_service_status_translation(response: object) -> ServiceStatusTranslationOutput:
     """Decode one strict service-status translation response."""
     choices = getattr(response, "choices", None)
     if not isinstance(choices, list) or not choices:
@@ -108,12 +115,33 @@ def decode_service_status_translation(response: object) -> str:
         raise LLMRequestError("LLM completion choice is missing a message")
     parsed = getattr(message, "parsed", None)
     if isinstance(parsed, ServiceStatusTranslationOutput):
-        return parsed.text
+        return parsed
     content = getattr(message, "content", None)
     if not isinstance(content, str) or not content.strip():
         raise LLMRequestError("LLM returned empty JSON content")
     try:
-        return ServiceStatusTranslationOutput.model_validate_json(content).text
+        return ServiceStatusTranslationOutput.model_validate_json(content)
+    except ValidationError as exc:
+        location = ".".join(str(part) for part in exc.errors()[0]["loc"])
+        raise LLMError(f"LLM response schema validation failed at {location}") from exc
+
+
+def decode_notification_decision(response: object) -> bool:
+    """Decode one strict notification-decision response."""
+    choices = getattr(response, "choices", None)
+    if not isinstance(choices, list) or not choices:
+        raise LLMRequestError("LLM returned no completion choices")
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        raise LLMRequestError("LLM completion choice is missing a message")
+    parsed = getattr(message, "parsed", None)
+    if isinstance(parsed, NotificationDecisionOutput):
+        return parsed.should_notify
+    content = getattr(message, "content", None)
+    if not isinstance(content, str) or not content.strip():
+        raise LLMRequestError("LLM returned empty JSON content")
+    try:
+        return NotificationDecisionOutput.model_validate_json(content).should_notify
     except ValidationError as exc:
         location = ".".join(str(part) for part in exc.errors()[0]["loc"])
         raise LLMError(f"LLM response schema validation failed at {location}") from exc
