@@ -1430,6 +1430,7 @@ class TestConfigErrorPaths:
         (
             ("", "cannot be empty"),
             (", , ", "cannot be empty"),
+            ("telegram,,bark", "cannot contain empty entries"),
             ("telegram,telegram", "cannot contain duplicates"),
             ("telegram,email", "unsupported publishers: email"),
         ),
@@ -1461,6 +1462,14 @@ class TestConfigErrorPaths:
         monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai,openai")
 
         with pytest.raises(ConfigurationError, match="SERVICE_STATUS_PROVIDERS cannot contain duplicates"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("value", (",,", "openai,,kimi"))
+    def test_empty_service_status_provider_entries_raise_error(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", value)
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_PROVIDERS cannot contain empty entries"):
             Settings.from_env()
 
     def test_unsupported_publisher_raises_error(self, monkeypatch) -> None:

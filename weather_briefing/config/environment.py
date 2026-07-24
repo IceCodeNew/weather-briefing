@@ -153,7 +153,9 @@ def configured_service_status_providers() -> tuple[str, ...]:
     configured = clean_env(os.getenv("SERVICE_STATUS_PROVIDERS", ""))
     if not configured:
         return ()
-    providers = tuple(item.strip() for item in configured.split(",") if item.strip())
+    providers = tuple(item.strip() for item in configured.split(","))
+    if any(not provider for provider in providers):
+        raise ConfigurationError("SERVICE_STATUS_PROVIDERS cannot contain empty entries")
     unsupported = sorted(set(providers) - SUPPORTED_SERVICE_STATUS_PROVIDERS)
     if unsupported:
         raise ConfigurationError("SERVICE_STATUS_PROVIDERS contains unsupported providers: " + ", ".join(unsupported))
@@ -167,9 +169,11 @@ def configured_service_status_publishers(default: str) -> tuple[str, ...]:
     configured = clean_env(os.getenv("SERVICE_STATUS_PUBLISHERS", default))
     if not configured:
         raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot be empty")
-    publishers = tuple(item.strip() for item in configured.split(",") if item.strip())
-    if not publishers:
+    publishers = tuple(item.strip() for item in configured.split(","))
+    if not any(publishers):
         raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot be empty")
+    if any(not publisher for publisher in publishers):
+        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot contain empty entries")
     unsupported = sorted(set(publishers) - SUPPORTED_PUBLISHERS)
     if unsupported:
         raise ConfigurationError("SERVICE_STATUS_PUBLISHERS contains unsupported publishers: " + ", ".join(unsupported))
