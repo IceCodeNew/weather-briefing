@@ -237,6 +237,7 @@ class BriefingResult:
     headline: str
     headline_source_ids: tuple[str, ...]
     conclusions: tuple[Conclusion, ...]
+    service_status: tuple[Conclusion, ...] = ()
     active_warnings: tuple[Warning, ...] = ()
     resolved_warning_ids: tuple[str, ...] = ()
     advice: tuple[Advice, ...] = ()

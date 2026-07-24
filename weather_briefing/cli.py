@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from . import __version__
 from .api_client import LoggedAsyncClient
+from .application.collection import collect_service_status_documents
 from .composition.providers import delivery_provider as _delivery_provider
 from .composition.providers import llm_provider as _llm_provider
 from .composition.providers import weather_context_provider as _weather_context_provider
@@ -37,6 +38,7 @@ from .geocoding import (
 from .models import ResolvedLocation
 from .persistence import locking as persistence_locking
 from .service import BriefingService
+from .service_status import service_status_providers as _service_status_providers
 from .sources import RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from .time_utils import parse_aware_datetime
@@ -317,6 +319,9 @@ async def _run_unlocked(
         resolutions = [await resolver.resolve_with_metadata(location) for location in settings.locations]
         locations = tuple(resolution.location for resolution in resolutions)
         await asyncio.to_thread(_save_resolved_location_fields, settings, locations)
+        service_status_documents = await collect_service_status_documents(
+            _service_status_providers(settings.service_status_providers, client)
+        )
         for resolution in resolutions:
             location = resolution.location
             if location.precision_reduced and not resolution.from_cache:
@@ -350,6 +355,7 @@ async def _run_unlocked(
                     delivery,
                     delivery,
                     _weather_context_provider(settings, client, location),
+                    service_status_documents,
                 )
                 body = await service.run(
                     kind,

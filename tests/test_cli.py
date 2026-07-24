@@ -769,6 +769,7 @@ _DEFAULT_SETTINGS = Settings(
     rss_sources_path=Path("rss-sources.json"),
     feeds=(),
     weather_providers=None,
+    service_status_providers=("deepseek", "openai", "anthropic", "kimi"),
     qweather_project_id=None,
     qweather_credential_id=None,
     qweather_private_key=None,

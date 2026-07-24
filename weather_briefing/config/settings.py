@@ -20,6 +20,7 @@ from .environment import (
     bounded_integer,
     bounded_positive_integer,
     clean_env,
+    configured_service_status_providers,
     configured_weather_providers,
     cron_hour,
     first_configured,
@@ -55,6 +56,7 @@ class Settings:
     rss_sources_path: Path
     feeds: tuple[FeedConfig, ...]
     weather_providers: tuple[str, ...] | None
+    service_status_providers: tuple[str, ...]
     qweather_project_id: str | None
     qweather_credential_id: str | None
     qweather_private_key: str | None
@@ -207,6 +209,7 @@ class Settings:
             rss_sources_path=rss_sources_path,
             feeds=feeds,
             weather_providers=configured_weather_providers(),
+            service_status_providers=configured_service_status_providers(),
             qweather_project_id=clean_env(os.getenv("QWEATHER_PROJECT_ID")) or None,
             qweather_credential_id=clean_env(os.getenv("QWEATHER_CREDENTIAL_ID")) or None,
             qweather_private_key=clean_env(os.getenv("QWEATHER_PRIVATE_KEY")) or None,

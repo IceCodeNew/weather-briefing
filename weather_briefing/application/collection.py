@@ -9,6 +9,7 @@ import pendulum
 
 from ..capabilities import CapabilityProviderSet
 from ..models import Article, FeedConfig, ResolvedLocation, SourceDocument
+from ..service_status import ServiceStatusProvider, service_status_to_document
 from ..sources import RSSFeedSource
 from ..state import SQLiteStateStore
 from ..weather import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
@@ -66,3 +67,25 @@ async def collect_weather_documents(
     else:
         snapshots = (await fetch_weather_context(provider, location.latitude, location.longitude, forecast_date),)
     return tuple(document for snapshot in snapshots for document in snapshot_to_documents(snapshot))
+
+
+async def collect_service_status_documents(
+    providers: tuple[ServiceStatusProvider, ...],
+) -> tuple[SourceDocument, ...]:
+    """Fetch optional service-status providers without blocking weather collection."""
+    results = await asyncio.gather(*(provider.fetch() for provider in providers), return_exceptions=True)
+    documents: list[SourceDocument] = []
+    pending_cancellation: BaseException | None = None
+    for result in results:
+        if isinstance(result, BaseException):
+            if not isinstance(result, Exception):
+                if pending_cancellation is None:
+                    pending_cancellation = result
+                continue
+            _LOGGER.warning("Service-status provider failed: %s", result)
+            continue
+        documents.append(service_status_to_document(result))
+    if pending_cancellation is not None:
+        raise pending_cancellation
+    _LOGGER.info("Fetched %d/%d service-status source(s)", len(documents), len(providers))
+    return tuple(documents)

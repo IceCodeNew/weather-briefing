@@ -79,6 +79,7 @@ def _valid_payload() -> dict[str, Any]:
         "headline": "Briefing",
         "headline_source_ids": ["source"],
         "conclusions": [],
+        "service_status": [],
         "active_warnings": [],
         "resolved_warning_ids": [],
         "disaster_tracking": [],

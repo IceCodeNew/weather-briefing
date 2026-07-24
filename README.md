@@ -8,7 +8,7 @@
 
 [English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
-Weather Briefing periodically gathers weather, air quality, warnings, and optional private RSS content, then uses a large language model to produce a briefing that identifies its sources and includes source links when supported by the publisher.
+Weather Briefing periodically gathers weather, air quality, warnings, official AI service status, and optional private RSS content, then uses a large language model to produce a briefing that identifies its sources and includes source links when supported by the publisher.
 
 ## Core capabilities
 
@@ -17,6 +17,7 @@ Weather Briefing periodically gathers weather, air quality, warnings, and option
 - Persists history, unsent messages, and active warnings so important changes are neither repeated nor missed.
 - Supports multiple locations and output languages, with independent state for each location.
 - Combines global and regional weather services and falls back when a primary source fails.
+- Tracks official DeepSeek, OpenAI, Anthropic, and Kimi status pages, keeping web and API services distinct.
 - Can incorporate private RSS content while retaining a verifiable source link for every conclusion.
 
 ## Prerequisites
@@ -29,6 +30,8 @@ Before deploying, you will need:
 - A directory that can persist runtime state and geocoding results.
 
 The default weather services require no API key. Users in mainland China who want QWeather will also need a Project ID, Credential ID, a dedicated API Host, and a Base64-encoded Ed25519 private key. See the [QWeather JWT documentation](https://dev.qweather.com/docs/configuration/authentication/#json-web-token) for authentication details.
+
+Official AI service status is enabled by default and requires no credentials. Set `SERVICE_STATUS_PROVIDERS` to a comma-separated subset of `deepseek,openai,anthropic,kimi`, or to an empty value to disable it.
 
 The repository provides the following configuration templates:
 

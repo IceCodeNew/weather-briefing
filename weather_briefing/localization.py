@@ -34,6 +34,7 @@ _LOCALIZATION_FIELDS = {
     "briefing": frozenset(
         {
             "weather",
+            "service_status",
             "warnings",
             "disasters",
             "advice",

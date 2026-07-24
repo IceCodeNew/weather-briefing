@@ -11,3 +11,11 @@ NOMINATIM_USER_AGENT = f"weather-briefing/{__version__} (+https://github.com/Ice
 OPEN_METEO_AIR_QUALITY_BASE_URL = "https://air-quality-api.open-meteo.com"
 OPEN_METEO_GEOCODING_BASE_URL = "https://geocoding-api.open-meteo.com"
 OPEN_METEO_WEATHER_BASE_URL = "https://api.open-meteo.com"
+
+ANTHROPIC_STATUS_API_URL = "https://status.claude.com/api/v2/summary.json"
+ANTHROPIC_STATUS_PAGE_URL = "https://status.claude.com"
+DEEPSEEK_STATUS_PAGE_URL = "https://status.deepseek.com"
+KIMI_STATUS_API_URL = "https://status.moonshot.cn/api/v2/summary.json"
+KIMI_STATUS_PAGE_URL = "https://status.moonshot.cn"
+OPENAI_STATUS_API_URL = "https://status.openai.com/api/v2/summary.json"
+OPENAI_STATUS_PAGE_URL = "https://status.openai.com"

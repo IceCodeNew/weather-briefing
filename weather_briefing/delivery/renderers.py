@@ -68,6 +68,7 @@ class TelegramHTMLRenderer:
             "",
         ]
         lines.extend(_html_items(labels["weather"], result.conclusions, source_links, labels))
+        lines.extend(_html_items(labels["service_status"], result.service_status, source_links, labels))
         if result.active_warnings:
             lines.extend([f"<b>{labels['warnings']}</b>", ""])
             lines.extend(
@@ -141,6 +142,15 @@ class PlainTextRenderer:
             _plain_items(
                 labels["weather"],
                 result.conclusions,
+                source_references,
+                labels,
+                numbered_sources=self._number_sources,
+            )
+        )
+        lines.extend(
+            _plain_items(
+                labels["service_status"],
+                result.service_status,
                 source_references,
                 labels,
                 numbered_sources=self._number_sources,
@@ -225,6 +235,14 @@ class BarkTextRenderer(PlainTextRenderer):
         )
         lines: list[str] = []
         lines.extend(_compact_plain_items(None, result.conclusions, numbered_references, labels))
+        lines.extend(
+            _compact_plain_items(
+                labels["service_status"],
+                result.service_status,
+                numbered_references,
+                labels,
+            )
+        )
         if result.active_warnings:
             lines.append(labels["warnings"])
             lines.extend(
@@ -367,7 +385,13 @@ def _bark_numbered_source_references(
 
 def _ordered_source_ids(result: BriefingResult) -> list[str]:
     ordered_source_ids = list(result.headline_source_ids)
-    for items in (result.conclusions, result.active_warnings, result.disaster_tracking, result.advice):
+    for items in (
+        result.conclusions,
+        result.service_status,
+        result.active_warnings,
+        result.disaster_tracking,
+        result.advice,
+    ):
         for item in items:
             ordered_source_ids.extend(item.source_ids)
     return list(dict.fromkeys(ordered_source_ids))

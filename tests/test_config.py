@@ -1284,6 +1284,39 @@ class TestConfigErrorPaths:
         ):
             Settings.from_env()
 
+    def test_service_status_providers_default_to_official_sources(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+
+        assert Settings.from_env().service_status_providers == (
+            "deepseek",
+            "openai",
+            "anthropic",
+            "kimi",
+        )
+
+    def test_service_status_providers_can_be_disabled(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "")
+
+        assert Settings.from_env().service_status_providers == ()
+
+    def test_unsupported_service_status_provider_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai,zhipu")
+
+        with pytest.raises(
+            ConfigurationError,
+            match="SERVICE_STATUS_PROVIDERS contains unsupported providers: zhipu",
+        ):
+            Settings.from_env()
+
+    def test_duplicate_service_status_provider_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai,openai")
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_PROVIDERS cannot contain duplicates"):
+            Settings.from_env()
+
     def test_unsupported_publisher_raises_error(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("PUBLISHER", "telegrm")

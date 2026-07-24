@@ -10,10 +10,16 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ..data.resources import reference_string_tuple
 from ..models import ResolvedLocation
-from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
+from ..registries import (
+    LOCAL_WEATHER_CAPABILITY_PROVIDERS,
+    PublisherName,
+    ServiceStatusProviderName,
+    WeatherProviderName,
+)
 from .base import ConfigurationError
 
 SUPPORTED_WEATHER_PROVIDERS = frozenset(WeatherProviderName)
+SUPPORTED_SERVICE_STATUS_PROVIDERS = frozenset(ServiceStatusProviderName)
 SUPPORTED_PUBLISHERS = frozenset(PublisherName)
 
 
@@ -125,6 +131,21 @@ def configured_weather_providers() -> tuple[str, ...] | None:
     if unsupported:
         raise ConfigurationError(f"WEATHER_PROVIDERS contains unsupported providers: {', '.join(unsupported)}")
     validate_weather_provider_order(providers)
+    return providers
+
+
+def configured_service_status_providers() -> tuple[str, ...]:
+    """Read the enabled official service-status providers."""
+    default = ",".join(ServiceStatusProviderName)
+    configured = clean_env(os.getenv("SERVICE_STATUS_PROVIDERS", default))
+    if not configured:
+        return ()
+    providers = tuple(item.strip() for item in configured.split(",") if item.strip())
+    unsupported = sorted(set(providers) - SUPPORTED_SERVICE_STATUS_PROVIDERS)
+    if unsupported:
+        raise ConfigurationError("SERVICE_STATUS_PROVIDERS contains unsupported providers: " + ", ".join(unsupported))
+    if len(providers) != len(set(providers)):
+        raise ConfigurationError("SERVICE_STATUS_PROVIDERS cannot contain duplicates")
     return providers
 
 

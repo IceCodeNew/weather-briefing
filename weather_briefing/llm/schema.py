@@ -55,6 +55,7 @@ class LLMStructuredOutput(_StrictLLMPayload):
     headline: NonEmptyString
     headline_source_ids: CitedSourceIds
     conclusions: list[SourcedTextPayload]
+    service_status: list[SourcedTextPayload]
     active_warnings: list[WarningPayload]
     resolved_warning_ids: list[NonEmptyString]
     disaster_tracking: list[SourcedTextPayload]
