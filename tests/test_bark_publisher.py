@@ -257,20 +257,23 @@ async def test_bark_request_error_does_not_log_private_detail(caplog) -> None:
     assert "Private body" not in caplog.text
 
 
-def test_split_plain_message_prefers_line_boundary() -> None:
+def test_split_plain_message_consumes_line_boundary() -> None:
     chunks = split_plain_message("first line\nsecond line", 12)
 
     assert chunks == ("first line", "second line")
     assert all(not chunk.startswith("\n") and not chunk.endswith("\n") for chunk in chunks)
-    assert "\n".join(chunks) == "first line\nsecond line"
 
 
-def test_split_plain_message_uses_the_minimum_number_of_chunks() -> None:
+def test_split_plain_message_omits_empty_chunk_after_final_boundary() -> None:
+    chunks = split_plain_message("x" * 12 + "\n", 12)
+
+    assert chunks == ("x" * 12,)
+
+
+def test_split_plain_message_preserves_non_boundary_newlines() -> None:
     chunks = split_plain_message("x" * 100 + "\n" + "y" * 1199, 650)
 
-    assert len(chunks) == 2
-    assert all(len(chunk) <= 650 for chunk in chunks)
-    assert "".join(chunks) == "x" * 100 + "\n" + "y" * 1199
+    assert chunks == ("x" * 100 + "\n" + "y" * 549, "y" * 650)
 
 
 @pytest.mark.parametrize("limit", (0, -1))

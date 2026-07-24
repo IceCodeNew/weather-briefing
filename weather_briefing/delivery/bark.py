@@ -174,7 +174,7 @@ def bark_error_reason(response: httpx.Response) -> tuple[str, bool]:
 
 
 def split_plain_message(body: str, limit: int) -> tuple[str, ...]:
-    """Split plain text at line boundaries when possible."""
+    """Split into display-ready chunks, consuming newlines used as boundaries."""
     if limit <= 0:
         raise ValueError("Message split limit must be positive")
     if not body or len(body) <= limit:
@@ -191,7 +191,8 @@ def split_plain_message(body: str, limit: int) -> tuple[str, ...]:
         else:
             chunks.append(remaining[:limit])
             remaining = remaining[limit:]
-    chunks.append(remaining)
+    if remaining:
+        chunks.append(remaining)
     return tuple(chunks)
 
 
