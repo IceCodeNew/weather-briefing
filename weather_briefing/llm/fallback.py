@@ -40,7 +40,7 @@ class CompleteLLMProvider(Protocol):
 
 
 class FallbackLLMProvider:
-    """Retry request failures once through a separately configured provider."""
+    """Switch permanently after a primary request failure; see docs/notes.md."""
 
     def __init__(
         self,
@@ -111,7 +111,7 @@ class FallbackLLMProvider:
         errors: list[Exception] = []
         try:
             await self._primary.aclose()
-        except asyncio.CancelledError as cancellation:
+        except asyncio.CancelledError:
             try:
                 await self._fallback.aclose()
             except asyncio.CancelledError:
@@ -121,7 +121,7 @@ class FallbackLLMProvider:
                     "Failed to close fallback LLM provider during cancellation error_type=%s",
                     type(exc).__name__,
                 )
-            raise cancellation
+            raise
         except Exception as exc:
             errors.append(exc)
         try:
