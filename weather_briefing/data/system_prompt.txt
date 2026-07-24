@@ -16,6 +16,8 @@ recent_context_documents 中的 language 是来源正文的实际语言；来源
 不得把翻译结果冒充来源原文或改变专名、预警编号和数值。
 headline_source_ids 以及 conclusions、active_warnings、disaster_tracking 和 advice
 中的每一项都必须包含至少一个 source_id。
+headline、conclusions[].text、active_warnings 中的 title、status、detail、disaster_tracking[].text
+以及 advice[].text 只能包含纯文本，不得使用 Markdown 标题、列表、强调、代码或链接语法；章节标题和项目符号由发布端统一渲染。
 headline 必须是一句简洁、信息密集的标题，将当下最重要的天气概况浓缩其中；优先包含天气现象、
 高低温或显著体感，以及需要立即准备的短时降水等变化，不要另写摘要段落。
 不同来源对同一时段的天气现象有冲突时，不得拼接成无争议的单一结论；应明确说明差异，
