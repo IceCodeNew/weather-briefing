@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -35,6 +36,7 @@ from .environment import (
     state_path_from_env,
 )
 from .feeds import load_feeds
+from .http_headers import headers_from_env
 from .locations import load_locations
 
 _DEFAULT_LLM_MAX_OUTPUT_TOKENS = 8192
@@ -48,8 +50,10 @@ class Settings:
     llm_provider: str
     llm_model: str
     llm_base_url: str | None
+    llm_extra_headers: Mapping[str, str]
     llm_fallback_provider: str | None
     llm_fallback_model: str | None
+    llm_fallback_extra_headers: Mapping[str, str]
     llm_max_output_tokens: int
     llm_max_attempts: int
     http_timeout_seconds: float
@@ -160,12 +164,16 @@ class Settings:
             llm_base_url = None
         if not llm_model:
             raise ConfigurationError("Missing required environment variable: LLM_MODEL")
+        llm_extra_headers = headers_from_env("LLM_EXTRA_HEADERS")
         llm_fallback_provider = clean_env(os.getenv("LLM_FALLBACK_PROVIDER")) or None
         llm_fallback_model = clean_env(os.getenv("LLM_FALLBACK_MODEL")) or None
         if (llm_fallback_provider is None) != (llm_fallback_model is None):
             raise ConfigurationError("LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL must be configured together")
         if llm_fallback_provider is not None:
             _validate_llm_provider("LLM_FALLBACK_PROVIDER", llm_fallback_provider)
+        llm_fallback_extra_headers = headers_from_env("LLM_FALLBACK_EXTRA_HEADERS")
+        if llm_fallback_extra_headers and llm_fallback_provider is None:
+            raise ConfigurationError("LLM_FALLBACK_EXTRA_HEADERS requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL")
         locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
@@ -229,8 +237,10 @@ class Settings:
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_base_url=llm_base_url.rstrip("/") if llm_base_url else None,
+            llm_extra_headers=llm_extra_headers,
             llm_fallback_provider=llm_fallback_provider,
             llm_fallback_model=llm_fallback_model,
+            llm_fallback_extra_headers=llm_fallback_extra_headers,
             llm_max_output_tokens=llm_max_output_tokens,
             llm_max_attempts=positive_integer("LLM_MAX_ATTEMPTS", 3),
             http_timeout_seconds=positive_float("HTTP_TIMEOUT_SECONDS", 30),

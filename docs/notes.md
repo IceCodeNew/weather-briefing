@@ -48,6 +48,14 @@
 
 如果以后发布明确允许删除旧配置的重大版本，并且迁移说明已经给已有部署留出足够时间，就可以移除这两个后备变量。在此之前，修改模型配置边界时必须保留并测试这一优先级。
 
+## LLM 自定义 header 复用 SDK client 配置
+
+any-llm 1.x 没有跨 provider 的统一 HTTP header 接口，但官方镜像预装的 DeepSeek、OpenAI 和 OpenRouter 共用 OpenAI-compatible client，并接受 `default_headers`。应用只在用户配置非空 header 映射时传入这个 client 参数，不创建或接管额外 HTTP transport，因此未使用该功能的其他 any-llm provider 保持原有初始化行为和资源生命周期。
+
+自定义 header 可以承载网关凭据，也可以覆盖 SDK 生成的 `Authorization`、`User-Agent` 等字段。配置入口因此只接受合法 ASCII HTTP 字段，并且日志和错误不能包含 header 名称或值；覆盖认证字段后的正确性由部署者负责。
+
+如果 any-llm 提供统一且带能力声明的 header 配置接口，就改用该接口并重新评估官方支持范围。在此之前，不能把当前透传能力描述为适用于所有 provider。
+
 ## FallbackLLMProvider 在进程内保持粘性
 
 这是一个有意保留的自定义外部服务集成。选择 `FallbackLLMProvider` 的原因是 any-llm 只统一调用单个 provider，不编排跨 provider 的故障切换。包装器捕获主适配器的 `LLMRequestError`，切换后在剩余生命周期内固定使用备用适配器，使同一进程里的契约修复不会回到刚刚失败的主服务。

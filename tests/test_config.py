@@ -61,8 +61,10 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert [feed.id for feed in settings.feeds] == ["authority-weather"]
     assert settings.llm_provider == "deepseek"
     assert settings.llm_base_url is None
+    assert settings.llm_extra_headers == {}
     assert settings.llm_fallback_provider is None
     assert settings.llm_fallback_model is None
+    assert settings.llm_fallback_extra_headers == {}
     assert settings.llm_max_attempts == 3
     assert settings.qweather_jwt_lifetime_seconds == 900
     assert settings.llm_history_max_documents == 8
@@ -1063,6 +1065,33 @@ def test_llm_fallback_provider_and_model_are_loaded(monkeypatch) -> None:
 
     assert settings.llm_fallback_provider == "openai"
     assert settings.llm_fallback_model == "gpt-fallback"
+
+
+def test_llm_extra_headers_are_loaded_as_immutable_mappings(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1","X-Tenant":"primary"}')
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "fallback-model")
+    monkeypatch.setenv("LLM_FALLBACK_EXTRA_HEADERS", '{"User-Agent":"weather-briefing-fallback/1"}')
+
+    settings = Settings.from_env()
+
+    assert settings.llm_extra_headers == {
+        "User-Agent": "weather-briefing/1",
+        "X-Tenant": "primary",
+    }
+    assert settings.llm_fallback_extra_headers == {
+        "User-Agent": "weather-briefing-fallback/1",
+    }
+    assert not hasattr(settings.llm_extra_headers, "__setitem__")
+
+
+def test_fallback_headers_require_a_configured_fallback(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_FALLBACK_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1"}')
+
+    with pytest.raises(ConfigurationError, match="requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL"):
+        Settings.from_env()
 
 
 def test_deepseek_model_name_remains_compatible(monkeypatch) -> None:
