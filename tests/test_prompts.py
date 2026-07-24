@@ -63,6 +63,8 @@ def test_prompt_uses_a_soft_briefing_target_and_hard_output_limits() -> None:
 
 def test_prompt_requires_attribution_and_preserves_source_conflicts() -> None:
     assert "headline_source_ids 以及 conclusions" in SYSTEM_PROMPT
+    assert "只能包含纯文本" in SYSTEM_PROMPT
+    assert "不得使用 Markdown" in SYSTEM_PROMPT
     assert "不得拼接成无争议的单一结论" in SYSTEM_PROMPT
     assert "优先采用可识别的当地权威气象机构" in SYSTEM_PROMPT
     assert "input.required_advice_topics" in SYSTEM_PROMPT
