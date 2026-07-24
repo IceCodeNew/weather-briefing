@@ -86,6 +86,16 @@ def test_bark_text_renderer_uses_numbered_sources_without_urls() -> None:
     assert context.url not in rendered.body
 
 
+def test_bark_text_renderer_trims_outer_whitespace() -> None:
+    context = SourceDocument("source", "Weather API  ", "https://example.invalid/context", "Forecast")
+    result = BriefingResult("  Daily", ("source",), (), output_language="en")
+
+    rendered = BarkTextRenderer().render_briefing(result, (), (context,))
+
+    assert rendered.body == "Daily [1]\nSources: [1] Weather API"
+    assert rendered.visible_length == len(rendered.body)
+
+
 def test_bark_text_renderer_compacts_warning_disaster_and_advice_sections() -> None:
     now = pendulum.datetime(2026, 7, 24, 8, tz="Asia/Shanghai")
     context = SourceDocument("source", "Weather API", "https://example.invalid/context", "Forecast")

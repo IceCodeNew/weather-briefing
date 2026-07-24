@@ -235,7 +235,7 @@ class BarkTextRenderer(PlainTextRenderer):
         lines.extend(_compact_plain_items(labels["disasters"], result.disaster_tracking, numbered_references, labels))
         lines.extend(_compact_plain_items(labels["advice"], result.advice, numbered_references, labels))
         lines.append(source_footer)
-        return _plain_message("\n".join(lines))
+        return _plain_message("\n".join(lines).strip())
 
 
 def _html_text(value: str) -> str:
