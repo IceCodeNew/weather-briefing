@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from .base import LLMError, LLMRequestError
+
+_MARKDOWN_PATTERNS = (
+    re.compile(r"(?m)^\s{0,3}(?:#{1,6}|[-*+>]|\d+[.)])\s+"),
+    re.compile(r"(?m)^\s*(?:-{3,}|\*{3,}|_{3,})\s*$"),
+    re.compile(r"```|~~~"),
+    re.compile(r"\[[^\]\n]+\]\([^)\n]+\)"),
+    re.compile(r"(?P<delimiter>\*\*|__)(?=\S).+?(?<=\S)(?P=delimiter)"),
+    re.compile(r"(?<!\*)\*(?!\*)(?=\S)[^*\n]+?(?<=\S)\*(?!\*)"),
+    re.compile(r"(?<![\w_])_(?!_)(?=\S)[^_\n]+?(?<=\S)_(?![\w_])"),
+    re.compile(r"~~(?=\S).+?(?<=\S)~~"),
+    re.compile(r"`[^`\n]+`"),
+)
 
 
 def _non_empty(value: str) -> str:
@@ -16,7 +29,14 @@ def _non_empty(value: str) -> str:
     return value
 
 
+def _plain_text(value: str) -> str:
+    if any(pattern.search(value) for pattern in _MARKDOWN_PATTERNS):
+        raise ValueError("must not contain Markdown syntax")
+    return value
+
+
 NonEmptyString: TypeAlias = Annotated[str, AfterValidator(_non_empty)]
+PlainTextString: TypeAlias = Annotated[str, AfterValidator(_non_empty), AfterValidator(_plain_text)]
 CitedSourceIds: TypeAlias = Annotated[list[NonEmptyString], Field(min_length=1)]
 
 
@@ -29,7 +49,7 @@ class _StrictLLMPayload(BaseModel):
 class SourcedTextPayload(_StrictLLMPayload):
     """Describe one source-cited statement in the model response."""
 
-    text: NonEmptyString
+    text: PlainTextString
     source_ids: CitedSourceIds
 
 
@@ -37,9 +57,9 @@ class WarningPayload(_StrictLLMPayload):
     """Describe one active warning in the model response."""
 
     id: NonEmptyString
-    title: NonEmptyString
-    status: NonEmptyString
-    detail: NonEmptyString
+    title: PlainTextString
+    status: PlainTextString
+    detail: PlainTextString
     source_ids: CitedSourceIds
 
 
@@ -52,7 +72,7 @@ class AdvicePayload(SourcedTextPayload):
 class LLMStructuredOutput(_StrictLLMPayload):
     """Define the complete, strict response contract requested from every LLM."""
 
-    headline: NonEmptyString
+    headline: PlainTextString
     headline_source_ids: CitedSourceIds
     conclusions: list[SourcedTextPayload]
     active_warnings: list[WarningPayload]
