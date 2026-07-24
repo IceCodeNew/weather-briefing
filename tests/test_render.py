@@ -50,6 +50,24 @@ def test_plain_text_renderer_uses_the_same_structured_briefing() -> None:
     assert "<b>" not in rendered.body
 
 
+def test_plain_text_renderer_supports_numbered_source_names() -> None:
+    context = SourceDocument("source", "Weather API", "https://example.invalid/source", "")
+    result = BriefingResult(
+        "Daily",
+        ("source",),
+        (Conclusion("Rain", ("source",)),),
+        output_language="en",
+    )
+
+    rendered = PlainTextRenderer(include_source_urls=False, number_sources=True).render_briefing(
+        result,
+        (),
+        (context,),
+    )
+
+    assert rendered.body == ("Daily [1]\n\nWeather information\n\n- Rain [1]\n\nSources: [1] Weather API")
+
+
 def test_bark_text_renderer_uses_numbered_sources_without_urls() -> None:
     now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
     article = Article("article", "feed", "Feed", "Title", "https://example.invalid/article", now, "Body")
