@@ -173,6 +173,8 @@ Open-Meteo 的逐小时空气质量和花粉预报按目标日峰值生成生活
 
 `LLM_PROVIDER` 使用 any-llm 的 provider ID，`LLM_MODEL` 使用对应模型 ID。已部署的 DeepSeek 旧变量只在配置入口作为通用变量的后备。
 
+`LLM_EXTRA_HEADERS` 和 `LLM_FALLBACK_EXTRA_HEADERS` 在配置入口解析为不可变的 HTTP header 映射，再由 any-llm 适配器作为 SDK client 的默认 header 传入。这个兼容契约只覆盖官方镜像预装的 DeepSeek、OpenAI 和 OpenRouter；未配置 header 时不向其他 any-llm provider 传入额外 client 参数。
+
 开发环境安装 `any-llm-sdk[all]`，用于验证所有 completion provider 的装载边界。基础运行依赖只包含 SDK 核心包。官方镜像额外安装 DeepSeek、OpenAI 和 OpenRouter 所需组件。
 
 `LLMStructuredOutput` 同时用于 SDK 的结构化输出和应用侧复验。应用还会检查来源 ID、必填建议、预警 ID 和章节间重复等领域规则。
