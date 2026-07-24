@@ -12,6 +12,7 @@ from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
 from pydantic import BaseModel
 
 from ..api_client import api_call_context
+from ..data.any_llm_compatibility import UNSUPPORTED_DEFAULT_HEADER_PROVIDERS
 from ..data.prompts import NOTIFICATION_POLICY
 from ..notifications import NotificationDecision
 from .base import LLMOutputLimitError, LLMRequestError, SensitiveLLMDiagnostics, serialize_llm_payload
@@ -265,15 +266,18 @@ def create_any_llm_provider(
 ) -> AnyLLMStructuredProvider:
     """Create an application adapter for any supported any-llm completion provider."""
     provider_class = AnyLLM.get_provider_class(provider)
+    canonical_provider = provider_class.PROVIDER_NAME
     if not provider_class.SUPPORTS_COMPLETION:
-        raise ValueError(f"any-llm provider does not support completion: {provider}")
-    client_options: dict[str, object] = {"api_key": api_key, "api_base": api_base}
+        raise ValueError(f"any-llm provider does not support completion: {canonical_provider}")
+    if extra_headers and canonical_provider in UNSUPPORTED_DEFAULT_HEADER_PROVIDERS:
+        raise ValueError(f"Custom headers are not supported for any-llm provider: {canonical_provider}")
+    client_args: dict[str, object] = {"api_key": api_key, "api_base": api_base}
     if extra_headers:
-        client_options["default_headers"] = extra_headers
-    sdk_client = AnyLLM.create(provider, **client_options)
+        client_args["default_headers"] = extra_headers
+    sdk_client = AnyLLM.create(canonical_provider, **client_args)
     return AnyLLMStructuredProvider(
         sdk_client,
-        provider=provider,
+        provider=canonical_provider,
         model=model,
         max_output_tokens=max_output_tokens,
         diagnostics=diagnostics,

@@ -48,13 +48,11 @@
 
 如果以后发布明确允许删除旧配置的重大版本，并且迁移说明已经给已有部署留出足够时间，就可以移除这两个后备变量。在此之前，修改模型配置边界时必须保留并测试这一优先级。
 
-## LLM 自定义 header 复用 SDK client 配置
+## LLM 自定义 header 复用 provider client 参数
 
-any-llm 1.x 没有跨 provider 的统一 HTTP header 接口，但官方镜像预装的 DeepSeek、OpenAI 和 OpenRouter 共用 OpenAI-compatible client，并接受 `default_headers`。应用只在用户配置非空 header 映射时传入这个 client 参数，不创建或接管额外 HTTP transport，因此未使用该功能的其他 any-llm provider 保持原有初始化行为和资源生命周期。
+[mozilla-ai/any-llm#707](https://github.com/mozilla-ai/any-llm/pull/707) 为 any-llm 的无状态 completion API 增加了 `client_args`，并把其中的 provider-specific 参数展开传给 `AnyLLM.create()`。应用需要跨多次请求持有并显式关闭 provider client，因此不调用每次重新创建 client 的无状态 API，而是直接复用它的底层通道：把解析后的 header 映射放入本地 `client_args["default_headers"]`，再以 `AnyLLM.create(provider, **client_args)` 创建受应用管理的 provider。代码没有调用 #707 新增的具名参数，但使用的是同一条 provider client 参数透传路径。
 
-自定义 header 可以承载网关凭据，也可以覆盖 SDK 生成的 `Authorization`、`User-Agent` 等字段。配置入口因此只接受合法 ASCII HTTP 字段，并且日志和错误不能包含 header 名称或值；覆盖认证字段后的正确性由部署者负责。
-
-如果 any-llm 提供统一且带能力声明的 header 配置接口，就改用该接口并重新评估官方支持范围。在此之前，不能把当前透传能力描述为适用于所有 provider。
+升级 any-llm 或 provider SDK、新增 provider，或者 any-llm 提供统一且带能力声明的 header 接口时，必须重新检查 provider client 构造函数和实际请求，更新黑名单或改用统一接口。
 
 ## FallbackLLMProvider 在进程内保持粘性
 

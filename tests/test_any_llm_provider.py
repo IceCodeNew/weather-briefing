@@ -2,7 +2,7 @@ import json
 import logging
 from collections.abc import Mapping
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -199,7 +199,8 @@ async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) ->
     )
 
 
-async def test_factory_passes_configured_headers_as_client_defaults(monkeypatch) -> None:
+@pytest.mark.parametrize("provider", ("anthropic", "deepseek"))
+def test_factory_passes_configured_headers_through_client_args(monkeypatch, provider: str) -> None:
     created: list[tuple[str, dict[str, object]]] = []
 
     def fake_create(provider: str, **options: object) -> _CompletionClientStub:
@@ -209,11 +210,11 @@ async def test_factory_passes_configured_headers_as_client_defaults(monkeypatch)
     monkeypatch.setattr(AnyLLM, "create", fake_create)
     headers = {"User-Agent": "weather-briefing/1", "X-Tenant": "test"}
 
-    create_any_llm_provider("deepseek", "model", 1024, extra_headers=headers)
+    create_any_llm_provider(provider, "model", 1024, extra_headers=headers)
 
     assert created == [
         (
-            "deepseek",
+            provider,
             {
                 "api_key": None,
                 "api_base": None,
@@ -221,6 +222,36 @@ async def test_factory_passes_configured_headers_as_client_defaults(monkeypatch)
             },
         )
     ]
+
+
+def test_factory_uses_the_canonical_provider_for_header_validation(monkeypatch) -> None:
+    create = Mock()
+    monkeypatch.setattr(AnyLLM, "create", create)
+
+    with pytest.raises(ValueError, match="Custom headers are not supported for any-llm provider: mistral"):
+        create_any_llm_provider(
+            "MISTRAL",
+            "model",
+            1024,
+            extra_headers={"User-Agent": "weather-briefing/1"},
+        )
+
+    create.assert_not_called()
+
+
+def test_factory_rejects_headers_for_an_unsupported_provider(monkeypatch) -> None:
+    create = Mock()
+    monkeypatch.setattr(AnyLLM, "create", create)
+
+    with pytest.raises(ValueError, match="Custom headers are not supported for any-llm provider: mistral"):
+        create_any_llm_provider(
+            "mistral",
+            "model",
+            1024,
+            extra_headers={"User-Agent": "weather-briefing/1"},
+        )
+
+    create.assert_not_called()
 
 
 async def test_factory_owned_provider_closes_underlying_sdk_clients(monkeypatch) -> None:
