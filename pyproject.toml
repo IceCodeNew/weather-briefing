@@ -24,7 +24,7 @@ dependencies = [
 
 [dependency-groups]
 docker = [
-  "any-llm-sdk[deepseek,openai,openrouter]>=1.19,<2",
+  "any-llm-sdk[deepseek,openai,openrouter,zai]>=1.19,<2",
 ]
 dev = [
   "any-llm-sdk[all]>=1.19,<2",
