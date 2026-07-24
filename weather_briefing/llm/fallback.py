@@ -107,7 +107,7 @@ class FallbackLLMProvider:
         )
 
     async def aclose(self) -> None:
-        """Close both providers and preserve every cleanup failure."""
+        """Close both providers without letting cleanup mask cancellation."""
         errors: list[Exception] = []
         try:
             await self._primary.aclose()
