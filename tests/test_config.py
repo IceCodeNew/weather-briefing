@@ -112,6 +112,19 @@ def test_bark_llm_token_default_is_independent_of_briefing_limit(monkeypatch) ->
     assert settings.llm_max_output_tokens == 2048
 
 
+@pytest.mark.parametrize("selected_publisher", ("stdout", "telegram"))
+def test_non_bark_llm_token_default_is_independent_of_briefing_limit(monkeypatch, selected_publisher: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("PUBLISHER", selected_publisher)
+    monkeypatch.setenv("BRIEFING_MAX_CHARACTERS", "500")
+    monkeypatch.delenv("LLM_MAX_OUTPUT_TOKENS", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.briefing_max_characters == 500
+    assert settings.llm_max_output_tokens == 8192
+
+
 def test_bark_briefing_limit_rejects_values_above_platform_limit(monkeypatch) -> None:
     _required_environment(monkeypatch)
     _select_bark(monkeypatch)
