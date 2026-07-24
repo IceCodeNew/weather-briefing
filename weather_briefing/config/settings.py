@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import pendulum
 from any_llm import AnyLLM
 
-from ..data.bark import BARK_MAX_MESSAGE_LENGTH
+from ..data.bark import BARK_DEFAULT_LLM_MAX_OUTPUT_TOKENS, BARK_MAX_MESSAGE_LENGTH
 from ..data.service_endpoints import BARK_BASE_URL
 from ..models import FeedConfig, LocationSpec
 from ..registries import PublisherName
@@ -32,6 +32,8 @@ from .environment import (
 )
 from .feeds import load_feeds
 from .locations import load_locations
+
+_DEFAULT_LLM_MAX_OUTPUT_TOKENS = 8192
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +113,7 @@ class Settings:
             briefing_max_characters = positive_integer("BRIEFING_MAX_CHARACTERS", 3500)
         llm_max_output_tokens = positive_integer(
             "LLM_MAX_OUTPUT_TOKENS",
-            briefing_max_characters * 2,
+            BARK_DEFAULT_LLM_MAX_OUTPUT_TOKENS if bark_selected else _DEFAULT_LLM_MAX_OUTPUT_TOKENS,
         )
         daily_cron_hour = bounded_integer("GREETING_HOUR", 8, 0, 23)
         daily_cron_minute = bounded_integer("GREETING_MINUTE", 0, 0, 59)

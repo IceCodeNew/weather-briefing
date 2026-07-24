@@ -203,6 +203,40 @@ class BarkTextRenderer(PlainTextRenderer):
         """Omit source URLs from Bark briefing attributions."""
         super().__init__(include_source_urls=False, number_sources=True)
 
+    def render_briefing(
+        self,
+        result: BriefingResult,
+        reference_articles: tuple[Article, ...],
+        context: tuple[SourceDocument, ...],
+    ) -> RenderedMessage:
+        """Render a compact briefing intended for at most two Bark messages."""
+        labels = _briefing_labels(result.output_language)
+        source_references = {
+            article.id: self._source_reference(_article_source_name(article), article.url)
+            for article in reference_articles
+        }
+        source_references.update(
+            {document.id: self._source_reference(document.name, document.url) for document in context}
+        )
+        numbered_references, source_footer = _numbered_source_references(result, source_references, labels)
+        lines = [
+            f"{result.headline} "
+            f"{_plain_attribution(result.headline_source_ids, numbered_references, labels, numbered=True)}"
+        ]
+        lines.extend(_compact_plain_items(None, result.conclusions, numbered_references, labels))
+        if result.active_warnings:
+            lines.append(labels["warnings"])
+            lines.extend(
+                f"- {warning.title}{labels['status_open']}{warning.status}{labels['status_close']}"
+                f"{labels['detail_separator']}{warning.detail} "
+                f"{_plain_attribution(warning.source_ids, numbered_references, labels, numbered=True)}"
+                for warning in result.active_warnings
+            )
+        lines.extend(_compact_plain_items(labels["disasters"], result.disaster_tracking, numbered_references, labels))
+        lines.extend(_compact_plain_items(labels["advice"], result.advice, numbered_references, labels))
+        lines.append(source_footer)
+        return _plain_message("\n".join(lines))
+
 
 def _html_text(value: str) -> str:
     return escape(unescape(value), quote=False)
@@ -248,6 +282,22 @@ def _plain_items(
         for item in items
     )
     lines.append("")
+    return lines
+
+
+def _compact_plain_items(
+    title: str | None,
+    items: tuple[Conclusion | Advice, ...],
+    source_references: dict[str, str],
+    labels: Mapping[str, str],
+) -> list[str]:
+    if not items:
+        return []
+    lines = [title] if title is not None else []
+    lines.extend(
+        f"- {item.text} {_plain_attribution(item.source_ids, source_references, labels, numbered=True)}"
+        for item in items
+    )
     return lines
 
 

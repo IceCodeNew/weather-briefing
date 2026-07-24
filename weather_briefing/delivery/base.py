@@ -43,10 +43,25 @@ class DeliveryProvider:
     renderer: MessageRenderer
     publisher: Publisher
     single_message_limit: int | None = None
+    briefing_max_messages: int = 1
     diagnostics: RenderedTextDiagnostics | None = None
+
+    def __post_init__(self) -> None:
+        """Validate the delivery policy independently of the transport."""
+        if type(self.briefing_max_messages) is not int or self.briefing_max_messages <= 0:
+            raise ValueError("briefing_max_messages must be positive")
+        if self.briefing_max_messages > 1 and self.single_message_limit is None:
+            raise ValueError("split briefings require a single_message_limit")
 
     def briefing_limit(self, configured_limit: int) -> int:
         """Clamp a configured briefing limit to the platform limit."""
+        if self.single_message_limit is None:
+            return configured_limit
+        per_message_limit = min(configured_limit, self.single_message_limit)
+        return per_message_limit * self.briefing_max_messages
+
+    def briefing_target(self, configured_limit: int) -> int:
+        """Prefer one message while allowing the configured aggregate limit."""
         if self.single_message_limit is None:
             return configured_limit
         return min(configured_limit, self.single_message_limit)
@@ -70,6 +85,19 @@ class DeliveryProvider:
         """Publish an already rendered message with delivery hints."""
         log_rendered_text(self.diagnostics, "briefing", message.body)
         await self.publisher.publish(message, single_message=single_message, silent=silent)
+
+    async def publish_briefing(self, message: RenderedMessage, *, silent: bool = False) -> None:
+        """Publish a briefing according to its platform chunk policy."""
+        if (
+            self.single_message_limit is not None
+            and message.visible_length > self.single_message_limit * self.briefing_max_messages
+        ):
+            raise DeliveryError("Briefing exceeds the delivery limit", reason="message-too-long")
+        await self.publish_rendered(
+            message,
+            single_message=self.briefing_max_messages == 1,
+            silent=silent,
+        )
 
     async def publish_verbatim(self, article: Article, *, silent: bool = False) -> None:
         """Render and publish one cleaned article without summarization."""

@@ -54,6 +54,13 @@ def test_prompt_condenses_the_overview_into_the_headline() -> None:
     assert "overview_source_ids" not in SYSTEM_PROMPT
 
 
+def test_prompt_uses_a_soft_briefing_target_and_hard_output_limits() -> None:
+    assert "briefing_target_characters" in SYSTEM_PROMPT
+    assert "briefing_max_characters" in SYSTEM_PROMPT
+    assert "llm_max_output_tokens" in SYSTEM_PROMPT
+    assert "所需的最少来源" in SYSTEM_PROMPT
+
+
 def test_prompt_requires_attribution_and_preserves_source_conflicts() -> None:
     assert "headline_source_ids 以及 conclusions" in SYSTEM_PROMPT
     assert "不得拼接成无争议的单一结论" in SYSTEM_PROMPT

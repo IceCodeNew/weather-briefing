@@ -261,6 +261,14 @@ def test_split_plain_message_prefers_line_boundary() -> None:
     assert split_plain_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
 
 
+def test_split_plain_message_uses_the_minimum_number_of_chunks() -> None:
+    chunks = split_plain_message("x" * 100 + "\n" + "y" * 1199, 650)
+
+    assert len(chunks) == 2
+    assert all(len(chunk) <= 650 for chunk in chunks)
+    assert "".join(chunks) == "x" * 100 + "\n" + "y" * 1199
+
+
 @pytest.mark.parametrize("limit", (0, -1))
 def test_split_plain_message_rejects_non_positive_limit(limit: int) -> None:
     with pytest.raises(ValueError, match="must be positive"):

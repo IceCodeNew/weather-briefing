@@ -63,9 +63,36 @@ def test_bark_text_renderer_uses_numbered_sources_without_urls() -> None:
 
     rendered = BarkTextRenderer().render_briefing(result, (article,), (context,))
 
-    assert rendered.body == ("Daily [1]\n\nWeather information\n\n- Rain [1][2]\n\nSources: [1] Feed; [2] Weather API")
+    assert rendered.body == "Daily [1]\n- Rain [1][2]\nSources: [1] Feed; [2] Weather API"
     assert article.url not in rendered.body
     assert context.url not in rendered.body
+
+
+def test_bark_text_renderer_compacts_warning_disaster_and_advice_sections() -> None:
+    now = pendulum.datetime(2026, 7, 24, 8, tz="Asia/Shanghai")
+    context = SourceDocument("source", "Weather API", "https://example.invalid/context", "Forecast")
+    result = BriefingResult(
+        "Rain today",
+        ("source",),
+        (),
+        active_warnings=(Warning("warning", "Heavy rain", "active", "Avoid low areas", ("source",), now),),
+        disaster_tracking=(Conclusion("Storm approaching", ("source",)),),
+        advice=(Advice(AdviceTopic.EXERCISE, "Exercise indoors", ("source",)),),
+        output_language="en",
+    )
+
+    rendered = BarkTextRenderer().render_briefing(result, (), (context,))
+
+    assert rendered.body == (
+        "Rain today [1]\n"
+        "Weather warnings\n"
+        "- Heavy rain (active): Avoid low areas [1]\n"
+        "Natural disaster updates\n"
+        "- Storm approaching [1]\n"
+        "Advice\n"
+        "- Exercise indoors [1]\n"
+        "Sources: [1] Weather API"
+    )
 
 
 @pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer()))

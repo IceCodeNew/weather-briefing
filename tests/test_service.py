@@ -55,6 +55,7 @@ class _TestSettings:
     llm_history_max_documents: int = 8
     llm_history_max_characters: int = 16_000
     briefing_max_characters: int = 3500
+    llm_max_output_tokens: int = 8192
     llm_max_attempts: int = 3
 
 
@@ -1084,6 +1085,11 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
 
     assert llm.payload is not None
     assert llm.payload["mode"] == "briefing"
+    assert llm.payload["output_constraints"] == {
+        "briefing_target_characters": 3500,
+        "briefing_max_characters": 3500,
+        "llm_max_output_tokens": 8192,
+    }
     new_articles = llm.payload["new_articles"]
     assert _is_dict_list(new_articles)
     assert new_articles[0]["source_id"] == "article-id"
