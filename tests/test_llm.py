@@ -214,17 +214,21 @@ def test_rejects_invalid_top_level_field(field: str, value: object) -> None:
     "markdown_text",
     (
         "# Forecast",
+        "Forecast\n===",
         "- Rain",
         "1. Rain",
         "> Rain",
         "---",
         "```forecast```",
         "[Forecast](https://example.invalid)",
+        "[Forecast]: https://example.invalid",
+        "<https://example.invalid>",
         "**Forecast**",
         "*Forecast*",
         "_Forecast_",
         "~~Forecast~~",
         "`Forecast`",
+        "A | B\n--|--\n1 | 2",
     ),
 )
 def test_rejects_markdown_in_headline(markdown_text: str) -> None:

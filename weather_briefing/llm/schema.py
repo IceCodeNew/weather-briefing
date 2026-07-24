@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, TypeAlias
 
+from markdown_it import MarkdownIt
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from .base import LLMError, LLMRequestError
 
-_MARKDOWN_PATTERNS = (
-    re.compile(r"(?m)^\s{0,3}(?:#{1,6}|[-*+>]|\d+[.)])\s+"),
-    re.compile(r"(?m)^\s*(?:-{3,}|\*{3,}|_{3,})\s*$"),
-    re.compile(r"```|~~~"),
-    re.compile(r"\[[^\]\n]+\]\([^)\n]+\)"),
-    re.compile(r"(?P<delimiter>\*\*|__)(?=\S).+?(?<=\S)(?P=delimiter)"),
-    re.compile(r"(?<!\*)\*(?!\*)(?=\S)[^*\n]+?(?<=\S)\*(?!\*)"),
-    re.compile(r"(?<![\w_])_(?!_)(?=\S)[^_\n]+?(?<=\S)_(?![\w_])"),
-    re.compile(r"~~(?=\S).+?(?<=\S)~~"),
-    re.compile(r"`[^`\n]+`"),
-)
+_MARKDOWN_PARSER = MarkdownIt("commonmark").enable(("strikethrough", "table"))
+_PLAIN_BLOCK_TOKENS = frozenset(("paragraph_open", "inline", "paragraph_close"))
+_PLAIN_INLINE_TOKENS = frozenset(("text", "softbreak", "hardbreak"))
 
 
 def _non_empty(value: str) -> str:
@@ -30,7 +22,14 @@ def _non_empty(value: str) -> str:
 
 
 def _plain_text(value: str) -> str:
-    if any(pattern.search(value) for pattern in _MARKDOWN_PATTERNS):
+    environment: dict[str, object] = {}
+    tokens = _MARKDOWN_PARSER.parse(value, environment)
+    has_markup = bool(environment.get("references")) or any(
+        token.type not in _PLAIN_BLOCK_TOKENS
+        or (token.children is not None and any(child.type not in _PLAIN_INLINE_TOKENS for child in token.children))
+        for token in tokens
+    )
+    if has_markup:
         raise ValueError("must not contain Markdown syntax")
     return value
 
