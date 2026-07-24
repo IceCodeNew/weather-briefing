@@ -1373,6 +1373,20 @@ class TestConfigErrorPaths:
         assert settings.briefing_max_characters == 3500
         assert settings.llm_max_output_tokens == 8192
 
+    def test_disabled_service_status_does_not_require_publisher_credentials(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "")
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram,bark")
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+        monkeypatch.delenv("TELEGRAM_CHAT_ID")
+        monkeypatch.delenv("BARK_DEVICE_KEY", raising=False)
+
+        settings = Settings.from_env()
+
+        assert settings.service_status_providers == ()
+        assert settings.service_status_publishers == ("telegram", "bark")
+
     @pytest.mark.parametrize(
         ("missing_name", "message"),
         (

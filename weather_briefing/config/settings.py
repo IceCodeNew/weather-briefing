@@ -102,10 +102,9 @@ class Settings:
         locations_path = path_from_env("BRIEFING_LOCATIONS_FILE", "locations.json")
         rss_sources_path = path_from_env("RSS_SOURCES_FILE", "rss-sources.json")
         service_status_providers = configured_service_status_providers()
+        service_status_enabled = bool(service_status_providers)
         weather_briefings_enabled = locations_path.is_file()
-        service_status_only_requested = os.getenv("SERVICE_STATUS_PROVIDERS") is not None and bool(
-            service_status_providers
-        )
+        service_status_only_requested = os.getenv("SERVICE_STATUS_PROVIDERS") is not None and service_status_enabled
         if not weather_briefings_enabled and not service_status_only_requested:
             load_locations(locations_path)
         feeds = load_feeds(rss_sources_path) if weather_briefings_enabled else ()
@@ -120,9 +119,9 @@ class Settings:
         selected_publisher = publisher()
         service_status_publishers = configured_service_status_publishers(selected_publisher)
         bark_selected = selected_publisher == PublisherName.BARK
-        bark_configured = selected_publisher == PublisherName.BARK or PublisherName.BARK in service_status_publishers
-        telegram_configured = (
-            selected_publisher == PublisherName.TELEGRAM or PublisherName.TELEGRAM in service_status_publishers
+        bark_configured = bark_selected or (service_status_enabled and PublisherName.BARK in service_status_publishers)
+        telegram_configured = selected_publisher == PublisherName.TELEGRAM or (
+            service_status_enabled and PublisherName.TELEGRAM in service_status_publishers
         )
         telegram_bot_token = clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None
         telegram_chat_id = clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None
