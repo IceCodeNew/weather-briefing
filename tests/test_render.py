@@ -81,9 +81,33 @@ def test_bark_text_renderer_uses_numbered_sources_without_urls() -> None:
 
     rendered = BarkTextRenderer().render_briefing(result, (article,), (context,))
 
-    assert rendered.body == "Daily [1]\n- Rain [1][2]\nSources: [1] Feed; [2] Weather API"
+    assert rendered.body == "Daily [1]\nRain [1][2]\n[1] Feed\n[2] Weather API"
     assert article.url not in rendered.body
     assert context.url not in rendered.body
+    assert "- " not in rendered.body
+
+
+def test_bark_text_renderer_merges_source_ids_with_the_same_display_name() -> None:
+    weather = SourceDocument("weather:open-meteo", "Open-Meteo", "https://example.invalid/weather", "Forecast")
+    air_quality = SourceDocument(
+        "air-quality:open-meteo",
+        " open-meteo ",
+        "https://example.invalid/air-quality",
+        "Air quality",
+    )
+    result = BriefingResult(
+        "Daily",
+        ("weather:open-meteo",),
+        (Conclusion("Rain", ("weather:open-meteo", "air-quality:open-meteo")),),
+        advice=(Advice(AdviceTopic.MASK, "Limit exposure", ("air-quality:open-meteo",)),),
+        output_language="en",
+    )
+
+    rendered = BarkTextRenderer().render_briefing(result, (), (weather, air_quality))
+
+    assert rendered.body == "Daily [1]\nRain [1]\nAdvice\nLimit exposure [1]\n[1] Open-Meteo"
+    assert "[2]" not in rendered.body
+    assert "Sources:" not in rendered.body
 
 
 def test_bark_text_renderer_trims_outer_whitespace() -> None:
@@ -92,7 +116,7 @@ def test_bark_text_renderer_trims_outer_whitespace() -> None:
 
     rendered = BarkTextRenderer().render_briefing(result, (), (context,))
 
-    assert rendered.body == "Daily [1]\nSources: [1] Weather API"
+    assert rendered.body == "Daily [1]\n[1] Weather API"
     assert rendered.visible_length == len(rendered.body)
 
 
@@ -114,12 +138,12 @@ def test_bark_text_renderer_compacts_warning_disaster_and_advice_sections() -> N
     assert rendered.body == (
         "Rain today [1]\n"
         "Weather warnings\n"
-        "- Heavy rain (active): Avoid low areas [1]\n"
+        "Heavy rain (active): Avoid low areas [1]\n"
         "Natural disaster updates\n"
-        "- Storm approaching [1]\n"
+        "Storm approaching [1]\n"
         "Advice\n"
-        "- Exercise indoors [1]\n"
-        "Sources: [1] Weather API"
+        "Exercise indoors [1]\n"
+        "[1] Weather API"
     )
 
 

@@ -218,7 +218,7 @@ class BarkTextRenderer(PlainTextRenderer):
         source_references.update(
             {document.id: self._source_reference(document.name, document.url) for document in context}
         )
-        numbered_references, source_footer = _numbered_source_references(result, source_references, labels)
+        numbered_references, source_footer = _bark_numbered_source_references(result, source_references)
         lines = [
             f"{result.headline} "
             f"{_plain_attribution(result.headline_source_ids, numbered_references, labels, numbered=True)}"
@@ -227,7 +227,7 @@ class BarkTextRenderer(PlainTextRenderer):
         if result.active_warnings:
             lines.append(labels["warnings"])
             lines.extend(
-                f"- {warning.title}{labels['status_open']}{warning.status}{labels['status_close']}"
+                f"{warning.title}{labels['status_open']}{warning.status}{labels['status_close']}"
                 f"{labels['detail_separator']}{warning.detail} "
                 f"{_plain_attribution(warning.source_ids, numbered_references, labels, numbered=True)}"
                 for warning in result.active_warnings
@@ -295,8 +295,7 @@ def _compact_plain_items(
         return []
     lines = [title] if title is not None else []
     lines.extend(
-        f"- {item.text} {_plain_attribution(item.source_ids, source_references, labels, numbered=True)}"
-        for item in items
+        f"{item.text} {_plain_attribution(item.source_ids, source_references, labels, numbered=True)}" for item in items
     )
     return lines
 
@@ -329,17 +328,40 @@ def _numbered_source_references(
     source_references: dict[str, str],
     labels: Mapping[str, str],
 ) -> tuple[dict[str, str], str]:
-    ordered_source_ids = list(result.headline_source_ids)
-    for items in (result.conclusions, result.active_warnings, result.disaster_tracking, result.advice):
-        for item in items:
-            ordered_source_ids.extend(item.source_ids)
-    ordered_source_ids = list(dict.fromkeys(ordered_source_ids))
+    ordered_source_ids = _ordered_source_ids(result)
     numbered_references = {source_id: f"[{index}]" for index, source_id in enumerate(ordered_source_ids, start=1)}
     source_list = labels["plain_source_separator"].join(
         f"{numbered_references[source_id]} {source_references[source_id]}" for source_id in ordered_source_ids
     )
     footer = f"{labels['sources']}{labels['detail_separator']}{source_list}"
     return numbered_references, footer
+
+
+def _bark_numbered_source_references(
+    result: BriefingResult,
+    source_references: dict[str, str],
+) -> tuple[dict[str, str], str]:
+    numbered_references: dict[str, str] = {}
+    numbers_by_name: dict[str, str] = {}
+    source_lines: list[str] = []
+    for source_id in _ordered_source_ids(result):
+        source_name = " ".join(source_references[source_id].split())
+        normalized_name = source_name.casefold()
+        number = numbers_by_name.get(normalized_name)
+        if number is None:
+            number = f"[{len(numbers_by_name) + 1}]"
+            numbers_by_name[normalized_name] = number
+            source_lines.append(f"{number} {source_name}")
+        numbered_references[source_id] = number
+    return numbered_references, "\n".join(source_lines)
+
+
+def _ordered_source_ids(result: BriefingResult) -> list[str]:
+    ordered_source_ids = list(result.headline_source_ids)
+    for items in (result.conclusions, result.active_warnings, result.disaster_tracking, result.advice):
+        for item in items:
+            ordered_source_ids.extend(item.source_ids)
+    return list(dict.fromkeys(ordered_source_ids))
 
 
 def _briefing_labels(language: str) -> Mapping[str, str]:
