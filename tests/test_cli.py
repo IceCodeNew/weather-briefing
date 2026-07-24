@@ -53,6 +53,7 @@ from weather_briefing.composition.providers import qweather_is_configured as _qw
 from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.delivery import BarkTextRenderer
+from weather_briefing.llm import FallbackLLMProvider
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
 from weather_briefing.registries import PublisherName, WeatherProviderName
@@ -763,6 +764,8 @@ _DEFAULT_SETTINGS = Settings(
     llm_provider="deepseek",
     llm_model="m",
     llm_base_url=None,
+    llm_fallback_provider=None,
+    llm_fallback_model=None,
     llm_max_output_tokens=8192,
     llm_max_attempts=3,
     http_timeout_seconds=30.0,
@@ -1203,6 +1206,32 @@ class TestLLMProvider:
             "api_base": None,
             "diagnostics": None,
         }
+
+    async def test_configured_fallback_llm_provider_is_composed(self, monkeypatch) -> None:
+        providers: list[SimpleNamespace] = []
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        def create_provider(*args, **kwargs):
+            provider = SimpleNamespace()
+            providers.append(provider)
+            calls.append((args, kwargs))
+            return provider
+
+        monkeypatch.setattr("weather_briefing.llm.any_llm.create_any_llm_provider", create_provider)
+        settings = replace(
+            _make_fake_settings(),
+            llm_fallback_provider="openai",
+            llm_fallback_model="gpt-fallback",
+        )
+
+        provider = _llm_provider(settings)
+
+        assert isinstance(provider, FallbackLLMProvider)
+        assert len(providers) == 2
+        assert calls[1] == (
+            ("openai", "gpt-fallback", 8192),
+            {"diagnostics": None},
+        )
 
 
 class TestDeliveryProvider:

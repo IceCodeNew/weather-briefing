@@ -181,6 +181,8 @@ Open-Meteo 的逐小时空气质量和花粉预报按目标日峰值生成生活
 
 CLI 负责关闭自己创建的模型服务对象及其网络资源。测试或外部调用方注入的对象视为借用，不由应用关闭。
 
+`LLM_FALLBACK_PROVIDER` 和 `LLM_FALLBACK_MODEL` 必须同时配置。主提供商抛出 `LLMRequestError` 时，同一次操作只向备用提供商重试一次；截断、结构化输出或领域验证失败继续由原提供商进入既有修复流程。主、备用适配器各自持有并关闭 SDK 资源。
+
 ## 调度与投递
 
 `daemon` 创建 forecast 和 briefing 两类 APScheduler 任务，并保持常驻。它不接受立即运行参数。
