@@ -345,7 +345,7 @@ def _bark_numbered_source_references(
     numbers_by_name: dict[str, str] = {}
     source_lines: list[str] = []
     for source_id in _ordered_source_ids(result):
-        source_name = " ".join(source_references[source_id].split())
+        source_name = " ".join(source_references[source_id].split()) or source_id
         normalized_name = source_name.casefold()
         number = numbers_by_name.get(normalized_name)
         if number is None:

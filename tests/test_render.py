@@ -110,6 +110,21 @@ def test_bark_text_renderer_merges_source_ids_with_the_same_display_name() -> No
     assert "Sources:" not in rendered.body
 
 
+def test_bark_text_renderer_uses_source_ids_for_distinct_blank_names() -> None:
+    weather = SourceDocument("weather:blank", " ", "https://example.invalid/weather", "Forecast")
+    air_quality = SourceDocument("air-quality:blank", "", "https://example.invalid/air-quality", "Air quality")
+    result = BriefingResult(
+        "Daily",
+        ("weather:blank",),
+        (Conclusion("Rain", ("weather:blank", "air-quality:blank")),),
+        output_language="en",
+    )
+
+    rendered = BarkTextRenderer().render_briefing(result, (), (weather, air_quality))
+
+    assert rendered.body == ("Daily [1]\nRain [1][2]\n[1] weather:blank\n[2] air-quality:blank")
+
+
 def test_bark_text_renderer_trims_outer_whitespace() -> None:
     context = SourceDocument("source", "Weather API  ", "https://example.invalid/context", "Forecast")
     result = BriefingResult("  Daily", ("source",), (), output_language="en")
