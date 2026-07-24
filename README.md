@@ -31,7 +31,7 @@ Before deploying, you will need:
 
 The default weather services require no API key. Users in mainland China who want QWeather will also need a Project ID, Credential ID, a dedicated API Host, and a Base64-encoded Ed25519 private key. See the [QWeather JWT documentation](https://dev.qweather.com/docs/configuration/authentication/#json-web-token) for authentication details.
 
-Official AI service status requires no status-page credentials. The environment template leaves it disabled; set `SERVICE_STATUS_PROVIDERS` to a comma-separated subset of `deepseek,openai,anthropic,kimi` to enable it. It runs independently from weather briefings every five minutes, evaluates whether each official message is worth notifying, and forwards only meaningful incident changes and recoveries. Messages already in English or the selected language are forwarded unchanged; other messages are faithfully translated. Set the independent five-field schedule with `SERVICE_STATUS_CRON`, choose `en`, `zh-CN`, or `ja` with `SERVICE_STATUS_LANGUAGE`, and optionally select multiple delivery platforms with comma-separated `SERVICE_STATUS_PUBLISHERS` (default: `PUBLISHER`).
+The project can also monitor official AI service status and deliver meaningful incident changes and recoveries. Enable and configure it through the annotated service-status variables in [`env.example`](env.example).
 
 The repository provides the following configuration templates:
 
@@ -138,7 +138,7 @@ Recreate the container after adding the mount.
 
 ## Running and troubleshooting
 
-By default, the persistent scheduler sends a daily forecast at 08:00 and checks for weather changes from 09:00&ndash;23:00. When `SERVICE_STATUS_PROVIDERS` is configured, it also polls those providers every five minutes on an independent schedule; an empty value disables only the service-status job. The timezone and schedules can be adjusted in `.env`.
+By default, the persistent scheduler sends a daily forecast at 08:00 and checks for weather changes from 09:00&ndash;23:00. The timezone and schedules can be adjusted in `.env`.
 
 The default timezone is `Asia/Shanghai`. For other regions, change `BRIEFING_TIMEZONE`; the startup command above reads it from `.env` and passes the same value to the container as `TZ`.
 
