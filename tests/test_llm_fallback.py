@@ -1,5 +1,5 @@
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -57,6 +57,52 @@ async def test_successful_primary_request_does_not_use_fallback() -> None:
 
     assert result == {"provider": "primary"}
     fallback.summarize.assert_not_awaited()
+
+
+async def test_request_failure_pins_fallback_for_later_repairs() -> None:
+    primary = _provider()
+    fallback = _provider()
+    primary.summarize.side_effect = LLMRequestError("primary unavailable")
+    fallback.summarize.side_effect = (
+        {"provider": "invalid"},
+        {"provider": "repaired"},
+    )
+    provider = FallbackLLMProvider(
+        primary,
+        fallback,
+        primary_name="primary",
+        fallback_name="fallback",
+    )
+
+    first_result = await provider.summarize("system", {"attempt": 1})
+    second_result = await provider.summarize("repair", {"attempt": 2})
+
+    assert first_result == {"provider": "invalid"}
+    assert second_result == {"provider": "repaired"}
+    primary.summarize.assert_awaited_once_with("system", {"attempt": 1})
+    assert fallback.summarize.await_args_list == [
+        call("system", {"attempt": 1}),
+        call("repair", {"attempt": 2}),
+    ]
+
+
+async def test_request_failure_pins_fallback_across_operations() -> None:
+    primary = _provider()
+    fallback = _provider()
+    primary.summarize.side_effect = LLMRequestError("primary unavailable")
+    provider = FallbackLLMProvider(
+        primary,
+        fallback,
+        primary_name="primary",
+        fallback_name="fallback",
+    )
+
+    await provider.summarize("system", {"input": "value"})
+    decision = await provider.assess_notification({"notification": "value"})
+
+    assert decision == NotificationDecision(True)
+    primary.assess_notification.assert_not_awaited()
+    fallback.assess_notification.assert_awaited_once_with({"notification": "value"})
 
 
 async def test_output_contract_failure_does_not_use_fallback() -> None:
@@ -144,3 +190,24 @@ async def test_primary_close_failure_still_closes_fallback() -> None:
         await provider.aclose()
 
     fallback.aclose.assert_awaited_once_with()
+
+
+async def test_both_close_failures_are_preserved() -> None:
+    primary = _provider()
+    fallback = _provider()
+    primary.aclose.side_effect = RuntimeError("primary cleanup failed")
+    fallback.aclose.side_effect = ValueError("fallback cleanup failed")
+    provider = FallbackLLMProvider(
+        primary,
+        fallback,
+        primary_name="primary",
+        fallback_name="fallback",
+    )
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        await provider.aclose()
+
+    assert [str(error) for error in exc_info.value.exceptions] == [
+        "primary cleanup failed",
+        "fallback cleanup failed",
+    ]

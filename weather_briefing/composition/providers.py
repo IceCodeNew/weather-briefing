@@ -61,6 +61,8 @@ def llm_provider(
         settings.llm_fallback_provider,
         settings.llm_fallback_model,
         settings.llm_max_output_tokens,
+        api_key=settings.llm_fallback_api_key,
+        api_base=settings.llm_fallback_base_url,
         diagnostics=diagnostics,
     )
     return FallbackLLMProvider(

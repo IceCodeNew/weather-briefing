@@ -54,6 +54,7 @@ class FallbackLLMProvider:
         self._fallback = fallback
         self._primary_name = primary_name
         self._fallback_name = fallback_name
+        self._using_fallback = False
 
     async def _request(
         self,
@@ -61,9 +62,12 @@ class FallbackLLMProvider:
         primary_call: Callable[[], Awaitable[_Result]],
         fallback_call: Callable[[], Awaitable[_Result]],
     ) -> _Result:
+        if self._using_fallback:
+            return await fallback_call()
         try:
             return await primary_call()
         except LLMRequestError:
+            self._using_fallback = True
             _LOGGER.warning(
                 "Primary LLM request failed; trying fallback operation=%s primary=%s fallback=%s",
                 operation,
@@ -102,8 +106,17 @@ class FallbackLLMProvider:
         )
 
     async def aclose(self) -> None:
-        """Close both configured providers even when primary cleanup fails."""
+        """Close both providers and preserve every cleanup failure."""
+        errors: list[BaseException] = []
         try:
             await self._primary.aclose()
-        finally:
+        except BaseException as exc:
+            errors.append(exc)
+        try:
             await self._fallback.aclose()
+        except BaseException as exc:
+            errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("Failed to close fallback LLM providers", errors)

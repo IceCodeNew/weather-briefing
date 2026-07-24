@@ -50,6 +50,8 @@ class Settings:
     llm_base_url: str | None
     llm_fallback_provider: str | None
     llm_fallback_model: str | None
+    llm_fallback_api_key: str | None
+    llm_fallback_base_url: str | None
     llm_max_output_tokens: int
     llm_max_attempts: int
     http_timeout_seconds: float
@@ -166,6 +168,12 @@ class Settings:
             raise ConfigurationError("LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL must be configured together")
         if llm_fallback_provider is not None:
             _validate_llm_provider("LLM_FALLBACK_PROVIDER", llm_fallback_provider)
+        if llm_fallback_provider == "deepseek":
+            llm_fallback_api_key = clean_env(os.getenv("DEEPSEEK_API_KEY")) or None
+            llm_fallback_base_url = first_configured("DEEPSEEK_API_BASE", "DEEPSEEK_BASE_URL")
+        else:
+            llm_fallback_api_key = None
+            llm_fallback_base_url = None
         locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
@@ -231,6 +239,8 @@ class Settings:
             llm_base_url=llm_base_url.rstrip("/") if llm_base_url else None,
             llm_fallback_provider=llm_fallback_provider,
             llm_fallback_model=llm_fallback_model,
+            llm_fallback_api_key=llm_fallback_api_key,
+            llm_fallback_base_url=llm_fallback_base_url.rstrip("/") if llm_fallback_base_url else None,
             llm_max_output_tokens=llm_max_output_tokens,
             llm_max_attempts=positive_integer("LLM_MAX_ATTEMPTS", 3),
             http_timeout_seconds=positive_float("HTTP_TIMEOUT_SECONDS", 30),

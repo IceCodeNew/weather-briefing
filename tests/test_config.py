@@ -63,6 +63,8 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert settings.llm_base_url is None
     assert settings.llm_fallback_provider is None
     assert settings.llm_fallback_model is None
+    assert settings.llm_fallback_api_key is None
+    assert settings.llm_fallback_base_url is None
     assert settings.llm_max_attempts == 3
     assert settings.qweather_jwt_lifetime_seconds == 900
     assert settings.llm_history_max_documents == 8
@@ -1063,6 +1065,26 @@ def test_llm_fallback_provider_and_model_are_loaded(monkeypatch) -> None:
 
     assert settings.llm_fallback_provider == "openai"
     assert settings.llm_fallback_model == "gpt-fallback"
+    assert settings.llm_fallback_api_key is None
+    assert settings.llm_fallback_base_url is None
+
+
+@pytest.mark.parametrize("base_name", ("DEEPSEEK_API_BASE", "DEEPSEEK_BASE_URL"))
+def test_deepseek_fallback_uses_normalized_connection_settings(monkeypatch, base_name: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_MODEL", "primary-model")
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "deepseek")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "deepseek-fallback")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "'fallback-key'")
+    monkeypatch.delenv("DEEPSEEK_API_BASE", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+    monkeypatch.setenv(base_name, "https://deepseek.example/v1/")
+
+    settings = Settings.from_env()
+
+    assert settings.llm_fallback_api_key == "fallback-key"
+    assert settings.llm_fallback_base_url == "https://deepseek.example/v1"
 
 
 def test_deepseek_model_name_remains_compatible(monkeypatch) -> None:
