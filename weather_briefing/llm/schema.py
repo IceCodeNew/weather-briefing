@@ -5,14 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Annotated, Any, Literal, TypeAlias
 
-from markdown_it import MarkdownIt
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from .base import LLMError, LLMRequestError
-
-_MARKDOWN_PARSER = MarkdownIt("commonmark").enable(("strikethrough", "table"))
-_PLAIN_BLOCK_TOKENS = frozenset(("paragraph_open", "inline", "paragraph_close"))
-_PLAIN_INLINE_TOKENS = frozenset(("text", "softbreak", "hardbreak"))
 
 
 def _non_empty(value: str) -> str:
@@ -21,21 +16,7 @@ def _non_empty(value: str) -> str:
     return value
 
 
-def _plain_text(value: str) -> str:
-    environment: dict[str, object] = {}
-    tokens = _MARKDOWN_PARSER.parse(value, environment)
-    has_markup = bool(environment.get("references")) or any(
-        token.type not in _PLAIN_BLOCK_TOKENS
-        or (token.children is not None and any(child.type not in _PLAIN_INLINE_TOKENS for child in token.children))
-        for token in tokens
-    )
-    if has_markup:
-        raise ValueError("must not contain Markdown syntax")
-    return value
-
-
 NonEmptyString: TypeAlias = Annotated[str, AfterValidator(_non_empty)]
-PlainTextString: TypeAlias = Annotated[str, AfterValidator(_non_empty), AfterValidator(_plain_text)]
 CitedSourceIds: TypeAlias = Annotated[list[NonEmptyString], Field(min_length=1)]
 
 
@@ -48,7 +29,7 @@ class _StrictLLMPayload(BaseModel):
 class SourcedTextPayload(_StrictLLMPayload):
     """Describe one source-cited statement in the model response."""
 
-    text: PlainTextString
+    text: NonEmptyString
     source_ids: CitedSourceIds
 
 
@@ -56,9 +37,9 @@ class WarningPayload(_StrictLLMPayload):
     """Describe one active warning in the model response."""
 
     id: NonEmptyString
-    title: PlainTextString
-    status: PlainTextString
-    detail: PlainTextString
+    title: NonEmptyString
+    status: NonEmptyString
+    detail: NonEmptyString
     source_ids: CitedSourceIds
 
 
@@ -71,7 +52,7 @@ class AdvicePayload(SourcedTextPayload):
 class LLMStructuredOutput(_StrictLLMPayload):
     """Define the complete, strict response contract requested from every LLM."""
 
-    headline: PlainTextString
+    headline: NonEmptyString
     headline_source_ids: CitedSourceIds
     conclusions: list[SourcedTextPayload]
     active_warnings: list[WarningPayload]
