@@ -107,16 +107,16 @@ class FallbackLLMProvider:
 
     async def aclose(self) -> None:
         """Close both providers and preserve every cleanup failure."""
-        errors: list[BaseException] = []
+        errors: list[Exception] = []
         try:
             await self._primary.aclose()
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
         try:
             await self._fallback.aclose()
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
         if len(errors) == 1:
             raise errors[0]
         if errors:
-            raise BaseExceptionGroup("Failed to close fallback LLM providers", errors)
+            raise ExceptionGroup("Failed to close fallback LLM providers", errors)

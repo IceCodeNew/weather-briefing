@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from unittest.mock import AsyncMock, call
 
@@ -204,10 +205,27 @@ async def test_both_close_failures_are_preserved() -> None:
         fallback_name="fallback",
     )
 
-    with pytest.raises(BaseExceptionGroup) as exc_info:
+    with pytest.raises(ExceptionGroup) as exc_info:
         await provider.aclose()
 
     assert [str(error) for error in exc_info.value.exceptions] == [
         "primary cleanup failed",
         "fallback cleanup failed",
     ]
+
+
+async def test_close_does_not_capture_cancellation() -> None:
+    primary = _provider()
+    fallback = _provider()
+    primary.aclose.side_effect = asyncio.CancelledError
+    provider = FallbackLLMProvider(
+        primary,
+        fallback,
+        primary_name="primary",
+        fallback_name="fallback",
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await provider.aclose()
+
+    fallback.aclose.assert_not_awaited()
