@@ -299,7 +299,14 @@ def test_reference_string_tuple_does_not_copy_the_cached_list(monkeypatch) -> No
         (
             {
                 "tables": {
-                    name: {} for name in ("air_quality", "allergen", "briefing", "qweather", "weather_document")
+                    name: {}
+                    for name in (
+                        "air_quality",
+                        "allergen",
+                        "briefing",
+                        "qweather",
+                        "weather_document",
+                    )
                 },
                 "aliases": {},
             },

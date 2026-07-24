@@ -8,7 +8,7 @@
 
 [English](README.md) | [简体中文](README_zh-Hans.md) | [日本語](README_ja.md)
 
-Weather Briefing periodically gathers weather, air quality, warnings, and optional private RSS content, then uses a large language model to produce a briefing that identifies its sources and includes source links when supported by the publisher.
+Weather Briefing uses a large language model to produce sourced briefings from weather, air quality, warnings, and optional private RSS content. It independently monitors official AI service status and directly publishes incident changes and recoveries.
 
 ## Core capabilities
 
@@ -17,6 +17,7 @@ Weather Briefing periodically gathers weather, air quality, warnings, and option
 - Persists history, unsent messages, and active warnings so important changes are neither repeated nor missed.
 - Supports multiple locations and output languages, with independent state for each location.
 - Combines global and regional weather services and falls back when a primary source fails.
+- Tracks official DeepSeek, OpenAI, Anthropic, and Kimi status pages, keeping web and API services distinct.
 - Can incorporate private RSS content while retaining a verifiable source link for every conclusion.
 
 ## Prerequisites
@@ -29,6 +30,8 @@ Before deploying, you will need:
 - A directory that can persist runtime state and geocoding results.
 
 The default weather services require no API key. Users in mainland China who want QWeather will also need a Project ID, Credential ID, a dedicated API Host, and a Base64-encoded Ed25519 private key. See the [QWeather JWT documentation](https://dev.qweather.com/docs/configuration/authentication/#json-web-token) for authentication details.
+
+The project can also monitor official AI service status and deliver meaningful incident changes and recoveries. Enable and configure it through the annotated service-status variables in [`env.example`](env.example).
 
 The repository provides the following configuration templates:
 
@@ -135,7 +138,7 @@ Recreate the container after adding the mount.
 
 ## Running and troubleshooting
 
-By default, the persistent scheduler sends a daily forecast at 08:00 and checks for weather changes from 09:00&ndash;23:00. Both the timezone and schedule can be adjusted in `.env`.
+By default, the persistent scheduler sends a daily forecast at 08:00 and checks for weather changes from 09:00&ndash;23:00. The timezone and schedules can be adjusted in `.env`.
 
 The default timezone is `Asia/Shanghai`. For other regions, change `BRIEFING_TIMEZONE`; the startup command above reads it from `.env` and passes the same value to the container as `TZ`.
 

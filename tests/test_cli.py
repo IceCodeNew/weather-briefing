@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, call
+from unittest.mock import AsyncMock, Mock, call
 
 import httpx
 import pendulum
@@ -23,6 +23,7 @@ from weather_briefing.cli import (
     _briefing_sent_today,
     _configure_logging,
     _delivery_provider,
+    _delivery_providers,
     _hour_in_cron,
     _in_schedule,
     _llm_provider,
@@ -37,6 +38,7 @@ from weather_briefing.cli import (
     daemon,
     main,
     run,
+    run_service_status,
 )
 from weather_briefing.composition.providers import (
     PUBLISHER_BUILDERS,
@@ -295,6 +297,7 @@ class TestInSchedule:
         monkeypatch.setenv("GREETING_MINUTE", "30")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
         monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+        monkeypatch.setenv("PUBLISHER", "stdout")
         monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(Path(__file__).parents[1] / "locations.example.json"))
         monkeypatch.setenv("RSS_SOURCES_FILE", str(Path(__file__).parents[1] / "rss-sources.example.json"))
 
@@ -309,6 +312,7 @@ class TestInSchedule:
         monkeypatch.setenv("BRIEFING_CRON", "10-18")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
         monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+        monkeypatch.setenv("PUBLISHER", "stdout")
         monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(Path(__file__).parents[1] / "locations.example.json"))
         monkeypatch.setenv("RSS_SOURCES_FILE", str(Path(__file__).parents[1] / "rss-sources.example.json"))
 
@@ -768,7 +772,11 @@ _DEFAULT_SETTINGS = Settings(
     geocoding_cache_path=Path("state/geocoding.json"),
     rss_sources_path=Path("rss-sources.json"),
     feeds=(),
+    weather_briefings_enabled=True,
     weather_providers=None,
+    service_status_providers=("deepseek", "openai", "anthropic", "kimi"),
+    service_status_publishers=("stdout",),
+    service_status_language="en",
     qweather_project_id=None,
     qweather_credential_id=None,
     qweather_private_key=None,
@@ -799,6 +807,7 @@ _DEFAULT_SETTINGS = Settings(
     greeting_hour=8,
     greeting_minute=0,
     hourly_cron="9-23",
+    service_status_cron="*/5 * * * *",
 )
 
 
@@ -1243,6 +1252,31 @@ class TestDeliveryProvider:
         with pytest.raises(ValueError, match="Unsupported publisher"):
             _delivery_provider(settings, async_client)
 
+    async def test_multiple_publishers_preserve_configured_order(
+        self,
+        async_client: httpx.AsyncClient,
+    ) -> None:
+        settings = _make_fake_settings(
+            publisher="stdout",
+            telegram_bot_token="test-token",
+            telegram_chat_id="test-chat",
+        )
+
+        providers = _delivery_providers(
+            settings,
+            async_client,
+            ("stdout", "telegram"),
+        )
+
+        assert [provider.single_message_limit for provider in providers] == [None, 4096]
+
+    async def test_multiple_publishers_reject_an_empty_group(
+        self,
+        async_client: httpx.AsyncClient,
+    ) -> None:
+        with pytest.raises(ValueError, match="At least one publisher"):
+            _delivery_providers(_make_fake_settings(), async_client, ())
+
 
 class TestWeatherContextProvider:
     async def test_qweather_not_configured_skips_when_auto(self, async_client: httpx.AsyncClient) -> None:
@@ -1575,9 +1609,20 @@ def test_publisher_builders_cover_declared_configuration_names() -> None:
     assert set(PUBLISHER_BUILDERS) == set(PublisherName)
 
 
-async def test_daemon_schedules_forecast_and_briefing_without_running_either_immediately(
+@pytest.mark.parametrize(
+    ("weather_briefings_enabled", "service_status_providers", "expected_jobs"),
+    (
+        (True, ("openai",), ((run, ("forecast", True)), (run, ("briefing", True)), (run_service_status, ()))),
+        (True, (), ((run, ("forecast", True)), (run, ("briefing", True)))),
+        (False, ("openai",), ((run_service_status, ()),)),
+    ),
+)
+async def test_daemon_schedules_weather_and_optional_service_status_without_running_immediately(
     monkeypatch,
     tmp_path: Path,
+    weather_briefings_enabled: bool,
+    service_status_providers: tuple[str, ...],
+    expected_jobs: tuple[tuple[object, tuple[object, ...]], ...],
 ) -> None:
     from unittest.mock import patch
 
@@ -1605,13 +1650,18 @@ async def test_daemon_schedules_forecast_and_briefing_without_running_either_imm
     monkeypatch.setattr(
         "weather_briefing.cli.AsyncIOScheduler",
         lambda **kw: SimpleNamespace(
-            add_job=lambda function, trigger, *, args, max_instances: jobs.append((function, tuple(args))),
+            add_job=lambda function, trigger, *, args=(), max_instances: jobs.append((function, tuple(args))),
             start=lambda: None,
         ),
     )
     monkeypatch.setattr("weather_briefing.cli.asyncio.Event", FakeEvent)
 
-    settings = replace(_make_fake_settings(), state_path=state_path)
+    settings = replace(
+        _make_fake_settings(),
+        state_path=state_path,
+        weather_briefings_enabled=weather_briefings_enabled,
+        service_status_providers=service_status_providers,
+    )
 
     def load_settings(_cls: type[Settings]) -> Settings:
         assert lock_is_held
@@ -1620,8 +1670,78 @@ async def test_daemon_schedules_forecast_and_briefing_without_running_either_imm
     with patch.object(Settings, "from_env", classmethod(load_settings)):
         await daemon()
 
-    assert jobs == [(run, ("forecast", True)), (run, ("briefing", True))]
+    assert jobs == list(expected_jobs)
     assert not lock_is_held
+
+
+async def test_service_status_run_is_independent_from_weather_orchestration(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from weather_briefing.service_status import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
+
+    state_path = tmp_path / "weather.sqlite3"
+    settings = replace(
+        _make_fake_settings(),
+        state_path=state_path,
+        service_status_providers=("openai",),
+    )
+    provider = AsyncMock()
+    observed_at = pendulum.datetime(2026, 7, 24, 9, 35, tz="UTC")
+    provider.fetch.return_value = ServiceStatusSnapshot(
+        source_id="service-status:openai",
+        source_name="OpenAI Status",
+        source_url="https://status.openai.com",
+        observed_at=observed_at,
+        messages=(
+            ServiceStatusMessage(
+                incident_id="incident",
+                revision_id="revision",
+                title="API incident",
+                status="resolved",
+                body="This incident has been resolved.",
+                url="https://status.openai.com/incidents/incident",
+                published_at=observed_at,
+                surfaces=(ServiceSurface.API,),
+            ),
+        ),
+    )
+    delivery = AsyncMock()
+    translator = AsyncMock()
+    llm_factory = Mock(return_value=translator)
+    monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: settings))
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.cli._delivery_providers", lambda *args: (delivery,))
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", llm_factory)
+    monkeypatch.setattr("weather_briefing.cli._service_status_providers", lambda names, client: (provider,))
+
+    await run_service_status()
+
+    provider.fetch.assert_awaited_once()
+    delivery.publish_alert.assert_not_awaited()
+    llm_factory.assert_not_called()
+    translator.aclose.assert_not_awaited()
+    with SQLiteStateStore(state_path) as state:
+        assert state.service_status_message_state("service-status:openai", "incident") is not None
+
+
+async def test_service_status_run_skips_when_no_provider_is_configured(
+    monkeypatch,
+    tmp_path: Path,
+    caplog,
+) -> None:
+    settings = replace(
+        _make_fake_settings(),
+        state_path=tmp_path / "weather.sqlite3",
+        service_status_providers=(),
+    )
+    monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: settings))
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+
+    with caplog.at_level(logging.INFO, logger="weather_briefing"):
+        await run_service_status()
+
+    assert "Skipping service-status run because no providers are configured" in caplog.text
 
 
 async def test_daemon_rejects_direct_second_instance(monkeypatch, tmp_path: Path) -> None:
@@ -1643,6 +1763,22 @@ def test_main_calls_daemon_correctly(monkeypatch) -> None:
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
     monkeypatch.setattr("weather_briefing.cli.daemon", fake_daemon)
     monkeypatch.setattr("sys.argv", ["weather-briefing", "daemon"])
+
+    main()
+    assert calls == 1
+
+
+def test_main_calls_service_status_correctly(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_run_service_status() -> None:
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
+    monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
+    monkeypatch.setattr("weather_briefing.cli.run_service_status", fake_run_service_status)
+    monkeypatch.setattr("sys.argv", ["weather-briefing", "service-status"])
 
     main()
     assert calls == 1

@@ -29,6 +29,7 @@ from .models import (
     ResolvedLocation,
     SourceDocument,
 )
+from .notifications import NotificationDecision
 from .sources import RSSFeedSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
@@ -332,11 +333,14 @@ class BriefingService:
         allergen_source_ids = {document.id for document in context if document.has_allergen_information}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
 
-        def validate_result(candidate: BriefingResult) -> None:
+        def validate_result(
+            candidate: BriefingResult,
+            candidate_notification: NotificationDecision,
+        ) -> None:
             candidate_message = self._delivery.render_briefing(candidate, source_articles, reference_context)
             if kind == "briefing" and candidate.advice:
                 raise LLMError("briefing must not repeat lifestyle advice")
-            if kind == "forecast" and not candidate.should_publish:
+            if kind == "forecast" and not candidate_notification.should_notify:
                 raise LLMError("forecast must set should_publish=true")
             missing_advice_topics = set(required_advice_topics) - {item.topic for item in candidate.advice}
             if missing_advice_topics:
@@ -356,7 +360,7 @@ class BriefingService:
                     f"limit is {briefing_limit}; rendered fields do not fit the delivery chunks"
                 )
 
-        result = await summarize_validated(
+        result, notification = await summarize_validated(
             self._llm,
             payload,
             now,
@@ -383,7 +387,7 @@ class BriefingService:
             source_articles,
             reference_context,
         )
-        if kind == "briefing" and not result.should_publish and not force_publish:
+        if kind == "briefing" and not notification.should_notify and not force_publish:
             _LOGGER.info("Briefing skipped: should_publish=False")
             self._save_result_state(
                 kind,
@@ -396,7 +400,7 @@ class BriefingService:
             )
             return None
 
-        publish_silently = silent and kind == "briefing" and not result.should_publish
+        publish_silently = silent and kind == "briefing" and not notification.should_notify
         await self._delivery.publish_briefing(message, silent=publish_silently)
         self._save_result_state(
             kind,

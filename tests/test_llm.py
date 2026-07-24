@@ -19,6 +19,12 @@ from weather_briefing.llm import (
     SensitiveLLMDiagnostics,
     parse_result,
 )
+from weather_briefing.llm.schema import (
+    NotificationDecisionOutput,
+    ServiceStatusTranslationOutput,
+    decode_notification_decision,
+    decode_service_status_translation,
+)
 
 
 class _CompletionClientStub:
@@ -164,9 +170,9 @@ def test_accepts_complete_suppressed_message_with_active_warning() -> None:
         should_publish=False,
     )
 
-    result = parse_result(payload, _now(), {"source"})
+    result, decision = parse_result(payload, _now(), {"source"})
 
-    assert not result.should_publish
+    assert not decision.should_notify
     assert result.active_warnings[0].id == "warning"
     assert result.advice[0].topic.value == "clothing"
     assert result.conclusions[0].text == "Cool morning"
@@ -432,3 +438,175 @@ async def test_provider_does_not_mask_programming_errors() -> None:
 
     with pytest.raises(AttributeError, match="adapter bug"):
         await provider.summarize("prompt", {})
+
+
+async def test_service_status_translation_rejects_unsupported_language() -> None:
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with pytest.raises(ValueError, match="Unsupported service-status translation language: fr"):
+        await provider.translate_service_status("障害", "調査中です。", "fr")
+
+
+@pytest.mark.parametrize(
+    ("error", "exception", "message"),
+    (
+        (ProviderError("upstream failed"), LLMRequestError, "translation request failed"),
+        (
+            LengthFinishReasonError(completion=ParsedChatCompletion[object].model_construct()),
+            LLMOutputLimitError,
+            "translation reached output token limit",
+        ),
+    ),
+)
+async def test_service_status_translation_wraps_sdk_failures(
+    error: BaseException,
+    exception: type[Exception],
+    message: str,
+    caplog,
+) -> None:
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(error=error),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="weather_briefing.llm"),
+        pytest.raises(exception, match=message),
+    ):
+        await provider.translate_service_status("障害", "調査中です。", "en")
+
+    if isinstance(error, LengthFinishReasonError):
+        assert "LLM translation reached output token limit" in caplog.text
+        assert "provider=openai model='model'" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("error", "exception", "message"),
+    (
+        (ProviderError("upstream failed"), LLMRequestError, "decision request failed"),
+        (
+            LengthFinishReasonError(completion=ParsedChatCompletion[object].model_construct()),
+            LLMOutputLimitError,
+            "decision reached output token limit",
+        ),
+    ),
+)
+async def test_notification_decision_wraps_sdk_failures(
+    error: BaseException,
+    exception: type[Exception],
+    message: str,
+    caplog,
+) -> None:
+    provider = AnyLLMStructuredProvider(
+        _CompletionClientStub(error=error),
+        provider="openai",
+        model="model",
+        max_output_tokens=1024,
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="weather_briefing.llm"),
+        pytest.raises(exception, match=message),
+    ):
+        await provider.assess_notification({"notification_kind": "service_status"})
+
+    if isinstance(error, LengthFinishReasonError):
+        assert "LLM notification decision reached output token limit" in caplog.text
+        assert "provider=openai model='model'" in caplog.text
+
+
+def test_service_status_translation_decoder_accepts_parsed_output() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    parsed=ServiceStatusTranslationOutput(
+                        title="API incident",
+                        body="API errors are elevated.",
+                    ),
+                )
+            )
+        ]
+    )
+
+    assert decode_service_status_translation(response) == ServiceStatusTranslationOutput(
+        title="API incident",
+        body="API errors are elevated.",
+    )
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    (
+        (SimpleNamespace(choices=[]), "no completion choices"),
+        (SimpleNamespace(choices=[SimpleNamespace(message=None)]), "missing a message"),
+        (
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))]),
+            "empty JSON content",
+        ),
+    ),
+)
+def test_service_status_translation_decoder_rejects_incomplete_response(
+    response: object,
+    message: str,
+) -> None:
+    with pytest.raises(LLMRequestError, match=message):
+        decode_service_status_translation(response)
+
+
+def test_service_status_translation_decoder_rejects_invalid_schema() -> None:
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+    )
+
+    with pytest.raises(LLMError, match="schema validation failed at title"):
+        decode_service_status_translation(response)
+
+
+def test_notification_decision_decoder_accepts_parsed_output() -> None:
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    parsed=NotificationDecisionOutput(should_notify=True),
+                )
+            )
+        ]
+    )
+
+    assert decode_notification_decision(response)
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    (
+        (SimpleNamespace(choices=[]), "no completion choices"),
+        (SimpleNamespace(choices=[SimpleNamespace(message=None)]), "missing a message"),
+        (
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))]),
+            "empty JSON content",
+        ),
+    ),
+)
+def test_notification_decision_decoder_rejects_incomplete_response(
+    response: object,
+    message: str,
+) -> None:
+    with pytest.raises(LLMRequestError, match=message):
+        decode_notification_decision(response)
+
+
+def test_notification_decision_decoder_rejects_invalid_schema() -> None:
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+    )
+
+    with pytest.raises(LLMError, match="schema validation failed at should_notify"):
+        decode_notification_decision(response)

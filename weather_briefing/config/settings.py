@@ -20,7 +20,11 @@ from .environment import (
     bounded_integer,
     bounded_positive_integer,
     clean_env,
+    configured_service_status_language,
+    configured_service_status_providers,
+    configured_service_status_publishers,
     configured_weather_providers,
+    cron_expression,
     cron_hour,
     first_configured,
     number,
@@ -54,7 +58,11 @@ class Settings:
     geocoding_cache_path: Path
     rss_sources_path: Path
     feeds: tuple[FeedConfig, ...]
+    weather_briefings_enabled: bool
     weather_providers: tuple[str, ...] | None
+    service_status_providers: tuple[str, ...]
+    service_status_publishers: tuple[str, ...]
+    service_status_language: str
     qweather_project_id: str | None
     qweather_credential_id: str | None
     qweather_private_key: str | None
@@ -85,6 +93,7 @@ class Settings:
     greeting_hour: int
     greeting_minute: int
     hourly_cron: str
+    service_status_cron: str
     debug: bool
 
     @classmethod
@@ -92,7 +101,13 @@ class Settings:
         """Load and validate application settings from the environment."""
         locations_path = path_from_env("BRIEFING_LOCATIONS_FILE", "locations.json")
         rss_sources_path = path_from_env("RSS_SOURCES_FILE", "rss-sources.json")
-        feeds = load_feeds(rss_sources_path)
+        service_status_providers = configured_service_status_providers()
+        service_status_enabled = bool(service_status_providers)
+        weather_briefings_enabled = locations_path.is_file()
+        service_status_only_requested = os.getenv("SERVICE_STATUS_PROVIDERS") is not None and service_status_enabled
+        if not weather_briefings_enabled and not service_status_only_requested:
+            load_locations(locations_path)
+        feeds = load_feeds(rss_sources_path) if weather_briefings_enabled else ()
         try:
             timezone = pendulum.timezone(clean_env(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai")))
         except (ValueError, KeyError) as exc:
@@ -102,7 +117,19 @@ class Settings:
         if retry_min < 0 or retry_max < retry_min:
             raise ConfigurationError("RSS retry delay range is invalid")
         selected_publisher = publisher()
+        service_status_publishers = configured_service_status_publishers(selected_publisher)
         bark_selected = selected_publisher == PublisherName.BARK
+        bark_configured = bark_selected or (service_status_enabled and PublisherName.BARK in service_status_publishers)
+        telegram_configured = selected_publisher == PublisherName.TELEGRAM or (
+            service_status_enabled and PublisherName.TELEGRAM in service_status_publishers
+        )
+        telegram_bot_token = clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None
+        telegram_chat_id = clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None
+        if telegram_configured:
+            if telegram_bot_token is None:
+                raise ConfigurationError("Missing required environment variable: TELEGRAM_BOT_TOKEN")
+            if telegram_chat_id is None:
+                raise ConfigurationError("Missing required environment variable: TELEGRAM_CHAT_ID")
         if bark_selected:
             briefing_max_characters = bounded_positive_integer(
                 "BRIEFING_MAX_CHARACTERS",
@@ -118,6 +145,7 @@ class Settings:
         daily_cron_hour = bounded_integer("GREETING_HOUR", 8, 0, 23)
         daily_cron_minute = bounded_integer("GREETING_MINUTE", 0, 0, 59)
         hourly_cron = cron_hour("BRIEFING_CRON", "9-23")
+        service_status_cron = cron_expression("SERVICE_STATUS_CRON", "*/5 * * * *")
         llm_provider = clean_env(os.getenv("LLM_PROVIDER", "deepseek"))
         if llm_provider not in AnyLLM.get_supported_providers():
             raise ConfigurationError(f"Unsupported LLM_PROVIDER: {llm_provider}")
@@ -133,7 +161,7 @@ class Settings:
             llm_base_url = None
         if not llm_model:
             raise ConfigurationError("Missing required environment variable: LLM_MODEL")
-        locations = load_locations(locations_path)
+        locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
             location_id for feed in feeds for location_id in feed.location_ids if location_id not in location_ids
@@ -147,7 +175,7 @@ class Settings:
         bark_group = "weather-briefing"
         bark_encryption_key = None
         bark_encryption_iv = None
-        if selected_publisher == "bark":
+        if bark_configured:
             bark_device_key = clean_env(os.getenv("BARK_DEVICE_KEY")) or None
             if bark_device_key is None:
                 raise ConfigurationError("Missing required environment variable: BARK_DEVICE_KEY")
@@ -206,7 +234,11 @@ class Settings:
             geocoding_cache_path=path_from_env("GEOCODING_CACHE_PATH", "state/geocoding.json"),
             rss_sources_path=rss_sources_path,
             feeds=feeds,
+            weather_briefings_enabled=weather_briefings_enabled,
             weather_providers=configured_weather_providers(),
+            service_status_providers=service_status_providers,
+            service_status_publishers=service_status_publishers,
+            service_status_language=configured_service_status_language(),
             qweather_project_id=clean_env(os.getenv("QWEATHER_PROJECT_ID")) or None,
             qweather_credential_id=clean_env(os.getenv("QWEATHER_CREDENTIAL_ID")) or None,
             qweather_private_key=clean_env(os.getenv("QWEATHER_PRIVATE_KEY")) or None,
@@ -217,8 +249,8 @@ class Settings:
             aqicn_api_token=clean_env(os.getenv("AQICN_API_TOKEN")) or None,
             state_path=state_path_from_env(),
             publisher=selected_publisher,
-            telegram_bot_token=clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None,
-            telegram_chat_id=clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None,
+            telegram_bot_token=telegram_bot_token,
+            telegram_chat_id=telegram_chat_id,
             bark_device_key=bark_device_key,
             bark_base_url=bark_base_url,
             bark_group=bark_group,
@@ -237,5 +269,6 @@ class Settings:
             greeting_hour=daily_cron_hour,
             greeting_minute=daily_cron_minute,
             hourly_cron=hourly_cron,
+            service_status_cron=service_status_cron,
             debug=boolean("DEBUG", False),
         )

@@ -11,8 +11,17 @@ from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
 from pydantic import BaseModel
 
 from ..api_client import api_call_context
+from ..data.prompts import NOTIFICATION_POLICY
+from ..notifications import NotificationDecision
 from .base import LLMOutputLimitError, LLMRequestError, SensitiveLLMDiagnostics, serialize_llm_payload
-from .schema import LLMStructuredOutput, decode_structured_response
+from .schema import (
+    LLMStructuredOutput,
+    NotificationDecisionOutput,
+    ServiceStatusTranslationOutput,
+    decode_notification_decision,
+    decode_service_status_translation,
+    decode_structured_response,
+)
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
@@ -108,6 +117,87 @@ class AnyLLMStructuredProvider:
                 result_payload,
             )
         return result_payload
+
+    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
+        """Evaluate notification value independently from content generation."""
+        try:
+            with api_call_context(self._provider, "chat-completions"):
+                response = await self._client.acompletion(
+                    model=self._model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。"),
+                        },
+                        {"role": "user", "content": serialize_llm_payload(payload)},
+                    ],
+                    response_format=NotificationDecisionOutput,
+                    temperature=0.0,
+                    max_tokens=min(self._max_output_tokens, 256),
+                )
+        except LengthFinishReasonError as exc:
+            _LOGGER.warning(
+                "LLM notification decision reached output token limit: "
+                "provider=%s model=%r max_output_tokens=%d error_type=%s",
+                self._provider,
+                self._model,
+                min(self._max_output_tokens, 256),
+                type(exc).__name__,
+            )
+            raise LLMOutputLimitError("LLM notification decision reached output token limit") from exc
+        except AnyLLMError as exc:
+            raise LLMRequestError("LLM notification decision request failed") from exc
+        return NotificationDecision(should_notify=decode_notification_decision(response))
+
+    async def translate_service_status(
+        self,
+        title: str,
+        body: str,
+        target_language: str,
+    ) -> tuple[str, str]:
+        """Translate one official incident message without changing its facts."""
+        language_name = {
+            "en": "English",
+            "ja": "Japanese",
+            "zh-CN": "Simplified Chinese",
+        }.get(target_language)
+        if language_name is None:
+            raise ValueError(f"Unsupported service-status translation language: {target_language}")
+        try:
+            with api_call_context(self._provider, "chat-completions"):
+                response = await self._client.acompletion(
+                    model=self._model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                f"Translate the official service-incident explanation into concise {language_name}. "
+                                "Preserve product names, incident facts, status, times, and technical terms. "
+                                "Do not add analysis, advice, or facts. Return only the requested JSON object."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": serialize_llm_payload({"title": title, "body": body}),
+                        },
+                    ],
+                    response_format=ServiceStatusTranslationOutput,
+                    temperature=0.0,
+                    max_tokens=min(self._max_output_tokens, 2048),
+                )
+        except LengthFinishReasonError as exc:
+            _LOGGER.warning(
+                "LLM translation reached output token limit: provider=%s model=%r max_output_tokens=%d error_type=%s",
+                self._provider,
+                self._model,
+                min(self._max_output_tokens, 2048),
+                type(exc).__name__,
+            )
+            raise LLMOutputLimitError("LLM translation reached output token limit") from exc
+        except AnyLLMError as exc:
+            raise LLMRequestError("LLM translation request failed") from exc
+        translated = decode_service_status_translation(response)
+        return translated.title, translated.body
 
     async def aclose(self) -> None:
         """Close transports owned by an any-llm client created by this adapter."""

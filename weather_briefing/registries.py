@@ -12,6 +12,15 @@ class WeatherProviderName(StrEnum):
     JMA_JAPAN = "jma-jp"
 
 
+class ServiceStatusProviderName(StrEnum):
+    """Identify application-owned service-status provider adapters."""
+
+    DEEPSEEK = "deepseek"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    KIMI = "kimi"
+
+
 LOCAL_WEATHER_CAPABILITY_PROVIDERS = frozenset(
     {
         WeatherProviderName.NEA_SINGAPORE,

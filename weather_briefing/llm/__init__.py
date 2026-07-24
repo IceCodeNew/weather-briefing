@@ -9,6 +9,7 @@ from .base import (
     SensitiveLLMDiagnostics,
     serialize_llm_payload,
 )
+from .lazy import LazyServiceStatusLLM
 from .result import parse_result
 from .schema import LLMStructuredOutput
 
@@ -19,6 +20,7 @@ __all__ = [
     "LLMProvider",
     "LLMRequestError",
     "LLMStructuredOutput",
+    "LazyServiceStatusLLM",
     "SensitiveLLMDiagnostics",
     "create_any_llm_provider",
     "parse_result",

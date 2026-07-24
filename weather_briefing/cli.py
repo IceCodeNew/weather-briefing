@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from . import __version__
 from .api_client import LoggedAsyncClient
 from .composition.providers import delivery_provider as _delivery_provider
+from .composition.providers import delivery_providers as _delivery_providers
 from .composition.providers import llm_provider as _llm_provider
 from .composition.providers import weather_context_provider as _weather_context_provider
 from .config import ConfigurationError, Settings, backfill_location_fields, state_path_from_env
@@ -34,9 +35,12 @@ from .geocoding import (
     OpenMeteoGeocodingProvider,
     PrecisionReducingGeocodingProvider,
 )
+from .llm import LazyServiceStatusLLM
 from .models import ResolvedLocation
 from .persistence import locking as persistence_locking
 from .service import BriefingService
+from .service_status import ServiceStatusMonitor
+from .service_status import service_status_providers as _service_status_providers
 from .sources import RSSSource
 from .state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from .time_utils import parse_aware_datetime
@@ -60,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_time_group.add_argument("--at", help="Override run time with an ISO-8601 timestamp including UTC offset")
     run_time_group.add_argument("--date", help="Generate a forecast for a local date in YYYY-MM-DD format")
     subparsers.add_parser("daemon")
+    subparsers.add_parser("service-status")
     diagnostics_parser = subparsers.add_parser("diagnostics")
     diagnostics_topics = diagnostics_parser.add_subparsers(dest="diagnostics_topic", required=True)
     rendered_text_parser = diagnostics_topics.add_parser("rendered-text")
@@ -364,6 +369,42 @@ async def _run_unlocked(
                     _LOGGER.info("Location %s %s skipped (no content)", location.id, kind)
 
 
+async def run_service_status() -> None:
+    """Poll and directly publish official service-status changes."""
+    state_path = state_path_from_env()
+    async with persistence_locking.serialized_state_run(state_path):
+        settings = await asyncio.to_thread(Settings.from_env)
+        _configure_logging(debug=settings.debug)
+        if not settings.service_status_providers:
+            _LOGGER.info("Skipping service-status run because no providers are configured")
+            return
+        async with AsyncExitStack() as stack:
+            diagnostics = stack.enter_context(_runtime_diagnostics(settings.state_path))
+            client = await stack.enter_async_context(
+                LoggedAsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
+            )
+            delivery_providers = _delivery_providers(
+                settings,
+                client,
+                settings.service_status_publishers,
+                diagnostics,
+            )
+            deliveries = tuple(zip(settings.service_status_publishers, delivery_providers, strict=True))
+            service_status_llm = LazyServiceStatusLLM(lambda: _llm_provider(settings, diagnostics))
+            stack.push_async_callback(service_status_llm.aclose)
+            with SQLiteStateStore(settings.state_path) as state:
+                monitor = ServiceStatusMonitor(
+                    _service_status_providers(settings.service_status_providers, client),
+                    state,
+                    deliveries,
+                    service_status_llm,
+                    service_status_llm,
+                    settings.service_status_language,
+                )
+                published = await monitor.run(pendulum.now(settings.timezone))
+            _LOGGER.info("Service-status run published %d notification(s)", published)
+
+
 def _location_state_path(base_path: Path, location: ResolvedLocation, location_count: int) -> Path:
     if location_count == 1:
         return base_path
@@ -410,26 +451,36 @@ async def _daemon(state_path: Path) -> None:
     _configure_logging(debug=settings.debug)
     _LOGGER.info("Starting weather-briefing daemon (timezone: %s)", settings.timezone.name)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
-    scheduler.add_job(
-        run,
-        CronTrigger(
-            hour=settings.greeting_hour,
-            minute=settings.greeting_minute,
-            timezone=settings.timezone,
-        ),
-        args=("forecast", True),
-        max_instances=1,
-    )
-    scheduler.add_job(
-        run,
-        CronTrigger(
-            hour=settings.hourly_cron,
-            minute=0,
-            timezone=settings.timezone,
-        ),
-        args=("briefing", True),
-        max_instances=1,
-    )
+    if settings.weather_briefings_enabled:
+        scheduler.add_job(
+            run,
+            CronTrigger(
+                hour=settings.greeting_hour,
+                minute=settings.greeting_minute,
+                timezone=settings.timezone,
+            ),
+            args=("forecast", True),
+            max_instances=1,
+        )
+        scheduler.add_job(
+            run,
+            CronTrigger(
+                hour=settings.hourly_cron,
+                minute=0,
+                timezone=settings.timezone,
+            ),
+            args=("briefing", True),
+            max_instances=1,
+        )
+    if settings.service_status_providers:
+        scheduler.add_job(
+            run_service_status,
+            CronTrigger.from_crontab(
+                settings.service_status_cron,
+                timezone=settings.timezone,
+            ),
+            max_instances=1,
+        )
     scheduler.start()
     await asyncio.Event().wait()
 
@@ -471,6 +522,8 @@ def main() -> None:
     try:
         if args.command == "daemon":
             asyncio.run(daemon())
+        elif args.command == "service-status":
+            asyncio.run(run_service_status())
         elif args.command == "diagnostics":
             _manage_rendered_text_diagnostics(
                 args.diagnostics_action,

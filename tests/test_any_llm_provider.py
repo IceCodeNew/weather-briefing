@@ -1,7 +1,7 @@
 import json
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -11,9 +11,12 @@ from pydantic import BaseModel
 from weather_briefing.api_client import LoggedAsyncClient
 from weather_briefing.llm import (
     AnyLLMStructuredProvider,
+    LazyServiceStatusLLM,
     LLMStructuredOutput,
     create_any_llm_provider,
 )
+from weather_briefing.llm.schema import NotificationDecisionOutput, ServiceStatusTranslationOutput
+from weather_briefing.notifications import NotificationDecision
 
 
 class _CompletionClientStub:
@@ -40,6 +43,29 @@ class _CompletionClientStub:
             }
         )
         return self._response
+
+
+async def test_service_status_llm_is_created_only_on_first_operation() -> None:
+    provider = AsyncMock()
+    provider.assess_notification.return_value = NotificationDecision(True)
+    provider.translate_service_status.return_value = ("Translated", "Translated body")
+    factory = Mock(return_value=provider)
+    lazy = LazyServiceStatusLLM(factory)
+
+    await lazy.aclose()
+    factory.assert_not_called()
+
+    assert await lazy.assess_notification({"current": {}}) == NotificationDecision(True)
+    assert await lazy.translate_service_status("Title", "Body", "en") == (
+        "Translated",
+        "Translated body",
+    )
+    await lazy.aclose()
+
+    factory.assert_called_once_with()
+    provider.assess_notification.assert_awaited_once_with({"current": {}})
+    provider.translate_service_status.assert_awaited_once_with("Title", "Body", "en")
+    provider.aclose.assert_awaited_once()
 
 
 async def test_any_llm_provider_uses_structured_chat_completion() -> None:
@@ -78,6 +104,73 @@ async def test_any_llm_provider_uses_structured_chat_completion() -> None:
         }
     ]
     assert result == model_result
+
+
+async def test_any_llm_provider_translates_service_status_with_a_narrow_schema() -> None:
+    client = _CompletionClientStub(
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content='{"title":"API incident","body":"API error rates are elevated."}',
+                    )
+                )
+            ]
+        )
+    )
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="deepseek",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    result = await provider.translate_service_status(
+        "API 服务异常",
+        "API 服务错误率升高。",
+        "en",
+    )
+
+    assert result == ("API incident", "API error rates are elevated.")
+    assert client.calls[0]["response_format"] is ServiceStatusTranslationOutput
+    assert client.calls[0]["temperature"] == 0.0
+    assert client.calls[0]["max_tokens"] == 2048
+    messages = client.calls[0]["messages"]
+    assert isinstance(messages, list)
+    assert messages[1] == {
+        "role": "user",
+        "content": '{"title":"API 服务异常","body":"API 服务错误率升高。"}',
+    }
+
+
+async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema() -> None:
+    client = _CompletionClientStub(
+        SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"should_notify":false}'),
+                )
+            ]
+        )
+    )
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="deepseek",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    result = await provider.assess_notification(
+        {
+            "notification_kind": "service_status",
+            "current": {"status": "monitoring"},
+        }
+    )
+
+    assert not result.should_notify
+    assert client.calls[0]["response_format"] is NotificationDecisionOutput
+    assert client.calls[0]["temperature"] == 0.0
+    assert client.calls[0]["max_tokens"] == 256
 
 
 async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) -> None:

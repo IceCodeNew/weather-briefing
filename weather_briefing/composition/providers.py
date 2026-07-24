@@ -61,12 +61,27 @@ def delivery_provider(
     settings: Settings,
     client: httpx.AsyncClient,
     diagnostics: RenderedTextDiagnostics | None = None,
+    *,
+    publisher: str | None = None,
 ) -> DeliveryProvider:
     """Build the configured publisher and renderer pair."""
-    builder = PUBLISHER_BUILDERS.get(settings.publisher)
+    selected = publisher or settings.publisher
+    builder = PUBLISHER_BUILDERS.get(selected)
     if builder is None:
-        raise ValueError(f"Unsupported publisher: {settings.publisher}")
+        raise ValueError(f"Unsupported publisher: {selected}")
     return builder(settings, client, diagnostics)
+
+
+def delivery_providers(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    publishers: tuple[str, ...],
+    diagnostics: RenderedTextDiagnostics | None = None,
+) -> tuple[DeliveryProvider, ...]:
+    """Build an ordered group of delivery targets."""
+    if not publishers:
+        raise ValueError("At least one publisher is required")
+    return tuple(delivery_provider(settings, client, diagnostics, publisher=publisher) for publisher in publishers)
 
 
 def _build_stdout_publisher(

@@ -20,6 +20,8 @@ def _required_environment(monkeypatch) -> None:
     values = {
         "DEEPSEEK_API_KEY": "test-key",
         "LLM_MODEL": "test-model",
+        "TELEGRAM_BOT_TOKEN": "test-token",
+        "TELEGRAM_CHAT_ID": "test-chat",
         "BRIEFING_LOCATIONS_FILE": str(Path(__file__).parents[1] / "locations.example.json"),
         "RSS_SOURCES_FILE": str(Path(__file__).parents[1] / "rss-sources.example.json"),
     }
@@ -1089,6 +1091,9 @@ class TestScheduleSettings:
         assert settings.greeting_hour == 8
         assert settings.greeting_minute == 0
         assert settings.hourly_cron == "9-23"
+        assert settings.service_status_cron == "*/5 * * * *"
+        assert settings.service_status_language == "en"
+        assert settings.service_status_publishers == ("telegram",)
 
     def test_custom_greeting(self, monkeypatch) -> None:
         _required_environment(monkeypatch)
@@ -1113,6 +1118,35 @@ class TestScheduleSettings:
         monkeypatch.setenv("BRIEFING_CRON", "")
 
         with pytest.raises(ConfigurationError, match="BRIEFING_CRON must not be empty"):
+            Settings.from_env()
+
+    def test_custom_service_status_cron(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_CRON", "*/2 8-20 * * 1-5")
+
+        assert Settings.from_env().service_status_cron == "*/2 8-20 * * 1-5"
+
+    @pytest.mark.parametrize("value", ("en", "zh-CN", "ja"))
+    def test_service_status_notification_language(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_LANGUAGE", value)
+
+        assert Settings.from_env().service_status_language == value
+
+    @pytest.mark.parametrize("value", ("", "fr", "zh-Hant", "not_a_language"))
+    def test_invalid_service_status_notification_language_rejected(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_LANGUAGE", value)
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_LANGUAGE"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("value", ("", "*/5", "60 * * * *", "* * * * * *"))
+    def test_invalid_service_status_cron_rejected(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_CRON", value)
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_CRON"):
             Settings.from_env()
 
     @pytest.mark.parametrize("value", ("foo", "24", "9-", "9 - 18"))
@@ -1282,6 +1316,160 @@ class TestConfigErrorPaths:
             ConfigurationError,
             match="WEATHER_PROVIDERS contains unsupported providers: typo, unknown",
         ):
+            Settings.from_env()
+
+    def test_service_status_providers_default_to_disabled(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.delenv("SERVICE_STATUS_PROVIDERS", raising=False)
+
+        assert Settings.from_env().service_status_providers == ()
+
+    def test_service_status_providers_accept_official_sources(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "deepseek,openai,anthropic,kimi")
+
+        assert Settings.from_env().service_status_providers == (
+            "deepseek",
+            "openai",
+            "anthropic",
+            "kimi",
+        )
+
+    def test_service_status_providers_can_be_disabled(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "")
+
+        assert Settings.from_env().service_status_providers == ()
+
+    def test_service_status_only_mode_does_not_require_locations_or_rss(self, monkeypatch, tmp_path: Path) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai")
+        monkeypatch.setenv("BRIEFING_LOCATIONS_FILE", str(tmp_path / "missing-locations.json"))
+        monkeypatch.setenv("RSS_SOURCES_FILE", str(tmp_path / "missing-rss.json"))
+
+        settings = Settings.from_env()
+
+        assert not settings.weather_briefings_enabled
+        assert settings.locations == ()
+        assert settings.feeds == ()
+
+    def test_missing_locations_remains_an_error_without_explicit_status_sources(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.delenv("SERVICE_STATUS_PROVIDERS", raising=False)
+        monkeypatch.setenv(
+            "BRIEFING_LOCATIONS_FILE",
+            str(tmp_path / "missing-locations.json"),
+        )
+
+        with pytest.raises(ConfigurationError, match="Configure at least one location"):
+            Settings.from_env()
+
+    def test_service_status_publishers_accept_multiple_platforms(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai")
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram,bark")
+        monkeypatch.setenv("BARK_DEVICE_KEY", "test-device")
+
+        settings = Settings.from_env()
+
+        assert settings.service_status_publishers == ("telegram", "bark")
+        assert settings.briefing_max_characters == 3500
+        assert settings.llm_max_output_tokens == 8192
+
+    def test_disabled_service_status_does_not_require_publisher_credentials(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "")
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram,bark")
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+        monkeypatch.delenv("TELEGRAM_CHAT_ID")
+        monkeypatch.delenv("BARK_DEVICE_KEY", raising=False)
+
+        settings = Settings.from_env()
+
+        assert settings.service_status_providers == ()
+        assert settings.service_status_publishers == ("telegram", "bark")
+
+    @pytest.mark.parametrize(
+        ("missing_name", "message"),
+        (
+            ("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"),
+            ("TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID"),
+        ),
+    )
+    def test_service_status_telegram_requires_credentials(
+        self,
+        monkeypatch,
+        missing_name: str,
+        message: str,
+    ) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "stdout")
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai")
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", "telegram")
+        monkeypatch.delenv(missing_name)
+
+        with pytest.raises(ConfigurationError, match=message):
+            Settings.from_env()
+
+    def test_weather_telegram_requires_credentials(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("PUBLISHER", "telegram")
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+
+        with pytest.raises(ConfigurationError, match="TELEGRAM_BOT_TOKEN"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        (
+            ("", "cannot be empty"),
+            (", , ", "cannot be empty"),
+            ("telegram,,bark", "cannot contain empty entries"),
+            ("telegram,telegram", "cannot contain duplicates"),
+            ("telegram,email", "unsupported publishers: email"),
+        ),
+    )
+    def test_invalid_service_status_publishers_are_rejected(
+        self,
+        monkeypatch,
+        value: str,
+        message: str,
+    ) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PUBLISHERS", value)
+
+        with pytest.raises(ConfigurationError, match=message):
+            Settings.from_env()
+
+    def test_unsupported_service_status_provider_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai,zhipu")
+
+        with pytest.raises(
+            ConfigurationError,
+            match="SERVICE_STATUS_PROVIDERS contains unsupported providers: zhipu",
+        ):
+            Settings.from_env()
+
+    def test_duplicate_service_status_provider_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", "openai,openai")
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_PROVIDERS cannot contain duplicates"):
+            Settings.from_env()
+
+    @pytest.mark.parametrize("value", (",,", "openai,,kimi"))
+    def test_empty_service_status_provider_entries_raise_error(self, monkeypatch, value: str) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", value)
+
+        with pytest.raises(ConfigurationError, match="SERVICE_STATUS_PROVIDERS cannot contain empty entries"):
             Settings.from_env()
 
     def test_unsupported_publisher_raises_error(self, monkeypatch) -> None:

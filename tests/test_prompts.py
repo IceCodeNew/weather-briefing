@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from weather_briefing.data.prompts import SYSTEM_PROMPT, _load_system_prompt
+from weather_briefing.data.prompts import NOTIFICATION_POLICY, SYSTEM_PROMPT, _load_system_prompt
 
 
 @pytest.mark.parametrize(
@@ -13,7 +13,7 @@ from weather_briefing.data.prompts import SYSTEM_PROMPT, _load_system_prompt
 def test_system_prompt_load_failure_is_actionable(error: Exception) -> None:
     with (
         patch("importlib.resources.files", side_effect=error),
-        pytest.raises(RuntimeError, match="Unable to load system prompt: system_prompt.txt"),
+        pytest.raises(RuntimeError, match="Unable to load prompt: system_prompt.txt"),
     ):
         _load_system_prompt()
 
@@ -27,12 +27,14 @@ def test_prompt_limits_disasters_to_the_location_scope() -> None:
 
 
 def test_prompt_uses_actionable_publication_threshold() -> None:
-    assert "是否需要采取准备行动" in SYSTEM_PROMPT
+    assert "可能需要采取行动" in SYSTEM_PROMPT
     assert "约一小时后影响当前地区的降雨" in SYSTEM_PROMPT
     assert "降雨概率和雨量" in SYSTEM_PROMPT
     assert "普通天气复述" in SYSTEM_PROMPT
     assert "content_compacted=true" in SYSTEM_PROMPT
     assert "不得补全被省略的细节" in SYSTEM_PROMPT
+    assert "通知价值判断独立于信息内容" in NOTIFICATION_POLICY
+    assert "service_status 类型" in NOTIFICATION_POLICY
 
 
 def test_prompt_separates_advice_and_avoids_repetition() -> None:

@@ -26,3 +26,11 @@ def test_visible_environment_example_is_tracked_and_not_ignored() -> None:
     assert (root / "env.example").is_file()
     assert (root / "locations.example.json").is_file()
     assert not (root / ".env.example").exists()
+
+
+def test_environment_example_does_not_enable_service_status_monitoring() -> None:
+    root = Path(__file__).parents[1]
+    lines = (root / "env.example").read_text(encoding="utf-8").splitlines()
+
+    provider_lines = [line for line in lines if line.startswith("SERVICE_STATUS_PROVIDERS=")]
+    assert provider_lines == ["SERVICE_STATUS_PROVIDERS="]
