@@ -1,11 +1,14 @@
 import json
 import logging
+from collections.abc import Mapping
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from any_llm import AnyLLM
+from any_llm.providers.openai.base import BaseOpenAIProvider
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from weather_briefing.api_client import LoggedAsyncClient
@@ -190,7 +193,49 @@ async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) ->
 
     assert [adapter.provider for adapter in adapters] == completion_providers
     assert [provider for provider, _ in created] == completion_providers
-    assert all("http_client" not in options and "max_retries" not in options for _, options in created)
+    assert all(
+        "default_headers" not in options and "http_client" not in options and "max_retries" not in options
+        for _, options in created
+    )
+
+
+async def test_factory_passes_configured_headers_as_client_defaults(monkeypatch) -> None:
+    created: list[tuple[str, dict[str, object]]] = []
+
+    def fake_create(provider: str, **options: object) -> _CompletionClientStub:
+        created.append((provider, options))
+        return _CompletionClientStub(SimpleNamespace())
+
+    monkeypatch.setattr(AnyLLM, "create", fake_create)
+    headers = {"User-Agent": "weather-briefing/1", "X-Tenant": "test"}
+
+    create_any_llm_provider("deepseek", "model", 1024, extra_headers=headers)
+
+    assert created == [
+        (
+            "deepseek",
+            {
+                "api_key": None,
+                "api_base": None,
+                "default_headers": headers,
+            },
+        )
+    ]
+
+
+def test_factory_rejects_headers_for_an_unsupported_provider(monkeypatch) -> None:
+    create = Mock()
+    monkeypatch.setattr(AnyLLM, "create", create)
+
+    with pytest.raises(ValueError, match="Custom headers are not supported for any-llm provider: mistral"):
+        create_any_llm_provider(
+            "mistral",
+            "model",
+            1024,
+            extra_headers={"User-Agent": "weather-briefing/1"},
+        )
+
+    create.assert_not_called()
 
 
 async def test_factory_owned_provider_closes_underlying_sdk_clients(monkeypatch) -> None:
@@ -317,6 +362,89 @@ async def test_borrowed_llm_client_is_not_closed() -> None:
 async def test_factory_rejects_provider_without_completion() -> None:
     with pytest.raises(ValueError, match="does not support completion"):
         create_any_llm_provider("voyage", "model", 1024)
+
+
+@pytest.mark.parametrize("provider_name", ("deepseek", "openai", "openrouter"))
+async def test_openai_compatible_providers_send_configured_headers(
+    monkeypatch,
+    caplog,
+    provider_name: str,
+) -> None:
+    requests: list[httpx.Request] = []
+    private_header_name = "X-Private-Token"
+    private_header_value = "private-value"
+    model_result = {
+        "headline": "Briefing",
+        "headline_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+        "should_publish": True,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "completion-id",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "requested-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(model_result),
+                        },
+                    }
+                ],
+            },
+        )
+
+    def init_client(
+        sdk_provider: BaseOpenAIProvider,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        *,
+        default_headers: Mapping[str, str] | None = None,
+        **_: object,
+    ) -> None:
+        sdk_provider.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            default_headers=default_headers,
+            http_client=LoggedAsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+    monkeypatch.setattr(BaseOpenAIProvider, "_init_client", init_client)
+    caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
+    provider = create_any_llm_provider(
+        provider_name,
+        "requested-model",
+        4096,
+        api_key="runtime-key",
+        api_base="https://api.example.invalid",
+        extra_headers={
+            "User-Agent": "weather-briefing-test/1",
+            private_header_name: private_header_value,
+        },
+    )
+
+    try:
+        result = await provider.summarize("Return JSON", {"input": "data"})
+    finally:
+        await provider.aclose()
+
+    assert result == model_result
+    assert requests[0].headers["user-agent"] == "weather-briefing-test/1"
+    assert requests[0].headers[private_header_name] == private_header_value
+    assert private_header_name not in caplog.text
+    assert private_header_value not in caplog.text
 
 
 async def test_any_llm_deepseek_uses_injected_logged_http_client(caplog) -> None:

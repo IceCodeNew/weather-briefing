@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from inspect import isawaitable
 from typing import Protocol
 
@@ -24,6 +25,8 @@ from .schema import (
 )
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
+
+DEFAULT_HEADERS_PROVIDERS = frozenset({"deepseek", "openai", "openrouter"})
 
 
 class LLMCompletionClient(Protocol):
@@ -259,13 +262,19 @@ def create_any_llm_provider(
     *,
     api_key: str | None = None,
     api_base: str | None = None,
+    extra_headers: Mapping[str, str] | None = None,
     diagnostics: SensitiveLLMDiagnostics | None = None,
 ) -> AnyLLMStructuredProvider:
     """Create an application adapter for any supported any-llm completion provider."""
     provider_class = AnyLLM.get_provider_class(provider)
     if not provider_class.SUPPORTS_COMPLETION:
         raise ValueError(f"any-llm provider does not support completion: {provider}")
-    sdk_client = AnyLLM.create(provider, api_key=api_key, api_base=api_base)
+    if extra_headers and provider not in DEFAULT_HEADERS_PROVIDERS:
+        raise ValueError(f"Custom headers are not supported for any-llm provider: {provider}")
+    client_options: dict[str, object] = {"api_key": api_key, "api_base": api_base}
+    if extra_headers:
+        client_options["default_headers"] = extra_headers
+    sdk_client = AnyLLM.create(provider, **client_options)
     return AnyLLMStructuredProvider(
         sdk_client,
         provider=provider,

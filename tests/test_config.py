@@ -61,10 +61,12 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
     assert [feed.id for feed in settings.feeds] == ["authority-weather"]
     assert settings.llm_provider == "deepseek"
     assert settings.llm_base_url is None
+    assert settings.llm_extra_headers == {}
     assert settings.llm_fallback_provider is None
     assert settings.llm_fallback_model is None
     assert settings.llm_fallback_api_key is None
     assert settings.llm_fallback_base_url is None
+    assert settings.llm_fallback_extra_headers == {}
     assert settings.llm_max_attempts == 3
     assert settings.qweather_jwt_lifetime_seconds == 900
     assert settings.llm_history_max_documents == 8
@@ -1067,6 +1069,96 @@ def test_llm_fallback_provider_and_model_are_loaded(monkeypatch) -> None:
     assert settings.llm_fallback_model == "gpt-fallback"
     assert settings.llm_fallback_api_key is None
     assert settings.llm_fallback_base_url is None
+
+
+def test_llm_extra_headers_are_loaded_as_immutable_mappings(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1","X-Tenant":"primary"}')
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "fallback-model")
+    monkeypatch.setenv("LLM_FALLBACK_EXTRA_HEADERS", '{"User-Agent":"weather-briefing-fallback/1"}')
+
+    settings = Settings.from_env()
+
+    assert settings.llm_extra_headers == {
+        "User-Agent": "weather-briefing/1",
+        "X-Tenant": "primary",
+    }
+    assert settings.llm_fallback_extra_headers == {
+        "User-Agent": "weather-briefing-fallback/1",
+    }
+    assert not hasattr(settings.llm_extra_headers, "__setitem__")
+
+
+def test_llm_extra_headers_reject_an_unsupported_primary_provider(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "mistral")
+    monkeypatch.setenv("LLM_MODEL", "generic-model")
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1"}')
+
+    with pytest.raises(
+        ConfigurationError,
+        match="LLM_EXTRA_HEADERS requires LLM_PROVIDER to be one of: deepseek, openai, openrouter",
+    ):
+        Settings.from_env()
+
+
+def test_llm_extra_headers_reject_an_unsupported_fallback_provider(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "mistral")
+    monkeypatch.setenv("LLM_FALLBACK_MODEL", "generic-model")
+    monkeypatch.setenv("LLM_FALLBACK_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1"}')
+
+    with pytest.raises(
+        ConfigurationError,
+        match=("LLM_FALLBACK_EXTRA_HEADERS requires LLM_FALLBACK_PROVIDER to be one of: deepseek, openai, openrouter"),
+    ):
+        Settings.from_env()
+
+
+@pytest.mark.parametrize(
+    ("configured", "message"),
+    (
+        ("not-json", "valid JSON object"),
+        ("null", "must be a JSON object"),
+        ("[]", "must be a JSON object"),
+        ('"value"', "valid JSON object"),
+        ('{"X-Count":1}', "header values must be strings"),
+        ('{"Bad Name":"value"}', "invalid HTTP header name"),
+        ('{"":"value"}', "invalid HTTP header name"),
+        ('{"X-Test":"café"}', "only ASCII characters"),
+        ('{"X-Test":"line\\nbreak"}', "control characters"),
+        ('{"X-Test":"value","x-test":"other"}', "duplicate HTTP header names"),
+    ),
+)
+def test_llm_extra_headers_reject_invalid_json_objects(monkeypatch, configured: str, message: str) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", configured)
+
+    with pytest.raises(ConfigurationError, match=message):
+        Settings.from_env()
+
+
+def test_llm_extra_header_errors_do_not_disclose_header_data(monkeypatch, caplog) -> None:
+    _required_environment(monkeypatch)
+    private_name = "X-Private-Token"
+    private_value = "private-value\nsecond-line"
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({private_name: private_value}))
+
+    with pytest.raises(ConfigurationError) as error:
+        Settings.from_env()
+
+    diagnostic_text = f"{error.value}\n{caplog.text}"
+    assert private_name not in diagnostic_text
+    assert private_value not in diagnostic_text
+
+
+def test_fallback_headers_require_a_configured_fallback(monkeypatch) -> None:
+    _required_environment(monkeypatch)
+    monkeypatch.setenv("LLM_FALLBACK_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1"}')
+
+    with pytest.raises(ConfigurationError, match="requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL"):
+        Settings.from_env()
 
 
 @pytest.mark.parametrize("base_name", ("DEEPSEEK_API_BASE", "DEEPSEEK_BASE_URL"))

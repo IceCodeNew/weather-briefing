@@ -128,6 +128,8 @@ To enable it, set both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV`. Follow th
 
 Model calls are handled by any-llm. The credential variables needed by each service follow the [any-llm provider documentation](https://docs.mozilla.ai/any-llm/providers). The official image ships with the components required for DeepSeek, OpenAI, and OpenRouter.
 
+`LLM_EXTRA_HEADERS` and `LLM_FALLBACK_EXTRA_HEADERS` optionally accept a single-line JSON object whose names and values are HTTP header strings. Fallback headers require a configured fallback provider and model. Treat the values as secrets: configured fields override SDK defaults, including `Authorization` and `User-Agent`, and the application never writes them to logs.
+
 Fallback is disabled by default. Configure both fallback variables to retry a primary-provider request failure with the fallback. After the first such failure, the current run keeps using the fallback for all later LLM operations, including repairs, notification decisions, service-status translations, and briefings for other locations. The next scheduled or CLI run tries the primary again. Responses that violate the structured output contract stay with the provider that returned them and use the normal bounded repair attempts.
 
 RSS is optional and is not mounted by default. To enable RSS, create `rss-sources.json` based on [`rss-sources.example.json`](rss-sources.example.json), then add source names, URLs, and applicable locations. Add the following option to the `docker run` command before the image name:

@@ -764,10 +764,12 @@ _DEFAULT_SETTINGS = Settings(
     llm_provider="deepseek",
     llm_model="m",
     llm_base_url=None,
+    llm_extra_headers={},
     llm_fallback_provider=None,
     llm_fallback_model=None,
     llm_fallback_api_key=None,
     llm_fallback_base_url=None,
+    llm_fallback_extra_headers={},
     llm_max_output_tokens=8192,
     llm_max_attempts=3,
     http_timeout_seconds=30.0,
@@ -1176,6 +1178,7 @@ class TestLLMProvider:
                     {
                         "api_key": "k",
                         "api_base": "https://custom.example.invalid",
+                        "extra_headers": {},
                         "diagnostics": diagnostics,
                     },
                 )
@@ -1206,6 +1209,7 @@ class TestLLMProvider:
         assert calls[0][1] == {
             "api_key": None,
             "api_base": None,
+            "extra_headers": {},
             "diagnostics": None,
         }
 
@@ -1222,8 +1226,10 @@ class TestLLMProvider:
         monkeypatch.setattr("weather_briefing.llm.any_llm.create_any_llm_provider", create_provider)
         settings = replace(
             _make_fake_settings(),
+            llm_extra_headers={"User-Agent": "weather-briefing/1"},
             llm_fallback_provider="openai",
             llm_fallback_model="gpt-fallback",
+            llm_fallback_extra_headers={"X-Tenant": "fallback"},
         )
 
         provider = _llm_provider(settings)
@@ -1235,9 +1241,11 @@ class TestLLMProvider:
             {
                 "api_key": None,
                 "api_base": None,
+                "extra_headers": {"X-Tenant": "fallback"},
                 "diagnostics": None,
             },
         )
+        assert calls[0][1]["extra_headers"] == {"User-Agent": "weather-briefing/1"}
 
     async def test_deepseek_fallback_forwards_normalized_connection_settings(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -1261,6 +1269,7 @@ class TestLLMProvider:
             {
                 "api_key": "fallback-key",
                 "api_base": "https://deepseek.example/v1",
+                "extra_headers": {},
                 "diagnostics": None,
             },
         )
