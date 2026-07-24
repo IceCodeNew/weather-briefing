@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from weather_briefing.llm import (
     AnyLLMStructuredProvider,
     LLMError,
+    LLMOutputLimitError,
     LLMRequestError,
     LLMStructuredOutput,
     SensitiveLLMDiagnostics,
@@ -408,7 +409,7 @@ async def test_provider_classifies_output_token_limit_without_logging_content(ca
 
     with (
         caplog.at_level(logging.DEBUG, logger="weather_briefing.llm"),
-        pytest.raises(LLMRequestError, match="output token limit"),
+        pytest.raises(LLMOutputLimitError, match="output token limit"),
     ):
         await provider.summarize("private prompt", {"content": "private body"})
 

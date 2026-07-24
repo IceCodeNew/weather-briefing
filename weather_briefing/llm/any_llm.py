@@ -11,7 +11,7 @@ from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
 from pydantic import BaseModel
 
 from ..api_client import api_call_context
-from .base import LLMRequestError, SensitiveLLMDiagnostics, serialize_llm_payload
+from .base import LLMOutputLimitError, LLMRequestError, SensitiveLLMDiagnostics, serialize_llm_payload
 from .schema import LLMStructuredOutput, decode_structured_response
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
@@ -96,7 +96,7 @@ class AnyLLMStructuredProvider:
                 self._max_output_tokens,
                 type(exc).__name__,
             )
-            raise LLMRequestError("LLM response reached output token limit") from exc
+            raise LLMOutputLimitError("LLM response reached output token limit") from exc
         except AnyLLMError as exc:
             raise LLMRequestError("LLM request failed") from exc
         result_payload = decode_structured_response(response).model_dump(mode="json")
