@@ -309,7 +309,7 @@ async def test_fallback_close_cancellation_propagates() -> None:
     primary.aclose.assert_awaited_once_with()
 
 
-async def test_fallback_cancellation_preserves_primary_close_failure_type(caplog) -> None:
+async def test_fallback_cancellation_logs_primary_close_failure_type(caplog) -> None:
     primary = _provider()
     fallback = _provider()
     cancellation = asyncio.CancelledError("private cancellation detail")
@@ -329,6 +329,7 @@ async def test_fallback_cancellation_preserves_primary_close_failure_type(caplog
         await provider.aclose()
 
     assert exc_info.value is cancellation
+    assert "primary=primary fallback=fallback" in caplog.text
     assert "error_type=RuntimeError" in caplog.text
     assert "private primary cleanup detail" not in caplog.text
     assert "private cancellation detail" not in caplog.text

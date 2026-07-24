@@ -131,7 +131,10 @@ class FallbackLLMProvider:
         except asyncio.CancelledError:
             if errors:
                 _LOGGER.warning(
-                    "Fallback LLM provider cleanup was cancelled after primary close failure error_type=%s",
+                    "Fallback LLM provider cleanup was cancelled after primary close failure "
+                    "primary=%s fallback=%s error_type=%s",
+                    self._primary_name,
+                    self._fallback_name,
                     type(errors[0]).__name__,
                 )
             raise
