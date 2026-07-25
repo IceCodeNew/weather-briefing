@@ -29,6 +29,7 @@ from .schema import (
 )
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
+_HTTP_METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"})
 
 
 def _has_http_status(value: object) -> bool:
@@ -38,9 +39,13 @@ def _has_http_status(value: object) -> bool:
 
 def _is_request_context(value: object) -> bool:
     """Recognize request metadata shared by common HTTP client libraries."""
-    return isinstance(getattr(value, "method", None), str) and any(
-        getattr(value, name, None) is not None for name in ("url", "real_url")
-    )
+    method = getattr(value, "method", None)
+    if not isinstance(method, str) or method.upper() not in _HTTP_METHODS:
+        return False
+    url = getattr(value, "url", None)
+    if url is None:
+        url = getattr(value, "real_url", None)
+    return str(url).lower().startswith(("http://", "https://"))
 
 
 def _is_provider_request_error(exc: Exception) -> bool:
@@ -73,7 +78,11 @@ class LLMCompletionClient(Protocol):
 
 
 @contextmanager
-def _normalize_request_errors(message: str) -> Iterator[None]:
+def _normalize_request_errors(
+    message: str,
+    *,
+    normalize_native_errors: bool,
+) -> Iterator[None]:
     """Normalize recognized request failures at the completion boundary."""
     try:
         yield
@@ -82,7 +91,7 @@ def _normalize_request_errors(message: str) -> Iterator[None]:
     except AnyLLMError as exc:
         raise LLMRequestError(message) from exc
     except Exception as exc:
-        if _is_provider_request_error(exc):
+        if normalize_native_errors and _is_provider_request_error(exc):
             raise LLMRequestError(message) from exc
         raise
 
@@ -99,6 +108,7 @@ class AnyLLMStructuredProvider:
         max_output_tokens: int,
         diagnostics: SensitiveLLMDiagnostics | None = None,
         owns_client: bool = False,
+        normalize_native_errors: bool = False,
     ) -> None:
         """Configure a reusable any-llm client and output limit."""
         self._client = client
@@ -107,6 +117,7 @@ class AnyLLMStructuredProvider:
         self._max_output_tokens = max_output_tokens
         self._diagnostics = diagnostics
         self._owns_client = owns_client
+        self._normalize_native_errors = normalize_native_errors
 
     @property
     def provider(self) -> str:
@@ -136,7 +147,10 @@ class AnyLLMStructuredProvider:
         ]
         try:
             with (
-                _normalize_request_errors("LLM request failed"),
+                _normalize_request_errors(
+                    "LLM request failed",
+                    normalize_native_errors=self._normalize_native_errors,
+                ),
                 api_call_context(self._provider, "chat-completions"),
             ):
                 response = await self._client.acompletion(
@@ -176,7 +190,10 @@ class AnyLLMStructuredProvider:
         ]
         try:
             with (
-                _normalize_request_errors("LLM notification decision request failed"),
+                _normalize_request_errors(
+                    "LLM notification decision request failed",
+                    normalize_native_errors=self._normalize_native_errors,
+                ),
                 api_call_context(self._provider, "chat-completions"),
             ):
                 response = await self._client.acompletion(
@@ -228,7 +245,10 @@ class AnyLLMStructuredProvider:
         ]
         try:
             with (
-                _normalize_request_errors("LLM translation request failed"),
+                _normalize_request_errors(
+                    "LLM translation request failed",
+                    normalize_native_errors=self._normalize_native_errors,
+                ),
                 api_call_context(self._provider, "chat-completions"),
             ):
                 response = await self._client.acompletion(
@@ -331,4 +351,5 @@ def create_any_llm_provider(
         max_output_tokens=max_output_tokens,
         diagnostics=diagnostics,
         owns_client=True,
+        normalize_native_errors=True,
     )

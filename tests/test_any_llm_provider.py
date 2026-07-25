@@ -77,9 +77,15 @@ def _provider_status_error(response: httpx.Response) -> Exception:
 
 
 class _RequestMetadataTransportError(Exception):
+    def __init__(self, method: str = "POST") -> None:
+        super().__init__("Upstream connection failed")
+        self.request = SimpleNamespace(method=method, url="https://api.example.invalid/chat/completions")
+
+
+class _RequestInfoTransportError(Exception):
     def __init__(self) -> None:
         super().__init__("Upstream connection failed")
-        self.request = SimpleNamespace(method="POST", url="https://api.example.invalid/chat/completions")
+        self.request_info = SimpleNamespace(method="GET", real_url="https://api.example.invalid/models")
 
 
 async def test_service_status_llm_is_created_only_on_first_operation() -> None:
@@ -320,6 +326,7 @@ async def test_protocol_client_normalizes_transport_errors() -> None:
         provider="wrapped-provider",
         model="requested-model",
         max_output_tokens=4096,
+        normalize_native_errors=True,
     )
 
     with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
@@ -337,12 +344,67 @@ async def test_protocol_client_normalizes_request_metadata_errors() -> None:
         provider="wrapped-provider",
         model="requested-model",
         max_output_tokens=4096,
+        normalize_native_errors=True,
     )
 
     with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
         await provider.summarize("Return JSON", {"input": "data"})
 
     assert exc_info.value.__cause__ is error
+
+
+async def test_protocol_client_normalizes_request_info_errors() -> None:
+    error = _RequestInfoTransportError()
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+        normalize_native_errors=True,
+    )
+
+    with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value.__cause__ is error
+
+
+async def test_protocol_client_preserves_non_http_request_metadata() -> None:
+    error = _RequestMetadataTransportError(method="FETCH")
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+        normalize_native_errors=True,
+    )
+
+    with pytest.raises(_RequestMetadataTransportError) as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value is error
+
+
+async def test_protocol_client_preserves_native_errors_without_opt_in() -> None:
+    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
+    error = httpx.ConnectError("Upstream connection failed", request=request)
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    with pytest.raises(httpx.ConnectError) as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value is error
 
 
 async def test_completion_programming_error_does_not_switch_to_fallback(monkeypatch) -> None:
