@@ -162,6 +162,27 @@ async def test_json_object_transport_requires_a_final_user_message() -> None:
     assert client.calls == []
 
 
+async def test_json_object_transport_requires_final_user_message_content() -> None:
+    client = _CompletionClientStub(SimpleNamespace())
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="openai",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    with pytest.raises(ValueError, match="must include string content"):
+        await provider._complete(
+            [{"role": "user"}],
+            response_format=LLMStructuredOutput,
+            temperature=0.2,
+            max_tokens=4096,
+            request_error_message="LLM request failed",
+        )
+
+    assert client.calls == []
+
+
 async def test_any_llm_provider_translates_service_status_with_a_narrow_schema() -> None:
     client = _CompletionClientStub(
         SimpleNamespace(

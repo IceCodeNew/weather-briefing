@@ -7,11 +7,10 @@ import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from inspect import isawaitable
-from typing import Any, Protocol, TypeAlias
+from typing import Protocol, TypeAlias
 
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
-from any_llm.types.completion import ChatCompletionMessage
 from pydantic import BaseModel, ValidationError
 
 from ..api_client import api_call_context
@@ -33,7 +32,7 @@ from .schema import (
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
-ResponseFormat: TypeAlias = dict[str, Any]
+ResponseFormat: TypeAlias = dict[str, object]
 
 
 class LLMCompletionClient(Protocol):
@@ -117,12 +116,9 @@ class AnyLLMStructuredProvider:
             ),
         ):
             if isinstance(self._client, AnyLLM):
-                any_llm_messages: list[dict[str, Any] | ChatCompletionMessage] = [
-                    dict(message) for message in request_messages
-                ]
                 return await self._client.acompletion(
                     model=self._model,
-                    messages=any_llm_messages,
+                    messages=[dict(message) for message in request_messages],
                     response_format=request_response_format,
                     stream=False,
                     temperature=temperature,
@@ -355,11 +351,14 @@ def _structured_output_request(
     """Prepare prompt-constrained JSON Object transport."""
     if not messages or messages[-1].get("role") != "user":
         raise ValueError("JSON Object structured output requires a final user message")
+    content = messages[-1].get("content")
+    if not isinstance(content, str):
+        raise ValueError("JSON Object structured output final user message must include string content")
     schema = json.dumps(response_format.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
     final_message = {
         **messages[-1],
         "content": (
-            f"{messages[-1]['content']}\n\n"
+            f"{content}\n\n"
             "Return only a JSON object matching this JSON Schema exactly. "
             "Do not wrap it in Markdown fences.\n"
             f"{schema}"
