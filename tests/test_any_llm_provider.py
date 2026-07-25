@@ -3,7 +3,6 @@ import logging
 import os
 from collections.abc import Callable, Mapping
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -37,7 +36,7 @@ class _CompletionClientStub:
         self,
         *,
         model: str,
-        messages: list[dict[str, Any] | ChatCompletionMessage],
+        messages: list[dict[str, object] | ChatCompletionMessage],
         response_format: type[BaseModel],
         temperature: float,
         max_tokens: int,
@@ -74,39 +73,6 @@ class _ProviderStatusError(Exception):
 
 def _provider_status_error(response: httpx.Response) -> Exception:
     return _ProviderStatusError(response)
-
-
-class _RequestMetadataTransportError(Exception):
-    def __init__(self, method: str = "POST") -> None:
-        super().__init__("Upstream connection failed")
-        self.request = SimpleNamespace(method=method, url="https://api.example.invalid/chat/completions")
-
-
-class _RequestInfoTransportError(Exception):
-    def __init__(self) -> None:
-        super().__init__("Upstream connection failed")
-        self.request_info = SimpleNamespace(method="GET", real_url="https://api.example.invalid/models")
-
-
-class _BrokenRequestMetadataError(Exception):
-    def __init__(self, message: str, *, response: object | None = None) -> None:
-        super().__init__(message)
-        self.response = response
-
-    @property
-    def request(self) -> object:
-        raise RuntimeError("broken request metadata")
-
-
-class _BrokenURL:
-    def __str__(self) -> str:
-        raise RuntimeError("broken URL metadata")
-
-
-class _BrokenURLMetadataError(Exception):
-    def __init__(self) -> None:
-        super().__init__("Upstream connection failed")
-        self.request = SimpleNamespace(method="POST", url=_BrokenURL())
 
 
 async def test_service_status_llm_is_created_only_on_first_operation() -> None:
@@ -337,9 +303,8 @@ async def test_any_llm_client_does_not_mask_payload_serialization_errors() -> No
     client.acompletion.assert_not_awaited()
 
 
-async def test_protocol_client_normalizes_transport_errors() -> None:
-    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
-    error = httpx.ConnectError("Upstream connection failed", request=request)
+async def test_protocol_client_preserves_completion_errors() -> None:
+    error = RuntimeError("Injected client failed")
     client = AsyncMock()
     client.acompletion.side_effect = error
     provider = AnyLLMStructuredProvider(
@@ -347,166 +312,12 @@ async def test_protocol_client_normalizes_transport_errors() -> None:
         provider="wrapped-provider",
         model="requested-model",
         max_output_tokens=4096,
-        normalize_native_errors=True,
     )
 
-    with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value.__cause__ is error
-
-
-async def test_protocol_client_normalizes_request_metadata_errors() -> None:
-    error = _RequestMetadataTransportError()
-    client = AsyncMock()
-    client.acompletion.side_effect = error
-    provider = AnyLLMStructuredProvider(
-        client,
-        provider="wrapped-provider",
-        model="requested-model",
-        max_output_tokens=4096,
-        normalize_native_errors=True,
-    )
-
-    with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value.__cause__ is error
-
-
-async def test_protocol_client_normalizes_request_info_errors() -> None:
-    error = _RequestInfoTransportError()
-    client = AsyncMock()
-    client.acompletion.side_effect = error
-    provider = AnyLLMStructuredProvider(
-        client,
-        provider="wrapped-provider",
-        model="requested-model",
-        max_output_tokens=4096,
-        normalize_native_errors=True,
-    )
-
-    with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value.__cause__ is error
-
-
-async def test_protocol_client_preserves_non_http_request_metadata() -> None:
-    error = _RequestMetadataTransportError(method="FETCH")
-    client = AsyncMock()
-    client.acompletion.side_effect = error
-    provider = AnyLLMStructuredProvider(
-        client,
-        provider="wrapped-provider",
-        model="requested-model",
-        max_output_tokens=4096,
-        normalize_native_errors=True,
-    )
-
-    with pytest.raises(_RequestMetadataTransportError) as exc_info:
+    with pytest.raises(RuntimeError, match="Injected client failed") as exc_info:
         await provider.summarize("Return JSON", {"input": "data"})
 
     assert exc_info.value is error
-
-
-async def test_protocol_client_preserves_error_when_metadata_inspection_fails() -> None:
-    error = _BrokenRequestMetadataError("Upstream connection failed")
-    client = AsyncMock()
-    client.acompletion.side_effect = error
-    provider = AnyLLMStructuredProvider(
-        client,
-        provider="wrapped-provider",
-        model="requested-model",
-        max_output_tokens=4096,
-        normalize_native_errors=True,
-    )
-
-    with pytest.raises(_BrokenRequestMetadataError) as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value is error
-
-
-async def test_protocol_client_uses_response_when_request_metadata_fails() -> None:
-    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
-    response = httpx.Response(503, request=request)
-    error = _BrokenRequestMetadataError("Upstream request failed", response=response)
-    client = AsyncMock()
-    client.acompletion.side_effect = error
-    provider = AnyLLMStructuredProvider(
-        client,
-        provider="wrapped-provider",
-        model="requested-model",
-        max_output_tokens=4096,
-        normalize_native_errors=True,
-    )
-
-    with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value.__cause__ is error
-
-
-async def test_protocol_client_preserves_error_when_url_conversion_fails() -> None:
-    error = _BrokenURLMetadataError()
-    client = AsyncMock()
-    client.acompletion.side_effect = error
-    provider = AnyLLMStructuredProvider(
-        client,
-        provider="wrapped-provider",
-        model="requested-model",
-        max_output_tokens=4096,
-        normalize_native_errors=True,
-    )
-
-    with pytest.raises(_BrokenURLMetadataError) as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value is error
-
-
-async def test_protocol_client_preserves_native_errors_without_opt_in() -> None:
-    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
-    error = httpx.ConnectError("Upstream connection failed", request=request)
-    client = AsyncMock()
-    client.acompletion.side_effect = error
-    provider = AnyLLMStructuredProvider(
-        client,
-        provider="wrapped-provider",
-        model="requested-model",
-        max_output_tokens=4096,
-    )
-
-    with pytest.raises(httpx.ConnectError) as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value is error
-
-
-async def test_completion_programming_error_does_not_switch_to_fallback(monkeypatch) -> None:
-    error = TypeError("SDK programming failure")
-    primary_client = AsyncMock(spec=AnyLLM)
-    primary_client.acompletion.side_effect = error
-    monkeypatch.setattr(AnyLLM, "create", lambda *args, **kwargs: primary_client)
-    fallback_client = AsyncMock(spec=AnyLLM)
-    provider = FallbackLLMProvider(
-        create_any_llm_provider("openai", "primary-model", 4096),
-        AnyLLMStructuredProvider(
-            fallback_client,
-            provider="anthropic",
-            model="fallback-model",
-            max_output_tokens=4096,
-        ),
-        primary_name="openai/primary-model",
-        fallback_name="anthropic/fallback-model",
-    )
-
-    with pytest.raises(TypeError, match="SDK programming failure") as exc_info:
-        await provider.summarize("Return JSON", {"input": "data"})
-
-    assert exc_info.value is error
-    fallback_client.acompletion.assert_not_awaited()
 
 
 async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -> None:

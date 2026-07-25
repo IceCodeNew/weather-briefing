@@ -6,9 +6,8 @@ import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from inspect import isawaitable
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
-import httpx
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
 from any_llm.types.completion import ChatCompletionMessage
@@ -29,47 +28,7 @@ from .schema import (
 )
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
-_HTTP_METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"})
-
-
-def _read_error_metadata(value: object, name: str) -> object | None:
-    """Read one optional exception field without masking the active failure."""
-    try:
-        return getattr(value, name, None)
-    except Exception:
-        return None
-
-
-def _has_http_status(value: object) -> bool:
-    """Return whether an exception or response exposes a concrete HTTP status."""
-    return any(isinstance(_read_error_metadata(value, name), int) for name in ("status_code", "status", "code"))
-
-
-def _is_request_context(value: object) -> bool:
-    """Recognize request metadata shared by common HTTP client libraries."""
-    method = _read_error_metadata(value, "method")
-    if not isinstance(method, str) or method.upper() not in _HTTP_METHODS:
-        return False
-    url = _read_error_metadata(value, "url")
-    if url is None:
-        url = _read_error_metadata(value, "real_url")
-    try:
-        return str(url).lower().startswith(("http://", "https://"))
-    except Exception:
-        return False
-
-
-def _is_provider_request_error(exc: Exception) -> bool:
-    """Recognize transport and provider errors without binding to each vendor SDK."""
-    if isinstance(exc, httpx.HTTPError):
-        return True
-    request = _read_error_metadata(exc, "request")
-    if request is None:
-        request = _read_error_metadata(exc, "request_info")
-    if request is not None and _is_request_context(request):
-        return True
-    response = _read_error_metadata(exc, "response")
-    return response is not None and (_has_http_status(response) or _has_http_status(exc))
+_CompletionMessage: TypeAlias = dict[str, Any] | ChatCompletionMessage
 
 
 class LLMCompletionClient(Protocol):
@@ -79,7 +38,7 @@ class LLMCompletionClient(Protocol):
         self,
         *,
         model: str,
-        messages: list[dict[str, Any] | ChatCompletionMessage],
+        messages: list[_CompletionMessage],
         response_format: type[BaseModel],
         temperature: float,
         max_tokens: int,
@@ -92,9 +51,9 @@ class LLMCompletionClient(Protocol):
 def _normalize_request_errors(
     message: str,
     *,
-    normalize_native_errors: bool,
+    normalize_completion_errors: bool,
 ) -> Iterator[None]:
-    """Normalize recognized request failures at the completion boundary."""
+    """Normalize failures escaping an application-owned completion client."""
     try:
         yield
     except (LengthFinishReasonError, ValidationError):
@@ -102,7 +61,7 @@ def _normalize_request_errors(
     except AnyLLMError as exc:
         raise LLMRequestError(message) from exc
     except Exception as exc:
-        if normalize_native_errors and _is_provider_request_error(exc):
+        if normalize_completion_errors:
             raise LLMRequestError(message) from exc
         raise
 
@@ -119,7 +78,7 @@ class AnyLLMStructuredProvider:
         max_output_tokens: int,
         diagnostics: SensitiveLLMDiagnostics | None = None,
         owns_client: bool = False,
-        normalize_native_errors: bool = False,
+        normalize_completion_errors: bool = False,
     ) -> None:
         """Configure a reusable any-llm client and output limit."""
         self._client = client
@@ -128,7 +87,7 @@ class AnyLLMStructuredProvider:
         self._max_output_tokens = max_output_tokens
         self._diagnostics = diagnostics
         self._owns_client = owns_client
-        self._normalize_native_errors = normalize_native_errors
+        self._normalize_completion_errors = normalize_completion_errors
 
     @property
     def provider(self) -> str:
@@ -137,7 +96,7 @@ class AnyLLMStructuredProvider:
 
     async def _complete(
         self,
-        messages: list[dict[str, Any] | ChatCompletionMessage],
+        messages: list[_CompletionMessage],
         *,
         response_format: type[BaseModel],
         temperature: float,
@@ -145,11 +104,11 @@ class AnyLLMStructuredProvider:
         request_error_message: str,
     ) -> object:
         with (
+            api_call_context(self._provider, "chat-completions"),
             _normalize_request_errors(
                 request_error_message,
-                normalize_native_errors=self._normalize_native_errors,
+                normalize_completion_errors=self._normalize_completion_errors,
             ),
-            api_call_context(self._provider, "chat-completions"),
         ):
             return await self._client.acompletion(
                 model=self._model,
@@ -176,7 +135,7 @@ class AnyLLMStructuredProvider:
                 system_prompt,
                 payload,
             )
-        messages: list[dict[str, Any] | ChatCompletionMessage] = [
+        messages: list[_CompletionMessage] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": serialize_llm_payload(payload)},
         ]
@@ -209,7 +168,7 @@ class AnyLLMStructuredProvider:
 
     async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
         """Evaluate notification value independently from content generation."""
-        messages: list[dict[str, Any] | ChatCompletionMessage] = [
+        messages: list[_CompletionMessage] = [
             {
                 "role": "system",
                 "content": (f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。"),
@@ -250,7 +209,7 @@ class AnyLLMStructuredProvider:
         }.get(target_language)
         if language_name is None:
             raise ValueError(f"Unsupported service-status translation language: {target_language}")
-        messages: list[dict[str, Any] | ChatCompletionMessage] = [
+        messages: list[_CompletionMessage] = [
             {
                 "role": "system",
                 "content": (
@@ -365,5 +324,5 @@ def create_any_llm_provider(
         max_output_tokens=max_output_tokens,
         diagnostics=diagnostics,
         owns_client=True,
-        normalize_native_errors=True,
+        normalize_completion_errors=True,
     )
