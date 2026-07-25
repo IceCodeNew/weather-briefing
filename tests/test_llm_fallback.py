@@ -163,8 +163,14 @@ async def test_output_contract_failure_does_not_use_fallback() -> None:
 async def test_fallback_failure_preserves_primary_as_context() -> None:
     primary = _provider()
     fallback = _provider()
-    primary.summarize.side_effect = LLMRequestError("primary unavailable")
-    fallback.summarize.side_effect = LLMRequestError("fallback unavailable")
+    primary_cause = TimeoutError("primary unavailable")
+    primary_error = LLMRequestError("primary request failed")
+    primary_error.__cause__ = primary_cause
+    fallback_cause = ConnectionError("fallback unavailable")
+    fallback_error = LLMRequestError("fallback request failed")
+    fallback_error.__cause__ = fallback_cause
+    primary.summarize.side_effect = primary_error
+    fallback.summarize.side_effect = fallback_error
     provider = FallbackLLMProvider(
         primary,
         fallback,
@@ -172,11 +178,13 @@ async def test_fallback_failure_preserves_primary_as_context() -> None:
         fallback_name="fallback",
     )
 
-    with pytest.raises(LLMRequestError, match="fallback unavailable") as exc_info:
+    with pytest.raises(LLMRequestError, match="fallback request failed") as exc_info:
         await provider.summarize("system", {"input": "value"})
 
+    assert exc_info.value.__cause__ is fallback_cause
     assert isinstance(exc_info.value.__context__, LLMRequestError)
-    assert str(exc_info.value.__context__) == "primary unavailable"
+    assert str(exc_info.value.__context__) == "primary request failed"
+    assert exc_info.value.__context__.__cause__ is primary_cause
 
 
 async def test_fallback_log_excludes_exception_details(caplog) -> None:

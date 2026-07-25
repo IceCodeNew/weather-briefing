@@ -1,20 +1,24 @@
 import json
 import logging
-from collections.abc import Mapping
+import os
+from collections.abc import Callable, Mapping
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from anthropic import BadRequestError as AnthropicBadRequestError
 from any_llm import AnyLLM
 from any_llm.providers.openai.base import BaseOpenAIProvider
-from openai import AsyncOpenAI
-from pydantic import BaseModel
+from openai import AsyncOpenAI, BadRequestError
+from pydantic import BaseModel, ValidationError
 
 from weather_briefing.api_client import LoggedAsyncClient
 from weather_briefing.llm import (
     AnyLLMStructuredProvider,
+    FallbackLLMProvider,
     LazyServiceStatusLLM,
+    LLMRequestError,
     LLMStructuredOutput,
     create_any_llm_provider,
 )
@@ -46,6 +50,28 @@ class _CompletionClientStub:
             }
         )
         return self._response
+
+
+def _openai_bad_request(response: httpx.Response) -> Exception:
+    return BadRequestError("Upstream request failed", response=response, body={"error": "upstream"})
+
+
+def _anthropic_bad_request(response: httpx.Response) -> Exception:
+    return AnthropicBadRequestError("Upstream request failed", response=response, body={"error": "upstream"})
+
+
+def _httpx_connection_error(response: httpx.Response) -> Exception:
+    return httpx.ConnectError("Upstream connection failed", request=response.request)
+
+
+class _ProviderStatusError(Exception):
+    def __init__(self, response: httpx.Response) -> None:
+        super().__init__("Upstream request failed")
+        self.response = response
+
+
+def _provider_status_error(response: httpx.Response) -> Exception:
+    return _ProviderStatusError(response)
 
 
 async def test_service_status_llm_is_created_only_on_first_operation() -> None:
@@ -174,6 +200,167 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
     assert client.calls[0]["response_format"] is NotificationDecisionOutput
     assert client.calls[0]["temperature"] == 0.0
     assert client.calls[0]["max_tokens"] == 256
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "error_factory", "operation", "args", "message"),
+    (
+        (
+            "openai",
+            _openai_bad_request,
+            "summarize",
+            ("Return JSON", {"input": "data"}),
+            "LLM request failed",
+        ),
+        (
+            "anthropic",
+            _anthropic_bad_request,
+            "summarize",
+            ("Return JSON", {"input": "data"}),
+            "LLM request failed",
+        ),
+        (
+            "openrouter",
+            _httpx_connection_error,
+            "summarize",
+            ("Return JSON", {"input": "data"}),
+            "LLM request failed",
+        ),
+        (
+            "gemini",
+            _provider_status_error,
+            "summarize",
+            ("Return JSON", {"input": "data"}),
+            "LLM request failed",
+        ),
+        (
+            "openai",
+            _openai_bad_request,
+            "assess_notification",
+            ({"current": {"status": "operational"}},),
+            "LLM notification decision request failed",
+        ),
+        (
+            "openai",
+            _openai_bad_request,
+            "translate_service_status",
+            ("Incident", "Elevated errors", "en"),
+            "LLM translation request failed",
+        ),
+    ),
+)
+async def test_factory_normalizes_provider_native_request_errors(
+    monkeypatch,
+    provider_name: str,
+    error_factory: Callable[[httpx.Response], Exception],
+    operation: str,
+    args: tuple[object, ...],
+    message: str,
+) -> None:
+    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
+    response = httpx.Response(400, request=request)
+    error = error_factory(response)
+    client = AsyncMock(spec=AnyLLM)
+    client.acompletion.side_effect = error
+    monkeypatch.delenv("ANY_LLM_UNIFIED_EXCEPTIONS", raising=False)
+    monkeypatch.setattr(AnyLLM, "create", lambda *args, **kwargs: client)
+    provider = create_any_llm_provider(provider_name, "requested-model", 4096)
+
+    with pytest.raises(LLMRequestError, match=f"^{message}$") as exc_info:
+        await getattr(provider, operation)(*args)
+
+    assert exc_info.value.__cause__ is error
+    assert "ANY_LLM_UNIFIED_EXCEPTIONS" not in os.environ
+
+
+async def test_factory_preserves_sdk_output_validation_errors(monkeypatch) -> None:
+    with pytest.raises(ValidationError) as validation:
+        LLMStructuredOutput.model_validate({})
+    client = AsyncMock(spec=AnyLLM)
+    client.acompletion.side_effect = validation.value
+    monkeypatch.setattr(AnyLLM, "create", lambda *args, **kwargs: client)
+    provider = create_any_llm_provider("openai", "requested-model", 4096)
+
+    with pytest.raises(ValidationError) as propagated:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert propagated.value is validation.value
+
+
+async def test_any_llm_client_does_not_mask_payload_serialization_errors() -> None:
+    client = AsyncMock(spec=AnyLLM)
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="openai",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        await provider.summarize("Return JSON", {"input": object()})
+
+    client.acompletion.assert_not_awaited()
+
+
+async def test_protocol_client_preserves_completion_errors() -> None:
+    error = RuntimeError("Injected client failed")
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    with pytest.raises(RuntimeError, match="Injected client failed") as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value is error
+
+
+async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -> None:
+    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
+    response = httpx.Response(400, request=request)
+    error = BadRequestError(
+        "Upstream request failed",
+        response=response,
+        body={"error": "upstream"},
+    )
+    primary_client = AsyncMock(spec=AnyLLM)
+    primary_client.acompletion.side_effect = error
+    monkeypatch.delenv("ANY_LLM_UNIFIED_EXCEPTIONS", raising=False)
+    monkeypatch.setattr(AnyLLM, "create", lambda *args, **kwargs: primary_client)
+    fallback_result = {
+        "headline": "Fallback briefing",
+        "headline_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+        "should_publish": True,
+    }
+    fallback_client = _CompletionClientStub(
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fallback_result)))])
+    )
+    provider = FallbackLLMProvider(
+        create_any_llm_provider("openai", "primary-model", 4096),
+        AnyLLMStructuredProvider(
+            fallback_client,
+            provider="openai",
+            model="fallback-model",
+            max_output_tokens=4096,
+        ),
+        primary_name="openai/primary-model",
+        fallback_name="openai/fallback-model",
+    )
+
+    result = await provider.summarize("Return JSON", {"input": "data"})
+
+    assert result == fallback_result
+    primary_client.acompletion.assert_awaited_once()
+    assert len(fallback_client.calls) == 1
 
 
 async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) -> None:

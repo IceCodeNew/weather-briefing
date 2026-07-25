@@ -2,7 +2,6 @@ import json
 import logging
 from copy import deepcopy
 from types import SimpleNamespace
-from typing import Any
 
 import pendulum
 import pytest
@@ -80,7 +79,7 @@ async def test_completion_client_stub_requires_a_configured_response() -> None:
         )
 
 
-def _valid_payload() -> dict[str, Any]:
+def _valid_payload() -> dict[str, object]:
     return {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
