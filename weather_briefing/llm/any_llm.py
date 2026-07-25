@@ -135,6 +135,30 @@ class AnyLLMStructuredProvider:
         """Return the application-facing provider name used for diagnostics."""
         return self._provider
 
+    async def _complete(
+        self,
+        messages: list[dict[str, Any] | ChatCompletionMessage],
+        *,
+        response_format: type[BaseModel],
+        temperature: float,
+        max_tokens: int,
+        request_error_message: str,
+    ) -> object:
+        with (
+            _normalize_request_errors(
+                request_error_message,
+                normalize_native_errors=self._normalize_native_errors,
+            ),
+            api_call_context(self._provider, "chat-completions"),
+        ):
+            return await self._client.acompletion(
+                model=self._model,
+                messages=messages,
+                response_format=response_format,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         """Request and decode one structured JSON response."""
         log_sensitive = _sensitive_llm_diagnostics_enabled(self._diagnostics)
@@ -157,20 +181,13 @@ class AnyLLMStructuredProvider:
             {"role": "user", "content": serialize_llm_payload(payload)},
         ]
         try:
-            with (
-                _normalize_request_errors(
-                    "LLM request failed",
-                    normalize_native_errors=self._normalize_native_errors,
-                ),
-                api_call_context(self._provider, "chat-completions"),
-            ):
-                response = await self._client.acompletion(
-                    model=self._model,
-                    messages=messages,
-                    response_format=LLMStructuredOutput,
-                    temperature=0.2,
-                    max_tokens=self._max_output_tokens,
-                )
+            response = await self._complete(
+                messages,
+                response_format=LLMStructuredOutput,
+                temperature=0.2,
+                max_tokens=self._max_output_tokens,
+                request_error_message="LLM request failed",
+            )
         except LengthFinishReasonError as exc:
             _LOGGER.warning(
                 "LLM response reached output token limit: provider=%s model=%r max_output_tokens=%d error_type=%s",
@@ -200,20 +217,13 @@ class AnyLLMStructuredProvider:
             {"role": "user", "content": serialize_llm_payload(payload)},
         ]
         try:
-            with (
-                _normalize_request_errors(
-                    "LLM notification decision request failed",
-                    normalize_native_errors=self._normalize_native_errors,
-                ),
-                api_call_context(self._provider, "chat-completions"),
-            ):
-                response = await self._client.acompletion(
-                    model=self._model,
-                    messages=messages,
-                    response_format=NotificationDecisionOutput,
-                    temperature=0.0,
-                    max_tokens=min(self._max_output_tokens, 256),
-                )
+            response = await self._complete(
+                messages,
+                response_format=NotificationDecisionOutput,
+                temperature=0.0,
+                max_tokens=min(self._max_output_tokens, 256),
+                request_error_message="LLM notification decision request failed",
+            )
         except LengthFinishReasonError as exc:
             _LOGGER.warning(
                 "LLM notification decision reached output token limit: "
@@ -255,20 +265,13 @@ class AnyLLMStructuredProvider:
             },
         ]
         try:
-            with (
-                _normalize_request_errors(
-                    "LLM translation request failed",
-                    normalize_native_errors=self._normalize_native_errors,
-                ),
-                api_call_context(self._provider, "chat-completions"),
-            ):
-                response = await self._client.acompletion(
-                    model=self._model,
-                    messages=messages,
-                    response_format=ServiceStatusTranslationOutput,
-                    temperature=0.0,
-                    max_tokens=min(self._max_output_tokens, 2048),
-                )
+            response = await self._complete(
+                messages,
+                response_format=ServiceStatusTranslationOutput,
+                temperature=0.0,
+                max_tokens=min(self._max_output_tokens, 2048),
+                request_error_message="LLM translation request failed",
+            )
         except LengthFinishReasonError as exc:
             _LOGGER.warning(
                 "LLM translation reached output token limit: provider=%s model=%r max_output_tokens=%d error_type=%s",
