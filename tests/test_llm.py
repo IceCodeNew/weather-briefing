@@ -7,7 +7,7 @@ from typing import Any
 import pendulum
 import pytest
 from any_llm.exceptions import LengthFinishReasonError, ProviderError
-from any_llm.types.completion import ParsedChatCompletion
+from any_llm.types.completion import ChatCompletionMessage, ParsedChatCompletion
 from pydantic import BaseModel
 
 from weather_briefing.llm import (
@@ -36,7 +36,7 @@ class _CompletionClientStub:
         self,
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any] | ChatCompletionMessage],
         response_format: type[BaseModel],
         temperature: float,
         max_tokens: int,

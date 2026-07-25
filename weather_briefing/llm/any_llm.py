@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from inspect import isawaitable
-from typing import Protocol
+from typing import Any, Protocol
 
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
-from pydantic import BaseModel
+from any_llm.types.completion import ChatCompletionMessage
+from pydantic import BaseModel, ValidationError
 
 from ..api_client import api_call_context
 from ..data.any_llm_compatibility import UNSUPPORTED_DEFAULT_HEADER_PROVIDERS
@@ -35,13 +37,31 @@ class LLMCompletionClient(Protocol):
         self,
         *,
         model: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any] | ChatCompletionMessage],
         response_format: type[BaseModel],
         temperature: float,
         max_tokens: int,
     ) -> object:
         """Request one asynchronous structured completion."""
         ...
+
+
+@contextmanager
+def _normalize_request_errors(
+    client: AnyLLM | LLMCompletionClient,
+    message: str,
+) -> Iterator[None]:
+    """Normalize request failures only for any-llm SDK clients."""
+    try:
+        yield
+    except (LengthFinishReasonError, ValidationError):
+        raise
+    except AnyLLMError as exc:
+        raise LLMRequestError(message) from exc
+    except Exception as exc:
+        if isinstance(client, AnyLLM):
+            raise LLMRequestError(message) from exc
+        raise
 
 
 class AnyLLMStructuredProvider:
@@ -87,14 +107,18 @@ class AnyLLMStructuredProvider:
                 system_prompt,
                 payload,
             )
+        messages: list[dict[str, Any] | ChatCompletionMessage] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": serialize_llm_payload(payload)},
+        ]
         try:
-            with api_call_context(self._provider, "chat-completions"):
+            with (
+                _normalize_request_errors(self._client, "LLM request failed"),
+                api_call_context(self._provider, "chat-completions"),
+            ):
                 response = await self._client.acompletion(
                     model=self._model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": serialize_llm_payload(payload)},
-                    ],
+                    messages=messages,
                     response_format=LLMStructuredOutput,
                     temperature=0.2,
                     max_tokens=self._max_output_tokens,
@@ -108,8 +132,6 @@ class AnyLLMStructuredProvider:
                 type(exc).__name__,
             )
             raise LLMOutputLimitError("LLM response reached output token limit") from exc
-        except AnyLLMError as exc:
-            raise LLMRequestError("LLM request failed") from exc
         result_payload = decode_structured_response(response).model_dump(mode="json")
         if log_sensitive:
             _LOGGER.debug(
@@ -122,17 +144,21 @@ class AnyLLMStructuredProvider:
 
     async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
         """Evaluate notification value independently from content generation."""
+        messages: list[dict[str, Any] | ChatCompletionMessage] = [
+            {
+                "role": "system",
+                "content": (f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。"),
+            },
+            {"role": "user", "content": serialize_llm_payload(payload)},
+        ]
         try:
-            with api_call_context(self._provider, "chat-completions"):
+            with (
+                _normalize_request_errors(self._client, "LLM notification decision request failed"),
+                api_call_context(self._provider, "chat-completions"),
+            ):
                 response = await self._client.acompletion(
                     model=self._model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。"),
-                        },
-                        {"role": "user", "content": serialize_llm_payload(payload)},
-                    ],
+                    messages=messages,
                     response_format=NotificationDecisionOutput,
                     temperature=0.0,
                     max_tokens=min(self._max_output_tokens, 256),
@@ -147,8 +173,6 @@ class AnyLLMStructuredProvider:
                 type(exc).__name__,
             )
             raise LLMOutputLimitError("LLM notification decision reached output token limit") from exc
-        except AnyLLMError as exc:
-            raise LLMRequestError("LLM notification decision request failed") from exc
         return NotificationDecision(should_notify=decode_notification_decision(response))
 
     async def translate_service_status(
@@ -165,24 +189,28 @@ class AnyLLMStructuredProvider:
         }.get(target_language)
         if language_name is None:
             raise ValueError(f"Unsupported service-status translation language: {target_language}")
+        messages: list[dict[str, Any] | ChatCompletionMessage] = [
+            {
+                "role": "system",
+                "content": (
+                    f"Translate the official service-incident explanation into concise {language_name}. "
+                    "Preserve product names, incident facts, status, times, and technical terms. "
+                    "Do not add analysis, advice, or facts. Return only the requested JSON object."
+                ),
+            },
+            {
+                "role": "user",
+                "content": serialize_llm_payload({"title": title, "body": body}),
+            },
+        ]
         try:
-            with api_call_context(self._provider, "chat-completions"):
+            with (
+                _normalize_request_errors(self._client, "LLM translation request failed"),
+                api_call_context(self._provider, "chat-completions"),
+            ):
                 response = await self._client.acompletion(
                     model=self._model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                f"Translate the official service-incident explanation into concise {language_name}. "
-                                "Preserve product names, incident facts, status, times, and technical terms. "
-                                "Do not add analysis, advice, or facts. Return only the requested JSON object."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": serialize_llm_payload({"title": title, "body": body}),
-                        },
-                    ],
+                    messages=messages,
                     response_format=ServiceStatusTranslationOutput,
                     temperature=0.0,
                     max_tokens=min(self._max_output_tokens, 2048),
@@ -196,8 +224,6 @@ class AnyLLMStructuredProvider:
                 type(exc).__name__,
             )
             raise LLMOutputLimitError("LLM translation reached output token limit") from exc
-        except AnyLLMError as exc:
-            raise LLMRequestError("LLM translation request failed") from exc
         translated = decode_service_status_translation(response)
         return translated.title, translated.body
 
