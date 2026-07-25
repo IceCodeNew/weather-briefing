@@ -36,11 +36,21 @@ def _has_http_status(value: object) -> bool:
     return any(isinstance(getattr(value, name, None), int) for name in ("status_code", "status", "code"))
 
 
+def _is_request_context(value: object) -> bool:
+    """Recognize request metadata shared by common HTTP client libraries."""
+    return isinstance(getattr(value, "method", None), str) and any(
+        getattr(value, name, None) is not None for name in ("url", "real_url")
+    )
+
+
 def _is_provider_request_error(exc: Exception) -> bool:
     """Recognize transport and provider errors without binding to each vendor SDK."""
     if isinstance(exc, httpx.HTTPError):
         return True
-    if isinstance(getattr(exc, "request", None), httpx.Request):
+    request = getattr(exc, "request", None)
+    if request is None:
+        request = getattr(exc, "request_info", None)
+    if request is not None and _is_request_context(request):
         return True
     response = getattr(exc, "response", None)
     return response is not None and (_has_http_status(response) or _has_http_status(exc))
