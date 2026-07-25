@@ -168,12 +168,12 @@ class Settings:
             raise ConfigurationError("LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL must be configured together")
         if llm_fallback_provider is not None:
             _validate_llm_provider("LLM_FALLBACK_PROVIDER", llm_fallback_provider)
-        if llm_fallback_provider == "deepseek":
-            llm_fallback_api_key = clean_env(os.getenv("DEEPSEEK_API_KEY")) or None
-            llm_fallback_base_url = first_configured("DEEPSEEK_API_BASE", "DEEPSEEK_BASE_URL")
-        else:
-            llm_fallback_api_key = None
-            llm_fallback_base_url = None
+        llm_fallback_api_key = clean_env(os.getenv("LLM_FALLBACK_API_KEY")) or None
+        llm_fallback_base_url = clean_env(os.getenv("LLM_FALLBACK_BASE_URL")) or None
+        if llm_fallback_api_key is not None and llm_fallback_provider is None:
+            raise ConfigurationError("LLM_FALLBACK_API_KEY requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL")
+        if llm_fallback_base_url is not None and llm_fallback_provider is None:
+            raise ConfigurationError("LLM_FALLBACK_BASE_URL requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL")
         locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
