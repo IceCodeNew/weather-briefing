@@ -11,7 +11,10 @@ from urllib.parse import urlsplit
 import pendulum
 from any_llm import AnyLLM
 
-from ..data.any_llm_compatibility import UNSUPPORTED_DEFAULT_HEADER_PROVIDERS
+from ..data.any_llm_compatibility import (
+    UNSUPPORTED_DEFAULT_HEADER_PROVIDERS,
+    UNSUPPORTED_JSON_OBJECT_PROVIDERS,
+)
 from ..data.bark import BARK_DEFAULT_LLM_MAX_OUTPUT_TOKENS, BARK_MAX_MESSAGE_LENGTH
 from ..data.service_endpoints import BARK_BASE_URL
 from ..models import FeedConfig, LocationSpec
@@ -154,6 +157,8 @@ class Settings:
         hourly_cron = cron_hour("BRIEFING_CRON", "9-23")
         service_status_cron = cron_expression("SERVICE_STATUS_CRON", "*/5 * * * *")
         llm_provider = clean_env(os.getenv("LLM_PROVIDER", "deepseek"))
+        llm_extra_headers = headers_from_env("LLM_EXTRA_HEADERS")
+        _validate_llm_headers_provider("LLM_EXTRA_HEADERS", "LLM_PROVIDER", llm_provider, llm_extra_headers)
         _validate_llm_provider("LLM_PROVIDER", llm_provider)
         llm_model = clean_env(os.getenv("LLM_MODEL"))
         if llm_provider == "deepseek":
@@ -165,14 +170,10 @@ class Settings:
             llm_base_url = None
         if not llm_model:
             raise ConfigurationError("Missing required environment variable: LLM_MODEL")
-        llm_extra_headers = headers_from_env("LLM_EXTRA_HEADERS")
-        _validate_llm_headers_provider("LLM_EXTRA_HEADERS", "LLM_PROVIDER", llm_provider, llm_extra_headers)
         llm_fallback_provider = clean_env(os.getenv("LLM_FALLBACK_PROVIDER")) or None
         llm_fallback_model = clean_env(os.getenv("LLM_FALLBACK_MODEL")) or None
         if (llm_fallback_provider is None) != (llm_fallback_model is None):
             raise ConfigurationError("LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL must be configured together")
-        if llm_fallback_provider is not None:
-            _validate_llm_provider("LLM_FALLBACK_PROVIDER", llm_fallback_provider)
         llm_fallback_extra_headers = headers_from_env("LLM_FALLBACK_EXTRA_HEADERS")
         if llm_fallback_extra_headers and llm_fallback_provider is None:
             raise ConfigurationError("LLM_FALLBACK_EXTRA_HEADERS requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL")
@@ -183,6 +184,7 @@ class Settings:
                 llm_fallback_provider,
                 llm_fallback_extra_headers,
             )
+            _validate_llm_provider("LLM_FALLBACK_PROVIDER", llm_fallback_provider)
         locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
@@ -306,6 +308,8 @@ def _validate_llm_provider(setting_name: str, provider: str) -> None:
         raise ConfigurationError(f"Unsupported {setting_name}: {provider}")
     if not AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION:
         raise ConfigurationError(f"{setting_name} does not support completion: {provider}")
+    if provider in UNSUPPORTED_JSON_OBJECT_PROVIDERS:
+        raise ConfigurationError(f"{setting_name} does not support required JSON Object output: {provider}")
 
 
 def _validate_llm_headers_provider(

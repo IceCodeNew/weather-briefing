@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from inspect import isawaitable
-from typing import Protocol
+from typing import Any, Protocol, TypeAlias
 
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
+from any_llm.types.completion import ChatCompletionMessage
 from pydantic import BaseModel, ValidationError
 
 from ..api_client import api_call_context
-from ..data.any_llm_compatibility import UNSUPPORTED_DEFAULT_HEADER_PROVIDERS
+from ..data.any_llm_compatibility import (
+    UNSUPPORTED_DEFAULT_HEADER_PROVIDERS,
+    UNSUPPORTED_JSON_OBJECT_PROVIDERS,
+)
 from ..data.prompts import NOTIFICATION_POLICY
 from ..notifications import NotificationDecision
 from .base import LLMOutputLimitError, LLMRequestError, SensitiveLLMDiagnostics, serialize_llm_payload
@@ -28,6 +33,8 @@ from .schema import (
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
+ResponseFormat: TypeAlias = dict[str, Any]
+
 
 class LLMCompletionClient(Protocol):
     """Expose the any-llm completion operation used by the application adapter."""
@@ -37,7 +44,7 @@ class LLMCompletionClient(Protocol):
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: type[BaseModel],
+        response_format: ResponseFormat,
         temperature: float,
         max_tokens: int,
     ) -> object:
@@ -101,6 +108,7 @@ class AnyLLMStructuredProvider:
         max_tokens: int,
         request_error_message: str,
     ) -> object:
+        request_messages, request_response_format = _structured_output_request(messages, response_format)
         with (
             api_call_context(self._provider, "chat-completions"),
             _normalize_request_errors(
@@ -108,10 +116,22 @@ class AnyLLMStructuredProvider:
                 normalize_completion_errors=self._normalize_completion_errors,
             ),
         ):
+            if isinstance(self._client, AnyLLM):
+                any_llm_messages: list[dict[str, Any] | ChatCompletionMessage] = [
+                    dict(message) for message in request_messages
+                ]
+                return await self._client.acompletion(
+                    model=self._model,
+                    messages=any_llm_messages,
+                    response_format=request_response_format,
+                    stream=False,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
             return await self._client.acompletion(
                 model=self._model,
-                messages=[*messages],
-                response_format=response_format,
+                messages=request_messages,
+                response_format=request_response_format,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
@@ -311,6 +331,8 @@ def create_any_llm_provider(
         raise ValueError(f"any-llm provider does not support completion: {canonical_provider}")
     if extra_headers and canonical_provider in UNSUPPORTED_DEFAULT_HEADER_PROVIDERS:
         raise ValueError(f"Custom headers are not supported for any-llm provider: {canonical_provider}")
+    if canonical_provider in UNSUPPORTED_JSON_OBJECT_PROVIDERS:
+        raise ValueError(f"any-llm provider does not support required JSON Object output: {canonical_provider}")
     client_args: dict[str, object] = {"api_key": api_key, "api_base": api_base}
     if extra_headers:
         client_args["default_headers"] = extra_headers
@@ -324,3 +346,23 @@ def create_any_llm_provider(
         owns_client=True,
         normalize_completion_errors=True,
     )
+
+
+def _structured_output_request(
+    messages: list[dict[str, str]],
+    response_format: type[BaseModel],
+) -> tuple[list[dict[str, str]], ResponseFormat]:
+    """Prepare prompt-constrained JSON Object transport."""
+    if not messages or messages[-1].get("role") != "user":
+        raise ValueError("JSON Object structured output requires a final user message")
+    schema = json.dumps(response_format.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
+    final_message = {
+        **messages[-1],
+        "content": (
+            f"{messages[-1]['content']}\n\n"
+            "Return only a JSON object matching this JSON Schema exactly. "
+            "Do not wrap it in Markdown fences.\n"
+            f"{schema}"
+        ),
+    }
+    return [*messages[:-1], final_message], {"type": "json_object"}

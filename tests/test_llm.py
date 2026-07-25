@@ -36,7 +36,7 @@ class _CompletionClientStub:
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: type[BaseModel],
+        response_format: type[BaseModel] | dict[str, object],
         temperature: float,
         max_tokens: int,
     ) -> object:

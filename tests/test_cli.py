@@ -1200,16 +1200,16 @@ class TestLLMProvider:
         assert calls[0][0][:3] == ("deepseek", "m", 8192)
         assert calls[0][1]["api_base"] is None
 
-    async def test_arbitrary_any_llm_provider_is_forwarded(self, monkeypatch) -> None:
+    async def test_supported_any_llm_provider_is_forwarded(self, monkeypatch) -> None:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
         monkeypatch.setattr(
             "weather_briefing.llm.any_llm.create_any_llm_provider",
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
-        settings = replace(_make_fake_settings(llm_provider="mistral"), api_key=None, llm_base_url=None)
+        settings = replace(_make_fake_settings(llm_provider="openrouter"), api_key=None, llm_base_url=None)
         provider = await _llm_provider(settings)
         assert provider is not None
-        assert calls[0][0][:3] == ("mistral", "m", 8192)
+        assert calls[0][0][:3] == ("openrouter", "m", 8192)
         assert calls[0][1] == {
             "api_key": None,
             "api_base": None,
