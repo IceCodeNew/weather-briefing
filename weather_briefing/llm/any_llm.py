@@ -6,11 +6,10 @@ import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from inspect import isawaitable
-from typing import Any, Protocol, TypeAlias
+from typing import Protocol
 
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
-from any_llm.types.completion import ChatCompletionMessage
 from pydantic import BaseModel, ValidationError
 
 from ..api_client import api_call_context
@@ -28,7 +27,6 @@ from .schema import (
 )
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
-_CompletionMessage: TypeAlias = dict[str, Any] | ChatCompletionMessage
 
 
 class LLMCompletionClient(Protocol):
@@ -38,7 +36,7 @@ class LLMCompletionClient(Protocol):
         self,
         *,
         model: str,
-        messages: list[_CompletionMessage],
+        messages: list[dict[str, str]],
         response_format: type[BaseModel],
         temperature: float,
         max_tokens: int,
@@ -96,7 +94,7 @@ class AnyLLMStructuredProvider:
 
     async def _complete(
         self,
-        messages: list[_CompletionMessage],
+        messages: list[dict[str, str]],
         *,
         response_format: type[BaseModel],
         temperature: float,
@@ -112,7 +110,7 @@ class AnyLLMStructuredProvider:
         ):
             return await self._client.acompletion(
                 model=self._model,
-                messages=messages,
+                messages=[*messages],
                 response_format=response_format,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -135,7 +133,7 @@ class AnyLLMStructuredProvider:
                 system_prompt,
                 payload,
             )
-        messages: list[_CompletionMessage] = [
+        messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": serialize_llm_payload(payload)},
         ]
@@ -168,7 +166,7 @@ class AnyLLMStructuredProvider:
 
     async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
         """Evaluate notification value independently from content generation."""
-        messages: list[_CompletionMessage] = [
+        messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": (f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。"),
@@ -209,7 +207,7 @@ class AnyLLMStructuredProvider:
         }.get(target_language)
         if language_name is None:
             raise ValueError(f"Unsupported service-status translation language: {target_language}")
-        messages: list[_CompletionMessage] = [
+        messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": (

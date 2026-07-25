@@ -10,7 +10,6 @@ import pytest
 from anthropic import BadRequestError as AnthropicBadRequestError
 from any_llm import AnyLLM
 from any_llm.providers.openai.base import BaseOpenAIProvider
-from any_llm.types.completion import ChatCompletionMessage
 from openai import AsyncOpenAI, BadRequestError
 from pydantic import BaseModel, ValidationError
 
@@ -36,7 +35,7 @@ class _CompletionClientStub:
         self,
         *,
         model: str,
-        messages: list[dict[str, object] | ChatCompletionMessage],
+        messages: list[dict[str, str]],
         response_format: type[BaseModel],
         temperature: float,
         max_tokens: int,
