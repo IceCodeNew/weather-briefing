@@ -32,36 +32,44 @@ _LOGGER = logging.getLogger("weather_briefing.llm")
 _HTTP_METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"})
 
 
+def _read_error_metadata(value: object, name: str) -> object | None:
+    """Read one optional exception field without masking the active failure."""
+    try:
+        return getattr(value, name, None)
+    except Exception:
+        return None
+
+
 def _has_http_status(value: object) -> bool:
     """Return whether an exception or response exposes a concrete HTTP status."""
-    return any(isinstance(getattr(value, name, None), int) for name in ("status_code", "status", "code"))
+    return any(isinstance(_read_error_metadata(value, name), int) for name in ("status_code", "status", "code"))
 
 
 def _is_request_context(value: object) -> bool:
     """Recognize request metadata shared by common HTTP client libraries."""
-    method = getattr(value, "method", None)
+    method = _read_error_metadata(value, "method")
     if not isinstance(method, str) or method.upper() not in _HTTP_METHODS:
         return False
-    url = getattr(value, "url", None)
+    url = _read_error_metadata(value, "url")
     if url is None:
-        url = getattr(value, "real_url", None)
-    return str(url).lower().startswith(("http://", "https://"))
+        url = _read_error_metadata(value, "real_url")
+    try:
+        return str(url).lower().startswith(("http://", "https://"))
+    except Exception:
+        return False
 
 
 def _is_provider_request_error(exc: Exception) -> bool:
     """Recognize transport and provider errors without binding to each vendor SDK."""
-    try:
-        if isinstance(exc, httpx.HTTPError):
-            return True
-        request = getattr(exc, "request", None)
-        if request is None:
-            request = getattr(exc, "request_info", None)
-        if request is not None and _is_request_context(request):
-            return True
-        response = getattr(exc, "response", None)
-        return response is not None and (_has_http_status(response) or _has_http_status(exc))
-    except Exception:
-        return False
+    if isinstance(exc, httpx.HTTPError):
+        return True
+    request = _read_error_metadata(exc, "request")
+    if request is None:
+        request = _read_error_metadata(exc, "request_info")
+    if request is not None and _is_request_context(request):
+        return True
+    response = _read_error_metadata(exc, "response")
+    return response is not None and (_has_http_status(response) or _has_http_status(exc))
 
 
 class LLMCompletionClient(Protocol):

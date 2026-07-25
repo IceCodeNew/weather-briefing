@@ -89,9 +89,24 @@ class _RequestInfoTransportError(Exception):
 
 
 class _BrokenRequestMetadataError(Exception):
+    def __init__(self, message: str, *, response: object | None = None) -> None:
+        super().__init__(message)
+        self.response = response
+
     @property
     def request(self) -> object:
         raise RuntimeError("broken request metadata")
+
+
+class _BrokenURL:
+    def __str__(self) -> str:
+        raise RuntimeError("broken URL metadata")
+
+
+class _BrokenURLMetadataError(Exception):
+    def __init__(self) -> None:
+        super().__init__("Upstream connection failed")
+        self.request = SimpleNamespace(method="POST", url=_BrokenURL())
 
 
 async def test_service_status_llm_is_created_only_on_first_operation() -> None:
@@ -408,6 +423,44 @@ async def test_protocol_client_preserves_error_when_metadata_inspection_fails() 
     )
 
     with pytest.raises(_BrokenRequestMetadataError) as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value is error
+
+
+async def test_protocol_client_uses_response_when_request_metadata_fails() -> None:
+    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
+    response = httpx.Response(503, request=request)
+    error = _BrokenRequestMetadataError("Upstream request failed", response=response)
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+        normalize_native_errors=True,
+    )
+
+    with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value.__cause__ is error
+
+
+async def test_protocol_client_preserves_error_when_url_conversion_fails() -> None:
+    error = _BrokenURLMetadataError()
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+        normalize_native_errors=True,
+    )
+
+    with pytest.raises(_BrokenURLMetadataError) as exc_info:
         await provider.summarize("Return JSON", {"input": "data"})
 
     assert exc_info.value is error
