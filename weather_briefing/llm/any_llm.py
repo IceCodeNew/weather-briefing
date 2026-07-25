@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from inspect import isawaitable
 from typing import Any, Protocol
 
+import httpx
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
 from any_llm.types.completion import ChatCompletionMessage
@@ -28,6 +29,21 @@ from .schema import (
 )
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
+
+
+def _has_http_status(value: object) -> bool:
+    """Return whether an exception or response exposes a concrete HTTP status."""
+    return any(isinstance(getattr(value, name, None), int) for name in ("status_code", "status", "code"))
+
+
+def _is_provider_request_error(exc: Exception) -> bool:
+    """Recognize transport and provider errors without binding to each vendor SDK."""
+    if isinstance(exc, httpx.HTTPError):
+        return True
+    if isinstance(getattr(exc, "request", None), httpx.Request):
+        return True
+    response = getattr(exc, "response", None)
+    return response is not None and (_has_http_status(response) or _has_http_status(exc))
 
 
 class LLMCompletionClient(Protocol):
@@ -59,7 +75,7 @@ def _normalize_request_errors(
     except AnyLLMError as exc:
         raise LLMRequestError(message) from exc
     except Exception as exc:
-        if isinstance(client, AnyLLM):
+        if isinstance(client, AnyLLM) and _is_provider_request_error(exc):
             raise LLMRequestError(message) from exc
         raise
 

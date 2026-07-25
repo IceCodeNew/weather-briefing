@@ -58,7 +58,7 @@
 
 这是一个有意保留的自定义外部服务集成。选择 `FallbackLLMProvider` 的原因是 any-llm 只统一调用单个 provider，不编排跨 provider 的故障切换。包装器捕获主适配器的 `LLMRequestError`，切换后在剩余生命周期内固定使用备用适配器，使同一进程里的契约修复不会回到刚刚失败的主服务。
 
-适配器把真实 AnyLLM provider client 在 completion 调用中抛出的厂商原生异常归一化为 `LLMRequestError`，使配置正确的 fallback 能够启动。结构化输出的 Pydantic 校验错误和直接注入的协议实现所抛出的编程错误继续原样传播。
+适配器把真实 AnyLLM provider client 在 completion 调用中抛出的 HTTP 传输错误，以及带请求或响应状态的厂商原生错误归一化为 `LLMRequestError`，使配置正确的 fallback 能够启动。结构化输出的 Pydantic 校验错误和 SDK 或直接注入协议实现所抛出的编程错误继续原样传播。
 
 它替代的是每个调用点手写的故障切换分支，不替代 any-llm 的厂商适配器，也不接管 SDK 凭据、请求重试或输出验证。
 

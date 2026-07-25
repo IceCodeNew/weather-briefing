@@ -62,6 +62,20 @@ def _anthropic_bad_request(response: httpx.Response) -> Exception:
     return AnthropicBadRequestError("Upstream request failed", response=response, body={"error": "upstream"})
 
 
+def _httpx_connection_error(response: httpx.Response) -> Exception:
+    return httpx.ConnectError("Upstream connection failed", request=response.request)
+
+
+class _ProviderStatusError(Exception):
+    def __init__(self, response: httpx.Response) -> None:
+        super().__init__("Upstream request failed")
+        self.response = response
+
+
+def _provider_status_error(response: httpx.Response) -> Exception:
+    return _ProviderStatusError(response)
+
+
 async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     provider = AsyncMock()
     provider.assess_notification.return_value = NotificationDecision(True)
@@ -208,6 +222,20 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
             "LLM request failed",
         ),
         (
+            "openrouter",
+            _httpx_connection_error,
+            "summarize",
+            ("Return JSON", {"input": "data"}),
+            "LLM request failed",
+        ),
+        (
+            "gemini",
+            _provider_status_error,
+            "summarize",
+            ("Return JSON", {"input": "data"}),
+            "LLM request failed",
+        ),
+        (
             "openai",
             _openai_bad_request,
             "assess_notification",
@@ -274,6 +302,31 @@ async def test_any_llm_client_does_not_mask_payload_serialization_errors() -> No
         await provider.summarize("Return JSON", {"input": object()})
 
     client.acompletion.assert_not_awaited()
+
+
+async def test_completion_programming_error_does_not_switch_to_fallback(monkeypatch) -> None:
+    error = TypeError("SDK programming failure")
+    primary_client = AsyncMock(spec=AnyLLM)
+    primary_client.acompletion.side_effect = error
+    monkeypatch.setattr(AnyLLM, "create", lambda *args, **kwargs: primary_client)
+    fallback_client = AsyncMock(spec=AnyLLM)
+    provider = FallbackLLMProvider(
+        create_any_llm_provider("openai", "primary-model", 4096),
+        AnyLLMStructuredProvider(
+            fallback_client,
+            provider="anthropic",
+            model="fallback-model",
+            max_output_tokens=4096,
+        ),
+        primary_name="openai/primary-model",
+        fallback_name="anthropic/fallback-model",
+    )
+
+    with pytest.raises(TypeError, match="SDK programming failure") as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value is error
+    fallback_client.acompletion.assert_not_awaited()
 
 
 async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -> None:
