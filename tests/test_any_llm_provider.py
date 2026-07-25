@@ -88,6 +88,12 @@ class _RequestInfoTransportError(Exception):
         self.request_info = SimpleNamespace(method="GET", real_url="https://api.example.invalid/models")
 
 
+class _BrokenRequestMetadataError(Exception):
+    @property
+    def request(self) -> object:
+        raise RuntimeError("broken request metadata")
+
+
 async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     provider = AsyncMock()
     provider.assess_notification.return_value = NotificationDecision(True)
@@ -384,6 +390,24 @@ async def test_protocol_client_preserves_non_http_request_metadata() -> None:
     )
 
     with pytest.raises(_RequestMetadataTransportError) as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value is error
+
+
+async def test_protocol_client_preserves_error_when_metadata_inspection_fails() -> None:
+    error = _BrokenRequestMetadataError("Upstream connection failed")
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+        normalize_native_errors=True,
+    )
+
+    with pytest.raises(_BrokenRequestMetadataError) as exc_info:
         await provider.summarize("Return JSON", {"input": "data"})
 
     assert exc_info.value is error

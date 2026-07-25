@@ -50,15 +50,18 @@ def _is_request_context(value: object) -> bool:
 
 def _is_provider_request_error(exc: Exception) -> bool:
     """Recognize transport and provider errors without binding to each vendor SDK."""
-    if isinstance(exc, httpx.HTTPError):
-        return True
-    request = getattr(exc, "request", None)
-    if request is None:
-        request = getattr(exc, "request_info", None)
-    if request is not None and _is_request_context(request):
-        return True
-    response = getattr(exc, "response", None)
-    return response is not None and (_has_http_status(response) or _has_http_status(exc))
+    try:
+        if isinstance(exc, httpx.HTTPError):
+            return True
+        request = getattr(exc, "request", None)
+        if request is None:
+            request = getattr(exc, "request_info", None)
+        if request is not None and _is_request_context(request):
+            return True
+        response = getattr(exc, "response", None)
+        return response is not None and (_has_http_status(response) or _has_http_status(exc))
+    except Exception:
+        return False
 
 
 class LLMCompletionClient(Protocol):
