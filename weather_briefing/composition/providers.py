@@ -54,6 +54,7 @@ async def llm_provider(
         settings.llm_max_output_tokens,
         api_key=settings.api_key,
         api_base=settings.llm_base_url,
+        extra_headers=settings.llm_extra_headers,
         diagnostics=diagnostics,
     )
     if settings.llm_fallback_provider is None or settings.llm_fallback_model is None:
@@ -64,6 +65,7 @@ async def llm_provider(
             settings.llm_fallback_provider,
             settings.llm_fallback_model,
             settings.llm_max_output_tokens,
+            extra_headers=settings.llm_fallback_extra_headers,
             diagnostics=diagnostics,
         )
         stack.push_async_callback(fallback.aclose)

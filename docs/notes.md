@@ -48,6 +48,12 @@
 
 如果以后发布明确允许删除旧配置的重大版本，并且迁移说明已经给已有部署留出足够时间，就可以移除这两个后备变量。在此之前，修改模型配置边界时必须保留并测试这一优先级。
 
+## LLM 自定义 header 复用 provider client 参数
+
+[mozilla-ai/any-llm#707](https://github.com/mozilla-ai/any-llm/pull/707) 为 any-llm 的无状态 completion API 增加了 `client_args`，并把其中的 provider-specific 参数展开传给 `AnyLLM.create()`。应用需要跨多次请求持有并显式关闭 provider client，因此不调用每次重新创建 client 的无状态 API，而是直接复用它的底层通道：把解析后的 header 映射放入本地 `client_args["default_headers"]`，再以 `AnyLLM.create(provider, **client_args)` 创建受应用管理的 provider。代码没有调用 #707 新增的具名参数，但使用的是同一条 provider client 参数透传路径。
+
+升级 any-llm 或 provider SDK、新增 provider，或者 any-llm 提供统一且带能力声明的 header 接口时，必须重新检查 provider client 构造函数和实际请求，更新黑名单或改用统一接口。
+
 ## FallbackLLMProvider 在进程内保持粘性
 
 这是一个有意保留的自定义外部服务集成。选择 `FallbackLLMProvider` 的原因是 any-llm 只统一调用单个 provider，不编排跨 provider 的故障切换。包装器捕获主适配器的 `LLMRequestError`，切换后在剩余生命周期内固定使用备用适配器，使同一进程里的契约修复不会回到刚刚失败的主服务。
