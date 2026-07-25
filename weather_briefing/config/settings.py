@@ -48,6 +48,8 @@ class Settings:
     llm_provider: str
     llm_model: str
     llm_base_url: str | None
+    llm_fallback_provider: str | None
+    llm_fallback_model: str | None
     llm_max_output_tokens: int
     llm_max_attempts: int
     http_timeout_seconds: float
@@ -147,10 +149,7 @@ class Settings:
         hourly_cron = cron_hour("BRIEFING_CRON", "9-23")
         service_status_cron = cron_expression("SERVICE_STATUS_CRON", "*/5 * * * *")
         llm_provider = clean_env(os.getenv("LLM_PROVIDER", "deepseek"))
-        if llm_provider not in AnyLLM.get_supported_providers():
-            raise ConfigurationError(f"Unsupported LLM_PROVIDER: {llm_provider}")
-        if not AnyLLM.get_provider_class(llm_provider).SUPPORTS_COMPLETION:
-            raise ConfigurationError(f"LLM_PROVIDER does not support completion: {llm_provider}")
+        _validate_llm_provider("LLM_PROVIDER", llm_provider)
         llm_model = clean_env(os.getenv("LLM_MODEL"))
         if llm_provider == "deepseek":
             api_key = clean_env(os.getenv("DEEPSEEK_API_KEY")) or None
@@ -161,6 +160,12 @@ class Settings:
             llm_base_url = None
         if not llm_model:
             raise ConfigurationError("Missing required environment variable: LLM_MODEL")
+        llm_fallback_provider = clean_env(os.getenv("LLM_FALLBACK_PROVIDER")) or None
+        llm_fallback_model = clean_env(os.getenv("LLM_FALLBACK_MODEL")) or None
+        if (llm_fallback_provider is None) != (llm_fallback_model is None):
+            raise ConfigurationError("LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL must be configured together")
+        if llm_fallback_provider is not None:
+            _validate_llm_provider("LLM_FALLBACK_PROVIDER", llm_fallback_provider)
         locations = load_locations(locations_path) if weather_briefings_enabled else ()
         location_ids = {location.id for location in locations}
         unknown_feed_locations = {
@@ -224,6 +229,8 @@ class Settings:
             llm_provider=llm_provider,
             llm_model=llm_model,
             llm_base_url=llm_base_url.rstrip("/") if llm_base_url else None,
+            llm_fallback_provider=llm_fallback_provider,
+            llm_fallback_model=llm_fallback_model,
             llm_max_output_tokens=llm_max_output_tokens,
             llm_max_attempts=positive_integer("LLM_MAX_ATTEMPTS", 3),
             http_timeout_seconds=positive_float("HTTP_TIMEOUT_SECONDS", 30),
@@ -272,3 +279,11 @@ class Settings:
             service_status_cron=service_status_cron,
             debug=boolean("DEBUG", False),
         )
+
+
+def _validate_llm_provider(setting_name: str, provider: str) -> None:
+    """Require a known any-llm provider with completion support."""
+    if provider not in AnyLLM.get_supported_providers():
+        raise ConfigurationError(f"Unsupported {setting_name}: {provider}")
+    if not AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION:
+        raise ConfigurationError(f"{setting_name} does not support completion: {provider}")

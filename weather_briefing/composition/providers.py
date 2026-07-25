@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from contextlib import AsyncExitStack
 
 import httpx
 
@@ -21,7 +22,7 @@ from ..delivery import (
     TelegramHTMLRenderer,
     TelegramPublisher,
 )
-from ..llm import AnyLLMStructuredProvider, SensitiveLLMDiagnostics, any_llm
+from ..llm import CompleteLLMProvider, FallbackLLMProvider, SensitiveLLMDiagnostics, any_llm
 from ..models import ResolvedLocation
 from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
 from ..weather import (
@@ -42,12 +43,12 @@ from ..weather import (
 _LOGGER = logging.getLogger("weather_briefing")
 
 
-def llm_provider(
+async def llm_provider(
     settings: Settings,
     diagnostics: SensitiveLLMDiagnostics | None = None,
-) -> AnyLLMStructuredProvider:
-    """Build the configured any-llm adapter."""
-    return any_llm.create_any_llm_provider(
+) -> CompleteLLMProvider:
+    """Build the configured primary and optional fallback LLM adapters."""
+    primary = any_llm.create_any_llm_provider(
         settings.llm_provider,
         settings.llm_model,
         settings.llm_max_output_tokens,
@@ -55,6 +56,25 @@ def llm_provider(
         api_base=settings.llm_base_url,
         diagnostics=diagnostics,
     )
+    if settings.llm_fallback_provider is None or settings.llm_fallback_model is None:
+        return primary
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(primary.aclose)
+        fallback = any_llm.create_any_llm_provider(
+            settings.llm_fallback_provider,
+            settings.llm_fallback_model,
+            settings.llm_max_output_tokens,
+            diagnostics=diagnostics,
+        )
+        stack.push_async_callback(fallback.aclose)
+        provider = FallbackLLMProvider(
+            primary,
+            fallback,
+            primary_name=settings.llm_provider,
+            fallback_name=settings.llm_fallback_provider,
+        )
+        stack.pop_all()
+        return provider
 
 
 def delivery_provider(

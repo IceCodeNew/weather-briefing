@@ -302,7 +302,7 @@ async def _run_unlocked(
             LoggedAsyncClient(timeout=settings.http_timeout_seconds, follow_redirects=True)
         )
         delivery = _delivery_provider(settings, client, diagnostics)
-        llm_provider = _llm_provider(settings, diagnostics)
+        llm_provider = await _llm_provider(settings, diagnostics)
         stack.push_async_callback(llm_provider.aclose)
         nominatim_provider = NominatimGeocodingProvider(client)
         resolver = CachedLocationResolver(

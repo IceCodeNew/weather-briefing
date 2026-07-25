@@ -53,6 +53,7 @@ from weather_briefing.composition.providers import qweather_is_configured as _qw
 from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.delivery import BarkTextRenderer
+from weather_briefing.llm import FallbackLLMProvider
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
 from weather_briefing.registries import PublisherName, WeatherProviderName
@@ -763,6 +764,8 @@ _DEFAULT_SETTINGS = Settings(
     llm_provider="deepseek",
     llm_model="m",
     llm_base_url=None,
+    llm_fallback_provider=None,
+    llm_fallback_model=None,
     llm_max_output_tokens=8192,
     llm_max_attempts=3,
     http_timeout_seconds=30.0,
@@ -919,7 +922,7 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
 
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", delivery_without_diagnostics)
     llm_provider = _ClosableLLMProviderStub()
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: llm_provider)
+    monkeypatch.setattr("weather_briefing.cli._llm_provider", AsyncMock(return_value=llm_provider))
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
     backfills: list[tuple[Path, tuple[LocationSpec, ...], tuple[ResolvedLocation, ...]]] = []
 
@@ -1029,7 +1032,10 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: AlertDelivery())
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: _ClosableLLMProviderStub())
+    monkeypatch.setattr(
+        "weather_briefing.cli._llm_provider",
+        AsyncMock(return_value=_ClosableLLMProviderStub()),
+    )
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
     monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", record_backfill)
 
@@ -1097,7 +1103,10 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli._parse_run_time", lambda v, t: now)
     monkeypatch.setattr("weather_briefing.cli._in_schedule", lambda k, n, s: True)
     monkeypatch.setattr("weather_briefing.cli._delivery_provider", lambda s, c, d: None)
-    monkeypatch.setattr("weather_briefing.cli._llm_provider", lambda s, d: _ClosableLLMProviderStub())
+    monkeypatch.setattr(
+        "weather_briefing.cli._llm_provider",
+        AsyncMock(return_value=_ClosableLLMProviderStub()),
+    )
     monkeypatch.setattr("weather_briefing.cli._weather_context_provider", lambda s, c, loc: None)
     monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", lambda *args: False)
 
@@ -1163,7 +1172,7 @@ class TestLLMProvider:
             llm_base_url="https://custom.example.invalid",
         )
         with SQLiteRuntimeDiagnostics(tmp_path / "diagnostics.db") as diagnostics:
-            provider = _llm_provider(settings, diagnostics)
+            provider = await _llm_provider(settings, diagnostics)
             assert provider is sdk_client
             assert calls == [
                 (
@@ -1183,7 +1192,7 @@ class TestLLMProvider:
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = _make_fake_settings(llm_provider="deepseek", llm_base_url=None)
-        provider = _llm_provider(settings)
+        provider = await _llm_provider(settings)
         assert provider is not None
         assert calls[0][0][:3] == ("deepseek", "m", 8192)
         assert calls[0][1]["api_base"] is None
@@ -1195,7 +1204,7 @@ class TestLLMProvider:
             lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(),
         )
         settings = replace(_make_fake_settings(llm_provider="mistral"), api_key=None, llm_base_url=None)
-        provider = _llm_provider(settings)
+        provider = await _llm_provider(settings)
         assert provider is not None
         assert calls[0][0][:3] == ("mistral", "m", 8192)
         assert calls[0][1] == {
@@ -1203,6 +1212,75 @@ class TestLLMProvider:
             "api_base": None,
             "diagnostics": None,
         }
+
+    async def test_configured_fallback_llm_provider_is_composed(self, monkeypatch) -> None:
+        providers: list[SimpleNamespace] = []
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        def create_provider(*args, **kwargs):
+            provider = SimpleNamespace(aclose=AsyncMock())
+            providers.append(provider)
+            calls.append((args, kwargs))
+            return provider
+
+        monkeypatch.setattr("weather_briefing.llm.any_llm.create_any_llm_provider", create_provider)
+        settings = replace(
+            _make_fake_settings(),
+            llm_fallback_provider="openai",
+            llm_fallback_model="gpt-fallback",
+        )
+
+        provider = await _llm_provider(settings)
+
+        assert isinstance(provider, FallbackLLMProvider)
+        assert len(providers) == 2
+        assert calls[1] == (
+            ("openai", "gpt-fallback", 8192),
+            {
+                "diagnostics": None,
+            },
+        )
+
+    async def test_fallback_creation_failure_closes_primary_provider(self, monkeypatch) -> None:
+        primary = AsyncMock()
+        create_provider = Mock(side_effect=(primary, RuntimeError("fallback construction failed")))
+        monkeypatch.setattr(
+            "weather_briefing.llm.any_llm.create_any_llm_provider",
+            create_provider,
+        )
+        settings = replace(
+            _make_fake_settings(),
+            llm_fallback_provider="openai",
+            llm_fallback_model="gpt-fallback",
+        )
+
+        with pytest.raises(RuntimeError, match="fallback construction failed"):
+            await _llm_provider(settings)
+
+        primary.aclose.assert_awaited_once_with()
+
+    async def test_wrapper_creation_failure_closes_both_providers(self, monkeypatch) -> None:
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        monkeypatch.setattr(
+            "weather_briefing.llm.any_llm.create_any_llm_provider",
+            Mock(side_effect=(primary, fallback)),
+        )
+        monkeypatch.setattr(
+            "weather_briefing.composition.providers.FallbackLLMProvider",
+            Mock(side_effect=RuntimeError("wrapper construction failed")),
+        )
+        settings = replace(
+            _make_fake_settings(),
+            llm_fallback_provider="openai",
+            llm_fallback_model="gpt-fallback",
+        )
+
+        with pytest.raises(RuntimeError, match="wrapper construction failed"):
+            await _llm_provider(settings)
+
+        primary.aclose.assert_awaited_once_with()
+        fallback.aclose.assert_awaited_once_with()
 
 
 class TestDeliveryProvider:
@@ -1708,7 +1786,7 @@ async def test_service_status_run_is_independent_from_weather_orchestration(
     )
     delivery = AsyncMock()
     translator = AsyncMock()
-    llm_factory = Mock(return_value=translator)
+    llm_factory = AsyncMock(return_value=translator)
     monkeypatch.setattr(Settings, "from_env", classmethod(lambda cls: settings))
     monkeypatch.setattr("weather_briefing.cli._configure_logging", lambda *, debug: None)
     monkeypatch.setattr("weather_briefing.cli._delivery_providers", lambda *args: (delivery,))

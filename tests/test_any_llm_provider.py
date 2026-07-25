@@ -1,7 +1,7 @@
 import json
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -49,7 +49,7 @@ async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     provider = AsyncMock()
     provider.assess_notification.return_value = NotificationDecision(True)
     provider.translate_service_status.return_value = ("Translated", "Translated body")
-    factory = Mock(return_value=provider)
+    factory = AsyncMock(return_value=provider)
     lazy = LazyServiceStatusLLM(factory)
 
     await lazy.aclose()
@@ -62,7 +62,7 @@ async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     )
     await lazy.aclose()
 
-    factory.assert_called_once_with()
+    factory.assert_awaited_once_with()
     provider.assess_notification.assert_awaited_once_with({"current": {}})
     provider.translate_service_status.assert_awaited_once_with("Title", "Body", "en")
     provider.aclose.assert_awaited_once()
