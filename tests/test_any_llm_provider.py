@@ -304,6 +304,24 @@ async def test_any_llm_client_does_not_mask_payload_serialization_errors() -> No
     client.acompletion.assert_not_awaited()
 
 
+async def test_protocol_client_normalizes_transport_errors() -> None:
+    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
+    error = httpx.ConnectError("Upstream connection failed", request=request)
+    client = AsyncMock()
+    client.acompletion.side_effect = error
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="wrapped-provider",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    with pytest.raises(LLMRequestError, match="^LLM request failed$") as exc_info:
+        await provider.summarize("Return JSON", {"input": "data"})
+
+    assert exc_info.value.__cause__ is error
+
+
 async def test_completion_programming_error_does_not_switch_to_fallback(monkeypatch) -> None:
     error = TypeError("SDK programming failure")
     primary_client = AsyncMock(spec=AnyLLM)

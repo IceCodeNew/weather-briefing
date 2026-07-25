@@ -63,11 +63,8 @@ class LLMCompletionClient(Protocol):
 
 
 @contextmanager
-def _normalize_request_errors(
-    client: AnyLLM | LLMCompletionClient,
-    message: str,
-) -> Iterator[None]:
-    """Normalize request failures only for any-llm SDK clients."""
+def _normalize_request_errors(message: str) -> Iterator[None]:
+    """Normalize recognized request failures at the completion boundary."""
     try:
         yield
     except (LengthFinishReasonError, ValidationError):
@@ -75,7 +72,7 @@ def _normalize_request_errors(
     except AnyLLMError as exc:
         raise LLMRequestError(message) from exc
     except Exception as exc:
-        if isinstance(client, AnyLLM) and _is_provider_request_error(exc):
+        if _is_provider_request_error(exc):
             raise LLMRequestError(message) from exc
         raise
 
@@ -129,7 +126,7 @@ class AnyLLMStructuredProvider:
         ]
         try:
             with (
-                _normalize_request_errors(self._client, "LLM request failed"),
+                _normalize_request_errors("LLM request failed"),
                 api_call_context(self._provider, "chat-completions"),
             ):
                 response = await self._client.acompletion(
@@ -169,7 +166,7 @@ class AnyLLMStructuredProvider:
         ]
         try:
             with (
-                _normalize_request_errors(self._client, "LLM notification decision request failed"),
+                _normalize_request_errors("LLM notification decision request failed"),
                 api_call_context(self._provider, "chat-completions"),
             ):
                 response = await self._client.acompletion(
@@ -221,7 +218,7 @@ class AnyLLMStructuredProvider:
         ]
         try:
             with (
-                _normalize_request_errors(self._client, "LLM translation request failed"),
+                _normalize_request_errors("LLM translation request failed"),
                 api_call_context(self._provider, "chat-completions"),
             ):
                 response = await self._client.acompletion(
