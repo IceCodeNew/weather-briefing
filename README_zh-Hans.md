@@ -115,7 +115,6 @@ NEA 或 JMA 与 Open-Meteo 在同一时间和地区发生内容冲突时，简�
 `.env` 中至少要填写：
 
 - `LLM_PROVIDER` 和 `LLM_MODEL`；
-- 可选的 `LLM_FALLBACK_PROVIDER` 和 `LLM_FALLBACK_MODEL`，必须同时配置；
 - 对应模型服务要求的凭据；
 - Telegram 投递所需的 `PUBLISHER=telegram`、`TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`；或
 - Bark 投递所需的 `PUBLISHER=bark` 和 `BARK_DEVICE_KEY`；启用加密时还要同时配置 `BARK_ENCRYPTION_KEY` 和 `BARK_ENCRYPTION_IV`。
@@ -127,8 +126,6 @@ NEA 或 JMA 与 Open-Meteo 在同一时间和地区发生内容冲突时，简�
 启用时同时配置 `BARK_ENCRYPTION_KEY` 和 `BARK_ENCRYPTION_IV`。生成 key、IV 和配置 Bark App 的方法见 [`env.example`](env.example) 中引用的官方文档。
 
 模型调用由 any-llm 处理。不同服务需要的凭据变量以 [any-llm provider 文档](https://docs.mozilla.ai/any-llm/providers) 为准。官方镜像预装 DeepSeek、OpenAI 和 OpenRouter 所需组件。
-
-备用模型默认关闭。同时配置两个备用模型变量后，主提供商请求失败时会用备用提供商重试。首次发生这类失败后，当前任务后续的所有 LLM 操作，包括修复、通知决策、状态翻译和其他地点的简报，都会持续使用备用提供商；下一次定时或 CLI 任务会重新尝试主提供商。已经返回但不符合结构化输出契约的正文仍由原提供商进入有界修复，不触发跨提供商切换。
 
 RSS 是可选功能，默认不会挂载。需要启用时，参考 [`rss-sources.example.json`](rss-sources.example.json) 创建 `rss-sources.json`，填写来源名称、URL 和适用地点，再把以下选项添加到 `docker run` 命令，并放在镜像名称之前：
 

@@ -115,7 +115,6 @@ NEA または JMA の予報内容が Open-Meteo と異なる場合は、現地�
 `.env` に最低限以下を記入してください：
 
 - `LLM_PROVIDER` と `LLM_MODEL`。
-- オプションの `LLM_FALLBACK_PROVIDER` と `LLM_FALLBACK_MODEL`（両方を設定）。
 - 選択したモデルサービスに必要な認証情報。
 - Telegram で配信する場合は `PUBLISHER=telegram`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`。または
 - Bark で配信する場合は `PUBLISHER=bark` と `BARK_DEVICE_KEY`。暗号化を有効にする場合は `BARK_ENCRYPTION_KEY` と `BARK_ENCRYPTION_IV` の両方。
@@ -127,8 +126,6 @@ Bark は、暗号化キーと IV を設定しなければ平文で送信しま�
 暗号化する場合は、`BARK_ENCRYPTION_KEY` と `BARK_ENCRYPTION_IV` を両方設定します。暗号化に必要な値を用意し、Bark App を設定する際は、[`env.example`](env.example) に記載した公式ドキュメントを参照してください。
 
 モデル呼び出しは any-llm によって処理されます。各サービスに必要な認証情報の変数は [any-llm プロバイダドキュメント](https://docs.mozilla.ai/any-llm/providers)を参照してください。公式イメージには DeepSeek、OpenAI、OpenRouter に必要なコンポーネントが同梱されています。
-
-フォールバックはデフォルトで無効です。両方のフォールバック変数を設定すると、プライマリープロバイダーのリクエスト失敗時にフォールバックで再試行します。最初のリクエスト失敗後は、現在の実行中の修復、通知判断、サービス状態の翻訳、後続地点のブリーフィングなど、以降のすべての LLM 操作でフォールバックを使い続けます。次回のスケジュール実行または CLI 実行では、プライマリープロバイダーを再び試します。構造化出力契約に違反する応答はプロバイダーを切り替えず、通常の回数制限付き修復を行います。
 
 RSS はオプションで、デフォルトではマウントされません。有効にする場合は、[`rss-sources.example.json`](rss-sources.example.json) を参考に `rss-sources.json` を作成し、ソース名・URL・対象地点を記入します。そのうえで、以下のオプションを `docker run` コマンドのイメージ名より前に追加してください：
 
