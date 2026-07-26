@@ -27,7 +27,7 @@ docker = [
   "any-llm-sdk[deepseek,openai,openrouter]>=1.19,<2",
 ]
 dev = [
-  "any-llm-sdk[all]>=1.19,<2",
+  "any-llm-sdk[deepseek,openai,openrouter,otari]>=1.19,<2",
   "anyio>=4.11,<5",
   "pytest>=9,<10",
   "pytest-cov>=7,<8",
