@@ -177,7 +177,7 @@ Open-Meteo 的逐小时空气质量和花粉预报按目标日峰值生成生活
 
 开发环境安装 `any-llm-sdk[all]`，用于验证所有 completion provider 的装载边界。基础运行依赖只包含 SDK 核心包。官方镜像额外安装 DeepSeek、OpenAI 和 OpenRouter 所需组件。
 
-`LLMStructuredOutput` 同时用于 SDK 的结构化输出和应用侧复验。应用还会检查来源 ID、必填建议、预警 ID 和章节间重复等领域规则。
+所有受支持 provider 统一请求 `json_object`，并把 Pydantic JSON Schema 加入最后一条用户消息，避免 OpenAI-compatible 端点只实现 JSON Mode 而拒绝 OpenAI `json_schema`。返回后再用同一 Pydantic 模型严格复验；应用还会检查来源 ID、必填建议、预警 ID 和章节间重复等领域规则。兼容性数据维护与锁定 any-llm SDK 对齐的不支持 JSON Object provider 黑名单，配置入口与 adapter factory 都拒绝黑名单内 provider，不为其他请求格式增加独立分支。
 
 `LLM_MAX_ATTEMPTS` 只修复已经返回但不符合输出契约的正文。认证失败、限流、超时或空响应不进入契约修复。
 

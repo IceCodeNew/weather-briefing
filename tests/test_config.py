@@ -1043,15 +1043,15 @@ def test_positive_operational_settings_reject_zero(monkeypatch, name: str) -> No
 
 def test_any_llm_provider_uses_sdk_managed_configuration(monkeypatch) -> None:
     _required_environment(monkeypatch)
-    monkeypatch.setenv("LLM_PROVIDER", "mistral")
-    monkeypatch.setenv("MISTRAL_API_KEY", "generic-key")
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "generic-key")
     monkeypatch.setenv("LLM_MODEL", "generic-model")
-    monkeypatch.setenv("MISTRAL_API_BASE", "https://compatible.example.invalid/v1")
+    monkeypatch.setenv("OPENROUTER_API_BASE", "https://compatible.example.invalid/v1")
 
     settings = Settings.from_env()
 
     assert settings.api_key is None
-    assert settings.llm_provider == "mistral"
+    assert settings.llm_provider == "openrouter"
     assert settings.llm_model == "generic-model"
     assert settings.llm_base_url is None
 
@@ -1069,7 +1069,7 @@ def test_llm_fallback_provider_and_model_are_loaded(monkeypatch) -> None:
 
 def test_llm_extra_headers_are_loaded_as_immutable_mappings(monkeypatch) -> None:
     _required_environment(monkeypatch)
-    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("LLM_MODEL", "primary-model")
     monkeypatch.setenv("LLM_EXTRA_HEADERS", '{"User-Agent":"weather-briefing/1","X-Tenant":"primary"}')
     monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "openrouter")
@@ -1267,6 +1267,16 @@ class TestConfigErrorPaths:
         with pytest.raises(ConfigurationError, match="does not support completion"):
             Settings.from_env()
 
+    def test_llm_provider_without_json_object_support_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("LLM_PROVIDER", "mistral")
+
+        with pytest.raises(
+            ConfigurationError,
+            match="LLM_PROVIDER does not support required JSON Object output: mistral",
+        ):
+            Settings.from_env()
+
     @pytest.mark.parametrize(
         ("configured_name", "missing_name"),
         (
@@ -1301,6 +1311,17 @@ class TestConfigErrorPaths:
         monkeypatch.setenv("LLM_FALLBACK_MODEL", "fallback-model")
 
         with pytest.raises(ConfigurationError, match="LLM_FALLBACK_PROVIDER does not support completion"):
+            Settings.from_env()
+
+    def test_llm_fallback_provider_without_json_object_support_raises_error(self, monkeypatch) -> None:
+        _required_environment(monkeypatch)
+        monkeypatch.setenv("LLM_FALLBACK_PROVIDER", "anthropic")
+        monkeypatch.setenv("LLM_FALLBACK_MODEL", "fallback-model")
+
+        with pytest.raises(
+            ConfigurationError,
+            match="LLM_FALLBACK_PROVIDER does not support required JSON Object output: anthropic",
+        ):
             Settings.from_env()
 
     def test_invalid_float_env_value_raises_error(self, monkeypatch) -> None:

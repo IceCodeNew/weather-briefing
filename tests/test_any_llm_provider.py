@@ -3,6 +3,7 @@ import logging
 import os
 from collections.abc import Callable, Mapping
 from types import SimpleNamespace
+from typing import TypedDict
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -14,6 +15,7 @@ from openai import AsyncOpenAI, BadRequestError
 from pydantic import BaseModel, ValidationError
 
 from weather_briefing.api_client import LoggedAsyncClient
+from weather_briefing.data.any_llm_compatibility import UNSUPPORTED_JSON_OBJECT_PROVIDERS
 from weather_briefing.llm import (
     AnyLLMStructuredProvider,
     FallbackLLMProvider,
@@ -26,17 +28,25 @@ from weather_briefing.llm.schema import NotificationDecisionOutput, ServiceStatu
 from weather_briefing.notifications import NotificationDecision
 
 
+class _CompletionCall(TypedDict):
+    model: str
+    messages: list[dict[str, str]]
+    response_format: type[BaseModel] | dict[str, object]
+    temperature: float
+    max_tokens: int
+
+
 class _CompletionClientStub:
     def __init__(self, response: object) -> None:
         self._response = response
-        self.calls: list[dict[str, object]] = []
+        self.calls: list[_CompletionCall] = []
 
     async def acompletion(
         self,
         *,
         model: str,
         messages: list[dict[str, str]],
-        response_format: type[BaseModel],
+        response_format: type[BaseModel] | dict[str, object],
         temperature: float,
         max_tokens: int,
     ) -> object:
@@ -97,7 +107,7 @@ async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     provider.aclose.assert_awaited_once()
 
 
-async def test_any_llm_provider_uses_structured_chat_completion() -> None:
+async def test_any_llm_provider_uses_json_object_with_the_strict_schema() -> None:
     model_result = {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
@@ -120,19 +130,57 @@ async def test_any_llm_provider_uses_structured_chat_completion() -> None:
 
     result = await provider.summarize("Return JSON", {"input": "数据"})
 
-    assert client.calls == [
-        {
-            "model": "requested-model",
-            "messages": [
-                {"role": "system", "content": "Return JSON"},
-                {"role": "user", "content": '{"input":"数据"}'},
-            ],
-            "response_format": LLMStructuredOutput,
-            "temperature": 0.2,
-            "max_tokens": 4096,
-        }
-    ]
     assert result == model_result
+    call = client.calls[0]
+    assert call["response_format"] == {"type": "json_object"}
+    messages = call["messages"]
+    assert messages[0] == {"role": "system", "content": "Return JSON"}
+    user_content = messages[1]["content"]
+    assert user_content.startswith('{"input":"数据"}\n\nReturn only a JSON object')
+    schema = json.loads(user_content.rsplit("\n", 1)[1])
+    assert schema == LLMStructuredOutput.model_json_schema()
+
+
+async def test_json_object_transport_requires_a_final_user_message() -> None:
+    client = _CompletionClientStub(SimpleNamespace())
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="openai",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    with pytest.raises(ValueError, match="requires a final user message"):
+        await provider._complete(
+            [{"role": "system", "content": "Return JSON"}],
+            response_format=LLMStructuredOutput,
+            temperature=0.2,
+            max_tokens=4096,
+            request_error_message="LLM request failed",
+        )
+
+    assert client.calls == []
+
+
+async def test_json_object_transport_requires_final_user_message_content() -> None:
+    client = _CompletionClientStub(SimpleNamespace())
+    provider = AnyLLMStructuredProvider(
+        client,
+        provider="openai",
+        model="requested-model",
+        max_output_tokens=4096,
+    )
+
+    with pytest.raises(ValueError, match="must include string content"):
+        await provider._complete(
+            [{"role": "user"}],
+            response_format=LLMStructuredOutput,
+            temperature=0.2,
+            max_tokens=4096,
+            request_error_message="LLM request failed",
+        )
+
+    assert client.calls == []
 
 
 async def test_any_llm_provider_translates_service_status_with_a_narrow_schema() -> None:
@@ -161,15 +209,13 @@ async def test_any_llm_provider_translates_service_status_with_a_narrow_schema()
     )
 
     assert result == ("API incident", "API error rates are elevated.")
-    assert client.calls[0]["response_format"] is ServiceStatusTranslationOutput
+    assert client.calls[0]["response_format"] == {"type": "json_object"}
     assert client.calls[0]["temperature"] == 0.0
     assert client.calls[0]["max_tokens"] == 2048
     messages = client.calls[0]["messages"]
-    assert isinstance(messages, list)
-    assert messages[1] == {
-        "role": "user",
-        "content": '{"title":"API 服务异常","body":"API 服务错误率升高。"}',
-    }
+    user_content = messages[1]["content"]
+    assert user_content.startswith('{"title":"API 服务异常","body":"API 服务错误率升高。"}')
+    assert json.loads(user_content.rsplit("\n", 1)[1]) == ServiceStatusTranslationOutput.model_json_schema()
 
 
 async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema() -> None:
@@ -197,9 +243,11 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
     )
 
     assert not result.should_notify
-    assert client.calls[0]["response_format"] is NotificationDecisionOutput
+    assert client.calls[0]["response_format"] == {"type": "json_object"}
     assert client.calls[0]["temperature"] == 0.0
     assert client.calls[0]["max_tokens"] == 256
+    user_content = client.calls[0]["messages"][1]["content"]
+    assert json.loads(user_content.rsplit("\n", 1)[1]) == NotificationDecisionOutput.model_json_schema()
 
 
 @pytest.mark.parametrize(
@@ -213,7 +261,7 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
             "LLM request failed",
         ),
         (
-            "anthropic",
+            "deepseek",
             _anthropic_bad_request,
             "summarize",
             ("Return JSON", {"input": "data"}),
@@ -227,7 +275,7 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
             "LLM request failed",
         ),
         (
-            "gemini",
+            "openrouter",
             _provider_status_error,
             "summarize",
             ("Return JSON", {"input": "data"}),
@@ -363,7 +411,11 @@ async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -
     assert len(fallback_client.calls) == 1
 
 
-async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "provider",
+    tuple(AnyLLM.get_supported_providers()),
+)
+def test_factory_classifies_every_any_llm_provider(monkeypatch, provider: str) -> None:
     created: list[tuple[str, dict[str, object]]] = []
 
     def fake_create(provider: str, **options: object) -> _CompletionClientStub:
@@ -371,22 +423,30 @@ async def test_factory_accepts_every_any_llm_completion_provider(monkeypatch) ->
         return _CompletionClientStub(SimpleNamespace())
 
     monkeypatch.setattr(AnyLLM, "create", fake_create)
-    completion_providers = [
-        provider
-        for provider in AnyLLM.get_supported_providers()
-        if AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION
-    ]
-    adapters = [create_any_llm_provider(provider, "model", 1024) for provider in completion_providers]
+    if not AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION:
+        with pytest.raises(
+            ValueError,
+            match=f"any-llm provider does not support completion: {provider}",
+        ):
+            create_any_llm_provider(provider, "model", 1024)
+        assert created == []
+        return
+    if provider in UNSUPPORTED_JSON_OBJECT_PROVIDERS:
+        with pytest.raises(
+            ValueError,
+            match=f"any-llm provider does not support required JSON Object output: {provider}",
+        ):
+            create_any_llm_provider(provider, "model", 1024)
+        assert created == []
+        return
 
-    assert [adapter.provider for adapter in adapters] == completion_providers
-    assert [provider for provider, _ in created] == completion_providers
-    assert all(
-        "default_headers" not in options and "http_client" not in options and "max_retries" not in options
-        for _, options in created
-    )
+    adapter = create_any_llm_provider(provider, "model", 1024)
+
+    assert adapter.provider == provider
+    assert created == [(provider, {"api_key": None, "api_base": None})]
 
 
-@pytest.mark.parametrize("provider", ("anthropic", "deepseek"))
+@pytest.mark.parametrize("provider", ("openai", "deepseek"))
 def test_factory_passes_configured_headers_through_client_args(monkeypatch, provider: str) -> None:
     created: list[tuple[str, dict[str, object]]] = []
 
@@ -411,16 +471,18 @@ def test_factory_passes_configured_headers_through_client_args(monkeypatch, prov
     ]
 
 
-def test_factory_uses_the_canonical_provider_for_header_validation(monkeypatch) -> None:
+def test_factory_uses_the_canonical_provider_for_json_object_validation(monkeypatch) -> None:
     create = Mock()
     monkeypatch.setattr(AnyLLM, "create", create)
 
-    with pytest.raises(ValueError, match="Custom headers are not supported for any-llm provider: mistral"):
+    with pytest.raises(
+        ValueError,
+        match="any-llm provider does not support required JSON Object output: mistral",
+    ):
         create_any_llm_provider(
             "MISTRAL",
             "model",
             1024,
-            extra_headers={"User-Agent": "weather-briefing/1"},
         )
 
     create.assert_not_called()
@@ -562,11 +624,6 @@ async def test_borrowed_llm_client_is_not_closed() -> None:
     client.aclose.assert_not_awaited()
 
 
-async def test_factory_rejects_provider_without_completion() -> None:
-    with pytest.raises(ValueError, match="does not support completion"):
-        create_any_llm_provider("voyage", "model", 1024)
-
-
 @pytest.mark.parametrize("provider_name", ("deepseek", "openai", "openrouter"))
 async def test_openai_compatible_providers_send_configured_headers(
     monkeypatch,
@@ -648,6 +705,76 @@ async def test_openai_compatible_providers_send_configured_headers(
     assert requests[0].headers[private_header_name] == private_header_value
     assert private_header_name not in caplog.text
     assert private_header_value not in caplog.text
+
+
+async def test_openai_compatible_provider_sends_json_object_with_the_application_schema(monkeypatch) -> None:
+    requests: list[httpx.Request] = []
+    model_result = {
+        "headline": "Briefing",
+        "headline_source_ids": ["source"],
+        "conclusions": [],
+        "active_warnings": [],
+        "resolved_warning_ids": [],
+        "advice": [],
+        "disaster_tracking": [],
+        "should_publish": True,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "id": "completion-id",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "requested-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(model_result),
+                        },
+                    }
+                ],
+            },
+        )
+
+    def init_client(
+        sdk_provider: BaseOpenAIProvider,
+        api_key: str | None = None,
+        api_base: str | None = None,
+        **_: object,
+    ) -> None:
+        sdk_provider.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            http_client=LoggedAsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+    monkeypatch.setattr(BaseOpenAIProvider, "_init_client", init_client)
+    provider = create_any_llm_provider(
+        "openai",
+        "requested-model",
+        4096,
+        api_key="runtime-key",
+        api_base="https://api.example.invalid",
+    )
+
+    try:
+        result = await provider.summarize("Return JSON", {"input": "data"})
+    finally:
+        await provider.aclose()
+
+    assert result == model_result
+    request_body = json.loads(requests[0].content)
+    assert request_body["response_format"] == {"type": "json_object"}
+    assert "max_tokens" not in request_body
+    assert request_body["max_completion_tokens"] == 4096
+    user_content = request_body["messages"][-1]["content"]
+    assert json.loads(user_content.rsplit("\n", 1)[1]) == LLMStructuredOutput.model_json_schema()
 
 
 async def test_any_llm_deepseek_uses_injected_logged_http_client(caplog) -> None:
