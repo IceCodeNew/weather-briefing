@@ -14,6 +14,7 @@ from any_llm.providers.openai.base import BaseOpenAIProvider
 from openai import AsyncOpenAI, BadRequestError
 from pydantic import BaseModel, ValidationError
 
+from tests.any_llm_helpers import loadable_any_llm_providers
 from weather_briefing.api_client import LoggedAsyncClient
 from weather_briefing.data.any_llm_compatibility import UNSUPPORTED_JSON_OBJECT_PROVIDERS
 from weather_briefing.llm import (
@@ -411,20 +412,13 @@ async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -
     assert len(fallback_client.calls) == 1
 
 
-def _loadable_providers() -> list[str]:
-    result: list[str] = []
-    for provider in AnyLLM.get_supported_providers():
-        try:
-            AnyLLM.get_provider_class(provider)
-            result.append(provider)
-        except ImportError:
-            pass
-    return result
+def test_development_dependencies_load_runtime_providers() -> None:
+    assert {"deepseek", "openai", "openrouter"} <= set(loadable_any_llm_providers())
 
 
 @pytest.mark.parametrize(
     "provider",
-    _loadable_providers(),
+    loadable_any_llm_providers(),
 )
 def test_factory_classifies_every_loadable_provider(monkeypatch, provider: str) -> None:
     created: list[tuple[str, dict[str, object]]] = []
