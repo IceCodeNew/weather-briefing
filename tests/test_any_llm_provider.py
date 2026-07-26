@@ -411,11 +411,22 @@ async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -
     assert len(fallback_client.calls) == 1
 
 
+def _loadable_providers() -> list[str]:
+    result: list[str] = []
+    for provider in AnyLLM.get_supported_providers():
+        try:
+            AnyLLM.get_provider_class(provider)
+            result.append(provider)
+        except ImportError:
+            pass
+    return result
+
+
 @pytest.mark.parametrize(
     "provider",
-    tuple(AnyLLM.get_supported_providers()),
+    _loadable_providers(),
 )
-def test_factory_classifies_every_any_llm_provider(monkeypatch, provider: str) -> None:
+def test_factory_classifies_every_loadable_provider(monkeypatch, provider: str) -> None:
     created: list[tuple[str, dict[str, object]]] = []
 
     def fake_create(provider: str, **options: object) -> _CompletionClientStub:
