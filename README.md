@@ -68,6 +68,7 @@ WEATHER_BRIEFING_VERSION="4.3.0"
 TZ="$(sed -n 's/^BRIEFING_TIMEZONE=//p' "${ROOT_DIR}/.env" | tail -n 1 | tr -d '\n\r')"
 docker pull "${WEATHER_BRIEFING_IMAGE}:${WEATHER_BRIEFING_VERSION}"
 
+docker stop --timeout 60 "${CONTAINER_NAME}" || true
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 docker run -d \
   --name "${CONTAINER_NAME}" \
