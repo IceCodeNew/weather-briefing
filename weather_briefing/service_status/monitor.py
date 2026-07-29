@@ -9,10 +9,11 @@ from typing import Protocol
 import pendulum
 
 from ..llm import LLMError
-from ..notifications import NotificationDecisionProvider
-from ..state import ServiceStatusMessageState
+from ..notification_decision import NotificationDecisionProvider
+from ..persistence.service_status import ServiceStatusMessageState
 from .collection import collect_service_status
 from .models import ServiceStatusMessage, ServiceStatusSnapshot
+from .notification import service_status_notification_assessment
 from .statuspage import ServiceStatusProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service_status")
@@ -177,7 +178,7 @@ class ServiceStatusMonitor:
             should_notify = previous.should_notify
         else:
             decision = await self._decision_provider.assess_notification(
-                _notification_payload(snapshot, message, previous)
+                service_status_notification_assessment(snapshot, message, previous)
             )
             should_notify = decision.should_notify
             self._state.mark_service_status_message_decided(
@@ -241,38 +242,6 @@ class ServiceStatusMonitor:
                 type(exc).__name__,
             )
             return message.title, message.body
-
-
-def _notification_payload(
-    snapshot: ServiceStatusSnapshot,
-    message: ServiceStatusMessage,
-    previous: ServiceStatusMessageState | None,
-) -> dict[str, object]:
-    current = {
-        "title": message.title,
-        "status": message.status,
-        "body": message.body,
-        "surfaces": [surface.value for surface in message.surfaces],
-        "published_at": message.published_at.to_iso8601_string(),
-    }
-    previous_message: dict[str, object] | None = None
-    if (
-        previous is not None
-        and previous.handled_title is not None
-        and previous.handled_status is not None
-        and previous.handled_body is not None
-    ):
-        previous_message = {
-            "title": previous.handled_title,
-            "status": previous.handled_status,
-            "body": previous.handled_body,
-        }
-    return {
-        "notification_kind": "service_status",
-        "source": snapshot.source_name,
-        "previous": previous_message,
-        "current": current,
-    }
 
 
 def official_message_matches(message: ServiceStatusMessage, target_language: str) -> bool:

@@ -38,7 +38,7 @@ from .geocoding import (
 )
 from .llm import LazyServiceStatusLLM
 from .models import ResolvedLocation
-from .notification_decision.policies import WEATHER_NOTIFICATION_KIND
+from .notification_decision.policies import SERVICE_STATUS_NOTIFICATION_KIND, WEATHER_NOTIFICATION_KIND
 from .persistence import locking as persistence_locking
 from .service import BriefingService
 from .service_status import ServiceStatusMonitor
@@ -399,12 +399,16 @@ async def run_service_status() -> None:
             deliveries = tuple(zip(settings.service_status_publishers, delivery_providers, strict=True))
             service_status_llm = LazyServiceStatusLLM(lambda: _llm_provider(settings, diagnostics))
             stack.push_async_callback(service_status_llm.aclose)
+            notification_decisions = _notification_decision_service(
+                service_status_llm,
+                (SERVICE_STATUS_NOTIFICATION_KIND,),
+            )
             with SQLiteStateStore(settings.state_path) as state:
                 monitor = ServiceStatusMonitor(
                     _service_status_providers(settings.service_status_providers, client),
                     state.service_status,
                     deliveries,
-                    service_status_llm,
+                    notification_decisions,
                     service_status_llm,
                     settings.service_status_language,
                 )

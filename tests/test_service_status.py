@@ -8,7 +8,7 @@ import pendulum
 import pytest
 
 from weather_briefing.llm import LLMError
-from weather_briefing.notifications import NotificationDecision
+from weather_briefing.notification_decision import NotificationDecision
 from weather_briefing.service_status import (
     AnthropicStatusProvider,
     DeepSeekStatusProvider,
@@ -456,8 +456,9 @@ async def test_changed_revision_supplies_previous_official_message_to_decision(t
         provider.fetch.return_value = _snapshot(second_message)
         await monitor.run(pendulum.now("UTC"))
 
-    payload = decision.assess_notification.await_args_list[1].args[0]
-    assert payload["notification_kind"] == "service_status"
+    assessment = decision.assess_notification.await_args_list[1].args[0]
+    assert assessment.kind == "service_status"
+    payload = assessment.payload
     assert payload["previous"] == {
         "title": first_message.title,
         "status": first_message.status,

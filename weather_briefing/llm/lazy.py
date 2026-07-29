@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from ..notification_decision import NotificationDecision
-from ..notification_decision.policies import SERVICE_STATUS_NOTIFICATION_PROMPT
 
 
 class ServiceStatusLLM(Protocol):
@@ -55,10 +54,6 @@ class LazyServiceStatusLLM:
         """Lazily evaluate whether a change merits a notification."""
         provider = await self._get()
         return await provider.decide_notification(system_prompt, payload)
-
-    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
-        """Preserve service-status composition until its policy migration lands."""
-        return await self.decide_notification(SERVICE_STATUS_NOTIFICATION_PROMPT, payload)
 
     async def translate_service_status(
         self,
