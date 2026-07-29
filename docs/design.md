@@ -8,8 +8,8 @@
 地点解析
   -> 天气与可选信息源
   -> 清洗、筛选和历史状态
-  -> 大语言模型
-  -> 结构化简报
+  -> 大语言模型生成结构化候选消息
+  -> 按消息类型判断是否值得立即通知
   -> 平台渲染与投递
 ```
 
@@ -21,6 +21,7 @@
 - `WeatherContextProvider`：提供完整天气信息；
 - `ContextCapabilityProvider`：补充空气质量、过敏原、预警或短时预报；
 - `LLMProvider`：把上下文转换为平台无关的结构化结果；
+- `NotificationDecisionProvider`：把带消息类型的候选交给对应通知策略；
 - `DeliveryProvider`：渲染并发送结果；
 - `SQLiteStateStore`：保存文章、简报、预警和运行状态。
 
@@ -28,13 +29,14 @@
 
 - `config` 在环境变量和私密文件边界完成解析与校验；
 - `geocoding` 包含定位协议、候选匹配、外部服务适配器和缓存解析器；
-- `weather` 包含平台无关协议、各天气服务适配器、能力组合和来源文档转换；
-- `llm` 只包含模型协议、结构化 schema、any-llm 兼容适配器和结果解析，不依赖天气领域；
+- `weather` 包含平台无关协议、各天气服务的请求适配器、独立响应解析、能力组合和来源文档转换；
+- `llm` 只包含模型协议、结构化 schema、any-llm 兼容适配器、传输细节和结果解析，不选择消息类型或通知提示词；
+- `notification_decision` 保存可独立迁移的判断契约、按类型分派的策略服务，以及每种消息自己的提示词；
 - `delivery` 分离平台无关投递协议、渲染器和具体平台适配器；
-- `application` 保存历史上下文预算、模型输入构造和输出契约修复等应用策略；
-- `composition` 负责根据配置组装外部服务，`cli` 只负责命令分派、运行生命周期和调度；
-- `persistence` 把 schema、固定格式序列化和运行时诊断与事务存储分开，业务结果仍由单个 `SQLiteStateStore` 原子提交；
-- `data` 保存随程序发布的提示词、端点、分类和本地化资源，读取与领域校验由使用这些资源的功能模块负责。
+- `application` 保存历史上下文预算、模型输入构造、消息类型专属判断输入和输出契约修复等应用策略；
+- `composition` 按天气、投递、LLM 和通知策略分别组装外部服务；`cli` 只负责命令生命周期，参数解析、调度规则和运行时诊断各有独立模块；
+- `persistence` 按文章与简报、天气上下文、预警、健康状态和服务状态拆分操作，跨领域业务结果仍由单个 `SQLiteStateStore` 原子提交；
+- `data` 保存随程序发布的内容生成提示词、端点、分类和本地化资源；通知判断提示词由对应的 `notification_decision` 功能包持有。
 
 包的 `__init__` 只导出有意支持的功能接口，测试直接引用行为的所有者模块。
 
@@ -167,11 +169,13 @@ Open-Meteo 的逐小时空气质量和花粉预报按目标日峰值生成生活
 
 服务状态使用 `SERVICE_STATUS_CRON` 独立调度，默认 `*/5 * * * *`。调度器可以同时注册天气和服务状态任务；没有地点文件但显式配置了状态来源时只注册服务状态任务。两类任务只共享进程级状态锁，避免并发写入持久化状态。首次读取的已恢复历史只建立基线；新的官方消息先进入独立的通知价值判断，值得打扰用户时才投递。成功投递或明确判定无需通知后才记录 handled revision，因此投递失败可以重试。
 
-通知价值判断是独立于采集、内容生成、翻译和投递的应用契约；天气简报与服务状态使用同一策略资源，但分别提供各自的当前事实和历史。服务状态没有预定义故障或恢复文本，标题和正文只来自官方消息。消息为英语或 `SERVICE_STATUS_LANGUAGE` 指定语言时原样转发，语言不匹配时只请求忠实翻译，失败时回退官方原文。`SERVICE_STATUS_PUBLISHERS` 接受逗号分隔的一个或多个平台，未配置时回退天气的单值 `PUBLISHER`；每个 revision 分平台记录投递结果，部分平台失败后的重试不会向已成功的平台重复发送。服务状态不进入天气 `SourceDocument`、历史预算或简报结构化输出。
+通知价值判断独立于采集、内容生成、翻译和投递。调用方先构造 `NotificationAssessment(kind, payload)`，`NotificationDecisionService` 再按 `kind` 分派到一个明确注册的策略。天气简报和服务状态各自拥有判断输入、提示词和策略注册；策略协议也允许未来消息类型使用不依赖 LLM 的实现。模型适配器只执行策略给出的提示词与载荷，不知道消息类型，也不决定选用哪个提示词。天气预报固定立即投递，不经过通知价值判断。
+
+服务状态没有预定义故障或恢复文本，标题和正文只来自官方消息。消息为英语或 `SERVICE_STATUS_LANGUAGE` 指定语言时原样转发，语言不匹配时只请求忠实翻译，失败时回退官方原文。`SERVICE_STATUS_PUBLISHERS` 接受逗号分隔的一个或多个平台，未配置时回退天气的单值 `PUBLISHER`；每个 revision 分平台记录投递结果，部分平台失败后的重试不会向已成功的平台重复发送。服务状态不进入天气 `SourceDocument`、历史预算或简报结构化输出。
 
 ## 大语言模型
 
-`AnyLLMStructuredProvider` 是 any-llm SDK 的薄适配器。模型厂商的认证、API Base、请求格式、超时和网络重试由 any-llm 及厂商 SDK 处理。
+`AnyLLMStructuredProvider` 是 any-llm SDK 的薄适配器。它分别实现内容生成、通知布尔判断和服务状态翻译的窄结构化调用；JSON Object 请求拼装、异常归一化和 SDK 资源关闭由独立传输模块负责。模型厂商的认证、API Base、超时和网络重试由 any-llm 及厂商 SDK 处理。
 
 `LLM_PROVIDER` 使用 any-llm 的 provider ID，`LLM_MODEL` 使用对应模型 ID。已部署的 DeepSeek 旧变量只在配置入口作为通用变量的后备。
 
@@ -179,7 +183,7 @@ Open-Meteo 的逐小时空气质量和花粉预报按目标日峰值生成生活
 
 开发环境安装 `any-llm-sdk[all]`，用于验证所有 completion provider 的装载边界。基础运行依赖只包含 SDK 核心包。官方镜像额外安装 DeepSeek、OpenAI 和 OpenRouter 所需组件。
 
-所有受支持 provider 统一请求 `json_object`，并把 Pydantic JSON Schema 加入最后一条用户消息，避免 OpenAI-compatible 端点只实现 JSON Mode 而拒绝 OpenAI `json_schema`。返回后再用同一 Pydantic 模型严格复验；应用还会检查来源 ID、必填建议、预警 ID 和章节间重复等领域规则。兼容性数据维护与锁定 any-llm SDK 对齐的不支持 JSON Object provider 黑名单，配置入口与 adapter factory 都拒绝黑名单内 provider，不为其他请求格式增加独立分支。
+所有受支持 provider 统一请求 `json_object`，并把当前调用的 Pydantic JSON Schema 加入最后一条用户消息，避免 OpenAI-compatible 端点只实现 JSON Mode 而拒绝 OpenAI `json_schema`。内容生成 schema 不包含通知决定；候选消息生成并通过来源、建议、预警和渲染长度等领域验证后，天气通知策略才用只包含 `should_notify` 的独立 schema 判断。服务状态通知也使用这个窄输出 schema，但提示词和输入与天气完全分离。兼容性数据维护与锁定 any-llm SDK 对齐的不支持 JSON Object provider 黑名单，配置入口与 adapter factory 都拒绝黑名单内 provider，不为其他请求格式增加独立分支。
 
 `LLM_MAX_ATTEMPTS` 只修复已经返回但不符合输出契约的正文。认证失败、限流、超时或空响应不进入契约修复。
 
@@ -195,7 +199,7 @@ CLI 负责关闭自己创建的模型服务对象及其网络资源。测试或�
 
 `run forecast --date YYYY-MM-DD` 把当地目标日期传给天气服务和模型。该参数不改变实际运行时间、状态写入时间或历史窗口。测试历史回放使用 `--at`，不能与 `--date` 混用。
 
-每天最后一个 briefing 时段会查询当天是否已经成功发送过变化提醒。尚未发送时，即使模型认为无需提醒，也会投递一条无声消息。手动运行不使用无声投递。
+每天最后一个 briefing 时段会查询当天是否已经成功发送过变化提醒。尚未发送时，即使天气通知策略判定无需提醒，也会投递一条无声消息。手动运行不使用无声投递。
 
 模型返回平台无关的 `BriefingResult`。Telegram 和纯文本渲染器分别负责标题、链接、转义和长度限制。Bark 使用紧凑纯文本渲染器，将带来源编号的 headline 放入通知标题，正文不再重复标题，并以短编号关联末尾的来源名称表；来源 URL 省略，但仍保留逐项引用校验。
 
