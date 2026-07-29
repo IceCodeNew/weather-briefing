@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-import json
 import logging
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
-from inspect import isawaitable
-from typing import Protocol, TypeAlias
+from collections.abc import Mapping
 
 from any_llm import AnyLLM
-from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
-from pydantic import BaseModel, ValidationError
+from any_llm.exceptions import LengthFinishReasonError
+from pydantic import BaseModel
 
-from ..api_client import api_call_context
 from ..data.any_llm_compatibility import (
     UNSUPPORTED_DEFAULT_HEADER_PROVIDERS,
     UNSUPPORTED_JSON_OBJECT_PROVIDERS,
 )
 from ..data.prompts import NOTIFICATION_POLICY
-from ..notifications import NotificationDecision
-from .base import LLMOutputLimitError, LLMRequestError, SensitiveLLMDiagnostics, serialize_llm_payload
+from ..notification_decision import NotificationDecision
+from . import any_llm_transport
+from .base import LLMOutputLimitError, SensitiveLLMDiagnostics, serialize_llm_payload
 from .schema import (
     LLMStructuredOutput,
     NotificationDecisionOutput,
@@ -32,50 +28,13 @@ from .schema import (
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
-ResponseFormat: TypeAlias = dict[str, object]
-
-
-class LLMCompletionClient(Protocol):
-    """Expose the any-llm completion operation used by the application adapter."""
-
-    async def acompletion(
-        self,
-        *,
-        model: str,
-        messages: list[dict[str, str]],
-        response_format: ResponseFormat,
-        temperature: float,
-        max_tokens: int,
-    ) -> object:
-        """Request one asynchronous structured completion."""
-        ...
-
-
-@contextmanager
-def _normalize_request_errors(
-    message: str,
-    *,
-    normalize_completion_errors: bool,
-) -> Iterator[None]:
-    """Normalize failures escaping an application-owned completion client."""
-    try:
-        yield
-    except (LengthFinishReasonError, ValidationError):
-        raise
-    except AnyLLMError as exc:
-        raise LLMRequestError(message) from exc
-    except Exception as exc:
-        if normalize_completion_errors:
-            raise LLMRequestError(message) from exc
-        raise
-
 
 class AnyLLMStructuredProvider:
     """Adapt an any-llm provider to the application's structured LLM boundary."""
 
     def __init__(
         self,
-        client: AnyLLM | LLMCompletionClient,
+        client: AnyLLM | any_llm_transport.LLMCompletionClient,
         *,
         provider: str,
         model: str,
@@ -107,30 +66,17 @@ class AnyLLMStructuredProvider:
         max_tokens: int,
         request_error_message: str,
     ) -> object:
-        request_messages, request_response_format = _structured_output_request(messages, response_format)
-        with (
-            api_call_context(self._provider, "chat-completions"),
-            _normalize_request_errors(
-                request_error_message,
-                normalize_completion_errors=self._normalize_completion_errors,
-            ),
-        ):
-            if isinstance(self._client, AnyLLM):
-                return await self._client.acompletion(
-                    model=self._model,
-                    messages=[dict(message) for message in request_messages],
-                    response_format=request_response_format,
-                    stream=False,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            return await self._client.acompletion(
-                model=self._model,
-                messages=request_messages,
-                response_format=request_response_format,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+        return await any_llm_transport.complete_structured(
+            self._client,
+            provider=self._provider,
+            model=self._model,
+            messages=messages,
+            response_format=response_format,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            request_error_message=request_error_message,
+            normalize_completion_errors=self._normalize_completion_errors,
+        )
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         """Request and decode one structured JSON response."""
@@ -180,13 +126,14 @@ class AnyLLMStructuredProvider:
             )
         return result_payload
 
-    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
-        """Evaluate notification value independently from content generation."""
+    async def decide_notification(
+        self,
+        system_prompt: str,
+        payload: dict[str, object],
+    ) -> NotificationDecision:
+        """Evaluate one policy-owned notification prompt."""
         messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": (f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。"),
-            },
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": serialize_llm_payload(payload)},
         ]
         try:
@@ -208,6 +155,13 @@ class AnyLLMStructuredProvider:
             )
             raise LLMOutputLimitError("LLM notification decision reached output token limit") from exc
         return NotificationDecision(should_notify=decode_notification_decision(response))
+
+    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
+        """Preserve the existing application boundary while policies migrate."""
+        return await self.decide_notification(
+            f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。",
+            payload,
+        )
 
     async def translate_service_status(
         self,
@@ -261,7 +215,7 @@ class AnyLLMStructuredProvider:
         """Close transports owned by an any-llm client created by this adapter."""
         if not self._owns_client:
             return
-        if await _close_llm_resource(self._client):
+        if await any_llm_transport.close_llm_resource(self._client):
             return
         client_attributes = getattr(self._client, "__dict__", None)
         if not isinstance(client_attributes, dict):
@@ -275,28 +229,7 @@ class AnyLLMStructuredProvider:
             if id(resource) in seen:
                 continue
             seen.add(id(resource))
-            await _close_llm_resource(resource)
-
-
-async def _close_llm_resource(resource: object) -> bool:
-    """Close one SDK resource without replacing a task failure during cleanup."""
-    close = getattr(resource, "aclose", None)
-    if not callable(close):
-        close = getattr(resource, "close", None)
-    if not callable(close):
-        return False
-    try:
-        result = close()
-        if isawaitable(result):
-            await result
-    except Exception as exc:
-        _LOGGER.warning(
-            "Failed to close LLM SDK resource type=%s error_type=%s",
-            type(resource).__name__,
-            type(exc).__name__,
-        )
-        return False
-    return True
+            await any_llm_transport.close_llm_resource(resource)
 
 
 def _sensitive_llm_diagnostics_enabled(diagnostics: SensitiveLLMDiagnostics | None) -> bool:
@@ -342,26 +275,3 @@ def create_any_llm_provider(
         owns_client=True,
         normalize_completion_errors=True,
     )
-
-
-def _structured_output_request(
-    messages: list[dict[str, str]],
-    response_format: type[BaseModel],
-) -> tuple[list[dict[str, str]], ResponseFormat]:
-    """Prepare prompt-constrained JSON Object transport."""
-    if not messages or messages[-1].get("role") != "user":
-        raise ValueError("JSON Object structured output requires a final user message")
-    content = messages[-1].get("content")
-    if not isinstance(content, str):
-        raise ValueError("JSON Object structured output final user message must include string content")
-    schema = json.dumps(response_format.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
-    final_message = {
-        **messages[-1],
-        "content": (
-            f"{content}\n\n"
-            "Return only a JSON object matching this JSON Schema exactly. "
-            "Do not wrap it in Markdown fences.\n"
-            f"{schema}"
-        ),
-    }
-    return [*messages[:-1], final_message], {"type": "json_object"}

@@ -2,15 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol
 
-
-@dataclass(frozen=True, slots=True)
-class NotificationDecision:
-    """State whether one information change is worth interrupting the user."""
-
-    should_notify: bool
+from .notification_decision import NotificationDecision
 
 
 class NotificationDecisionProvider(Protocol):
