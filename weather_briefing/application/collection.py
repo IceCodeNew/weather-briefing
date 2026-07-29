@@ -8,12 +8,21 @@ import logging
 import pendulum
 
 from ..capabilities import CapabilityProviderSet
-from ..models import Article, FeedConfig, ResolvedLocation, SourceDocument
+from ..models import (
+    AirQualityTimeKind,
+    Article,
+    FeedConfig,
+    ResolvedLocation,
+    SourceDocument,
+    WeatherContextSnapshot,
+)
 from ..sources import RSSFeedSource
 from ..state import SQLiteStateStore
+from ..time_utils import require_aware_datetime
 from ..weather import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
 
 _LOGGER = logging.getLogger("weather_briefing.service")
+_CURRENT_DOCUMENT_MAX_LAG_HOURS = 2
 
 
 async def collect_rss_articles(
@@ -65,4 +74,63 @@ async def collect_weather_documents(
         )
     else:
         snapshots = (await fetch_weather_context(provider, location.latitude, location.longitude, forecast_date),)
-    return tuple(document for snapshot in snapshots for document in snapshot_to_documents(snapshot))
+    timed_documents = tuple(item for snapshot in snapshots for item in _snapshot_documents_with_times(snapshot))
+    if forecast_date is not None:
+        return tuple(document for document, _ in timed_documents)
+    return _filter_stale_current_documents(timed_documents)
+
+
+def _filter_stale_current_documents(
+    timed_documents: tuple[tuple[SourceDocument, pendulum.DateTime | None], ...],
+) -> tuple[SourceDocument, ...]:
+    """Remove current documents too old to support a comparison."""
+    available_times = tuple(observed_at for _, observed_at in timed_documents if observed_at is not None)
+    latest_time = max(available_times)
+    earliest_retained_time = latest_time.subtract(hours=_CURRENT_DOCUMENT_MAX_LAG_HOURS)
+    retained = tuple(
+        document
+        for document, observed_at in timed_documents
+        if observed_at is None or observed_at >= earliest_retained_time
+    )
+    for document, observed_at in timed_documents:
+        if observed_at is not None and observed_at < earliest_retained_time:
+            _LOGGER.info(
+                "Discarding stale current document source_id=%s observed_at=%s latest_time=%s max_lag_hours=%d",
+                document.id,
+                observed_at.to_iso8601_string(),
+                latest_time.to_iso8601_string(),
+                _CURRENT_DOCUMENT_MAX_LAG_HOURS,
+            )
+    return retained
+
+
+def _snapshot_documents_with_times(
+    snapshot: WeatherContextSnapshot,
+) -> tuple[tuple[SourceDocument, pendulum.DateTime | None], ...]:
+    """Attach current observation times to documents that can expire."""
+    weather_observed_at = require_aware_datetime(
+        snapshot.observed_at,
+        context=f"Weather snapshot {snapshot.source_id} observation time",
+    )
+    observation_times = {snapshot.source_id: weather_observed_at}
+    air_quality = snapshot.air_quality
+    if air_quality is not None and air_quality.time_kind is AirQualityTimeKind.OBSERVATION:
+        observation_times[air_quality.source_id] = (
+            require_aware_datetime(
+                air_quality.effective_at,
+                context=f"Air-quality snapshot {air_quality.source_id} observation time",
+            )
+            if air_quality.effective_at is not None
+            else weather_observed_at
+        )
+    allergen = snapshot.allergen
+    if allergen is not None:
+        observation_times[allergen.source_id] = (
+            require_aware_datetime(
+                allergen.observed_at,
+                context=f"Allergen snapshot {allergen.source_id} observation time",
+            )
+            if allergen.observed_at is not None
+            else weather_observed_at
+        )
+    return tuple((document, observation_times.get(document.id)) for document in snapshot_to_documents(snapshot))

@@ -37,6 +37,13 @@ def test_prompt_uses_actionable_publication_threshold() -> None:
     assert "service_status 类型" in NOTIFICATION_POLICY
 
 
+def test_prompt_does_not_publish_expired_deferred_weather() -> None:
+    assert "落后最新适用资料超过两小时的积压内容" in SYSTEM_PROMPT
+    assert "不得写入当前结论，也不得单独触发发布" in SYSTEM_PROMPT
+    assert "恰好两小时仍可保留" in SYSTEM_PROMPT
+    assert "有效预警、灾害跟踪和指定日期预报仍按各自的有效性规则判断" in SYSTEM_PROMPT
+
+
 def test_prompt_separates_advice_and_avoids_repetition() -> None:
     assert "过敏原信息只能放入 advice" in SYSTEM_PROMPT
     assert "不得使用“原始浓度”" in SYSTEM_PROMPT
