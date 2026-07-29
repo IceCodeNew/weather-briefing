@@ -107,6 +107,8 @@ You can set `WEATHER_PROVIDERS` to override the regional default order. Include 
 
 When NEA or JMA content conflicts with Open-Meteo for the same time and region, the briefing prioritizes the latest data from the local official agency and retains conflicting sources for your verification.
 
+Current air-quality observations from multiple sources are compared only when they are within two hours of the latest available data. Older observations are excluded from the current conflict while the source's weather forecast remains available.
+
 ### JMA office codes
 
 See [`docs/jma-office-codes.md`](docs/jma-office-codes.md) for the forecast office codes covering all 47 prefectures and usage instructions.
