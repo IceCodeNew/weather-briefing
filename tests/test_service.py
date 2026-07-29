@@ -6,7 +6,7 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Protocol, TypeGuard, runtime_checkable
 
 import pendulum
 import pytest
@@ -25,7 +25,7 @@ from weather_briefing.application.context_history import serialize_context_docum
 from weather_briefing.application.payloads import build_briefing_payload
 from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
 from weather_briefing.delivery import DeliveryError, DeliveryProvider, PlainTextRenderer
-from weather_briefing.llm import LLMError, LLMRequestError
+from weather_briefing.llm import LLMError, LLMProvider, LLMRequestError
 from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
@@ -40,10 +40,12 @@ from weather_briefing.models import (
 from weather_briefing.notification_decision import (
     NotificationAssessment,
     NotificationDecision,
+    NotificationDecisionProvider,
 )
 from weather_briefing.service import BriefingService as _BriefingService
+from weather_briefing.sources import RSSFeedSource
 from weather_briefing.state import SQLiteStateStore
-from weather_briefing.weather import WeatherContextError
+from weather_briefing.weather import WeatherContextError, WeatherContextProvider
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,20 +210,26 @@ class SequenceNotificationDecisions:
         return NotificationDecision(next(self._decisions))
 
 
+@runtime_checkable
+class _NotificationDecisionOwner(Protocol):
+    @property
+    def notification_decisions(self) -> NotificationDecisionProvider:
+        """Return the decision provider paired with this test LLM."""
+        ...
+
+
 def _briefing_service(
     settings: _TestSettings,
     location: ResolvedLocation,
     state: SQLiteStateStore,
-    rss_source: Any,
-    llm: Any,
+    rss_source: RSSFeedSource,
+    llm: LLMProvider,
     delivery: DeliveryProvider,
     ops_delivery: DeliveryProvider,
-    weather_context_provider: Any = None,
+    weather_context_provider: WeatherContextProvider | None = None,
 ) -> _BriefingService:
-    notification_decisions = getattr(
-        llm,
-        "notification_decisions",
-        RecordingNotificationDecisions(),
+    notification_decisions = (
+        llm.notification_decisions if isinstance(llm, _NotificationDecisionOwner) else RecordingNotificationDecisions()
     )
     return _BriefingService(
         settings,

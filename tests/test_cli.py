@@ -14,17 +14,15 @@ import httpx
 import pendulum
 import pytest
 
-import weather_briefing.cli as cli_module
+import weather_briefing.command_parser as cli_module
 from weather_briefing.capabilities import CapabilityName
 from weather_briefing.cli import (
     _LOGGER,
-    _SENSITIVE_SDK_LOGGERS,
     _briefing_delivery_policy,
     _briefing_sent_today,
     _configure_logging,
     _delivery_provider,
     _delivery_providers,
-    _hour_in_cron,
     _in_schedule,
     _llm_provider,
     _location_state_path,
@@ -40,23 +38,25 @@ from weather_briefing.cli import (
     run,
     run_service_status,
 )
-from weather_briefing.composition.providers import (
-    PUBLISHER_BUILDERS,
+from weather_briefing.composition.delivery import PUBLISHER_BUILDERS
+from weather_briefing.composition.weather import (
     _build_jma,
     _build_nea,
     _build_open_meteo,
     _build_qweather,
 )
-from weather_briefing.composition.providers import aqicn_provider as _aqicn_provider
-from weather_briefing.composition.providers import build_weather_provider as _build_weather_provider
-from weather_briefing.composition.providers import qweather_is_configured as _qweather_is_configured
-from weather_briefing.composition.providers import weather_provider_metadata as _weather_provider_metadata
+from weather_briefing.composition.weather import aqicn_provider as _aqicn_provider
+from weather_briefing.composition.weather import build_weather_provider as _build_weather_provider
+from weather_briefing.composition.weather import qweather_is_configured as _qweather_is_configured
+from weather_briefing.composition.weather import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
 from weather_briefing.delivery import BarkTextRenderer
 from weather_briefing.llm import FallbackLLMProvider
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
 from weather_briefing.registries import PublisherName, WeatherProviderName
+from weather_briefing.runtime_diagnostics import SENSITIVE_SDK_LOGGERS as _SENSITIVE_SDK_LOGGERS
+from weather_briefing.scheduling import hour_in_cron as _hour_in_cron
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from weather_briefing.weather import QWeatherProvider
 
@@ -405,7 +405,7 @@ def test_development_version_rejects_unrelated_git_metadata(monkeypatch, capsys,
     "error",
     (FileNotFoundError(), subprocess.CalledProcessError(128, ("git", "rev-parse"))),
 )
-def test_development_version_falls_back_outside_git(monkeypatch, capsys, error: Exception) -> None:
+def test_development_version_falls_back_outside_git(monkeypatch, capsys, caplog, error: Exception) -> None:
     monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
 
     def fail(*args, **kwargs):
@@ -413,10 +413,19 @@ def test_development_version_falls_back_outside_git(monkeypatch, capsys, error: 
 
     monkeypatch.setattr(cli_module.subprocess, "run", fail)
 
-    with pytest.raises(SystemExit):
+    with (
+        caplog.at_level(logging.DEBUG, logger="weather_briefing.command_parser"),
+        pytest.raises(SystemExit),
+    ):
         build_parser().parse_args(["--version"])
 
     assert capsys.readouterr().out == "pytest 1.1.1-dev\n"
+    if isinstance(error, subprocess.CalledProcessError):
+        assert f"Git metadata probe failed; using package version: returncode={error.returncode}" in caplog.text
+    else:
+        assert (
+            f"Git metadata probe unavailable; using package version: error_type={type(error).__name__}" in caplog.text
+        )
 
 
 def test_rendered_text_diagnostics_parser_accepts_bounded_duration() -> None:
@@ -956,7 +965,10 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
     def unavailable_diagnostics(path: Path) -> None:
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", unavailable_diagnostics)
+    monkeypatch.setattr(
+        "weather_briefing.persistence.diagnostics.SQLiteRuntimeDiagnostics",
+        unavailable_diagnostics,
+    )
 
     async def fake_service_run(kind: str, n: object, **kwargs: object) -> str:
         return "published body"
@@ -1055,7 +1067,10 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
             pass
 
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
-    monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", lambda p: FakeState())
+    monkeypatch.setattr(
+        "weather_briefing.persistence.diagnostics.SQLiteRuntimeDiagnostics",
+        lambda p: FakeState(),
+    )
 
     async def fake_service_run(kind: str, n: object, **kwargs: object) -> str:
         return "published body"
@@ -1126,7 +1141,10 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
             pass
 
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
-    monkeypatch.setattr("weather_briefing.cli.SQLiteRuntimeDiagnostics", lambda p: FakeState())
+    monkeypatch.setattr(
+        "weather_briefing.persistence.diagnostics.SQLiteRuntimeDiagnostics",
+        lambda p: FakeState(),
+    )
 
     async def fake_service_run(kind: str, n: object, **kwargs: object) -> str | None:
         return None
@@ -1275,7 +1293,7 @@ class TestLLMProvider:
             Mock(side_effect=(primary, fallback)),
         )
         monkeypatch.setattr(
-            "weather_briefing.composition.providers.FallbackLLMProvider",
+            "weather_briefing.llm.fallback.FallbackLLMProvider",
             Mock(side_effect=RuntimeError("wrapper construction failed")),
         )
         settings = replace(
@@ -1507,6 +1525,11 @@ class TestWeatherContextProvider:
 def test_weather_provider_metadata_rejects_unregistered_provider() -> None:
     with pytest.raises(ValueError, match="has no capability metadata"):
         _weather_provider_metadata(("unregistered",))
+
+
+def test_weather_provider_metadata_rejects_empty_provider_list() -> None:
+    with pytest.raises(ValueError, match="At least one weather provider name is required"):
+        _weather_provider_metadata(())
 
 
 async def test_no_weather_provider_available(monkeypatch, async_client: httpx.AsyncClient) -> None:
