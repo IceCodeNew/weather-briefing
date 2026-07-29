@@ -402,7 +402,7 @@ async def run_service_status() -> None:
             with SQLiteStateStore(settings.state_path) as state:
                 monitor = ServiceStatusMonitor(
                     _service_status_providers(settings.service_status_providers, client),
-                    state,
+                    state.service_status,
                     deliveries,
                     service_status_llm,
                     service_status_llm,

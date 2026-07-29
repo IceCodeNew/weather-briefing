@@ -96,6 +96,25 @@ def test_articles_are_deduplicated(tmp_path: Path) -> None:
         assert stored.published_at.to_iso8601_string() == "2026-07-13T01:00:00Z"
 
 
+def test_save_articles_rolls_back_partial_batch(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    accepted = Article("accepted", "source", "Source", "Accepted", "https://example.invalid/a", now, "body")
+    rejected = Article("rejected", "source", "Source", "Rejected", "https://example.invalid/r", now, "body")
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_rejected_article BEFORE INSERT ON articles
+                WHEN NEW.id = 'rejected'
+                BEGIN SELECT RAISE(ABORT, 'article insert failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="article insert failed"):
+            state.save_articles((accepted, rejected), now)
+
+        assert state.known_article_ids((accepted.id, rejected.id)) == set()
+
+
 def test_pending_articles_remain_until_marked_processed(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     article = Article("id", "source", "Source", "Title", "https://example.invalid", now, "body")
@@ -109,6 +128,25 @@ def test_pending_articles_remain_until_marked_processed(tmp_path: Path) -> None:
 
         assert state.pending_articles() == ()
         assert state.known_article_ids((article.id,)) == {article.id}
+
+
+def test_mark_articles_processed_rolls_back_when_pending_delete_fails(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    article = Article("id", "source", "Source", "Title", "https://example.invalid", now, "body")
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.save_pending_articles((article,), now)
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_pending_delete BEFORE DELETE ON pending_articles
+                BEGIN SELECT RAISE(ABORT, 'pending delete failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="pending delete failed"):
+            state.mark_articles_processed((article,), now.add(hours=1))
+
+        assert state.pending_articles() == (article,)
+        assert state.known_article_ids((article.id,)) == set()
 
 
 def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> None:
@@ -300,6 +338,52 @@ def test_result_checkpoint_rolls_back_all_state_and_can_be_retried(tmp_path: Pat
         assert state.recent_context_documents(now, 1) == (document,)
         assert state.active_warnings(now, 1) == (new_warning,)
         assert tuple(delivery.article for delivery in state.pending_verbatim_deliveries()) == (article,)
+
+
+def test_update_warnings_rolls_back_resolutions_when_insert_fails(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    old_warning = Warning("old-warning", "Old", "active", "old", ("source",), now)
+    new_warning = Warning("new-warning", "New", "active", "new", ("source",), now.add(minutes=1))
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.update_warnings((old_warning,), (), now, {"source"})
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_new_warning BEFORE INSERT ON warnings
+                WHEN NEW.id = 'new-warning'
+                BEGIN SELECT RAISE(ABORT, 'warning insert failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="warning insert failed"):
+            state.update_warnings((new_warning,), (old_warning.id,), now.add(minutes=1), {"source"})
+
+        assert state.active_warnings(now.add(minutes=1), 1) == (old_warning,)
+
+
+def test_record_success_rolls_back_pruning_when_health_reset_fails(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    article = Article(
+        "old",
+        "source",
+        "Source",
+        "Old",
+        "https://example.invalid/old",
+        now.subtract(hours=3),
+        "body",
+    )
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.save_articles((article,), now.subtract(hours=3))
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_health_reset BEFORE UPDATE ON task_health
+                BEGIN SELECT RAISE(ABORT, 'health reset failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="health reset failed"):
+            state.record_success(now, history_hours=1, warning_retention_hours=1)
+
+        assert state.known_article_ids((article.id,)) == {article.id}
 
 
 def test_source_becomes_stale_after_threshold(tmp_path: Path) -> None:

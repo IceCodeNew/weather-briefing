@@ -1808,7 +1808,7 @@ async def test_service_status_run_is_independent_from_weather_orchestration(
     llm_factory.assert_not_called()
     translator.aclose.assert_not_awaited()
     with SQLiteStateStore(state_path) as state:
-        assert state.service_status_message_state("service-status:openai", "incident") is not None
+        assert state.service_status.service_status_message_state("service-status:openai", "incident") is not None
 
 
 async def test_service_status_run_skips_when_no_provider_is_configured(
