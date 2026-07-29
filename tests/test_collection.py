@@ -5,6 +5,8 @@ from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet,
 from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
+    AllergenLevel,
+    AllergenSnapshot,
     ResolvedLocation,
     WeatherContextSnapshot,
 )
@@ -39,6 +41,9 @@ def _snapshot(
     *,
     air_quality_effective_at: pendulum.DateTime | None,
     time_kind: AirQualityTimeKind = AirQualityTimeKind.OBSERVATION,
+    include_air_quality: bool = True,
+    include_allergen: bool = False,
+    allergen_observed_at: pendulum.DateTime | None = None,
 ) -> WeatherContextSnapshot:
     return WeatherContextSnapshot(
         source_id=f"weather:{source}",
@@ -46,7 +51,24 @@ def _snapshot(
         source_url=f"https://example.invalid/{source}/weather",
         observed_at=observed_at,
         weather_forecast=("forecast",),
-        air_quality=_air_quality(source, effective_at=air_quality_effective_at, time_kind=time_kind),
+        air_quality=(
+            _air_quality(source, effective_at=air_quality_effective_at, time_kind=time_kind)
+            if include_air_quality
+            else None
+        ),
+        allergen=(
+            AllergenSnapshot(
+                source_id=f"allergen:{source}",
+                source_name=source,
+                source_url=f"https://example.invalid/{source}/allergen",
+                observed_at=allergen_observed_at,
+                levels=(AllergenLevel("pollen", "low", 1.0),),
+                overall_category="low",
+                health_guidance="normal activity",
+            )
+            if include_allergen
+            else None
+        ),
     )
 
 
@@ -92,7 +114,7 @@ _LOCATION = ResolvedLocation(
 )
 
 
-async def test_collection_drops_air_quality_observations_more_than_two_hours_behind() -> None:
+async def test_collection_drops_only_current_documents_that_are_stale() -> None:
     latest = pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai")
     provider = _provider_set(
         _snapshot("qweather", latest, air_quality_effective_at=None),
@@ -108,7 +130,27 @@ async def test_collection_drops_air_quality_observations_more_than_two_hours_beh
     }
 
 
-async def test_collection_keeps_air_quality_observations_at_two_hour_boundary() -> None:
+async def test_collection_drops_stale_weather_snapshot_without_air_quality() -> None:
+    latest = pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai")
+    provider = _provider_set(
+        _snapshot("qweather", latest, air_quality_effective_at=None),
+        _snapshot(
+            "open-meteo",
+            latest.subtract(hours=8),
+            air_quality_effective_at=None,
+            include_air_quality=False,
+        ),
+    )
+
+    documents = await collect_weather_documents(provider, _LOCATION, None)
+
+    assert {document.id for document in documents} == {
+        "weather:qweather",
+        "air-quality:qweather",
+    }
+
+
+async def test_collection_keeps_current_documents_at_two_hour_boundary() -> None:
     latest = pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai")
     provider = _provider_set(
         _snapshot("qweather", latest, air_quality_effective_at=None),
@@ -123,7 +165,65 @@ async def test_collection_keeps_air_quality_observations_at_two_hour_boundary() 
     }
 
 
-async def test_collection_does_not_filter_air_quality_forecasts() -> None:
+async def test_collection_filters_allergen_by_its_own_observation_time() -> None:
+    latest = pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai")
+    provider = _provider_set(
+        _snapshot("qweather", latest, air_quality_effective_at=None),
+        _snapshot(
+            "open-meteo",
+            latest,
+            air_quality_effective_at=latest,
+            include_allergen=True,
+            allergen_observed_at=latest.subtract(hours=8),
+        ),
+    )
+
+    documents = await collect_weather_documents(provider, _LOCATION, None)
+
+    assert "allergen:open-meteo" not in {document.id for document in documents}
+    assert "weather:open-meteo" in {document.id for document in documents}
+
+
+async def test_collection_uses_weather_time_when_allergen_has_no_observation_time() -> None:
+    latest = pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai")
+    provider = _provider_set(
+        _snapshot(
+            "qweather",
+            latest,
+            air_quality_effective_at=None,
+            include_allergen=True,
+        ),
+    )
+
+    documents = await collect_weather_documents(provider, _LOCATION, None)
+
+    assert "allergen:qweather" in {document.id for document in documents}
+
+
+async def test_collection_keeps_forecast_document_while_filtering_current_data() -> None:
+    latest = pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai")
+    provider = _provider_set(
+        _snapshot(
+            "qweather",
+            latest,
+            air_quality_effective_at=latest.subtract(hours=8),
+            time_kind=AirQualityTimeKind.FORECAST,
+        ),
+        _snapshot(
+            "open-meteo",
+            latest.subtract(hours=8),
+            air_quality_effective_at=None,
+            include_air_quality=False,
+        ),
+    )
+
+    documents = await collect_weather_documents(provider, _LOCATION, None)
+
+    assert "air-quality:qweather" in {document.id for document in documents}
+    assert "weather:open-meteo" not in {document.id for document in documents}
+
+
+async def test_collection_does_not_filter_dated_forecast_snapshots() -> None:
     latest = pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai")
     provider = _provider_set(
         _snapshot(

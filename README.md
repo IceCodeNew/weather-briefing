@@ -107,7 +107,7 @@ You can set `WEATHER_PROVIDERS` to override the regional default order. Include 
 
 When NEA or JMA content conflicts with Open-Meteo for the same time and region, the briefing prioritizes the latest data from the local official agency and retains conflicting sources for your verification.
 
-Current air-quality observations from multiple sources are compared only when they are within two hours of the latest available data. Older observations are excluded from the current conflict while the source's weather forecast remains available.
+Current observations from multiple weather sources are compared only when each item is no more than two hours behind the latest available data. Older weather, air-quality, and allergen observations are excluded from the current briefing; explicitly requested forecast dates are unaffected.
 
 ### JMA office codes
 

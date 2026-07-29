@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import replace
 
 import pendulum
 
@@ -22,7 +21,7 @@ from ..state import SQLiteStateStore
 from ..weather import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
 
 _LOGGER = logging.getLogger("weather_briefing.service")
-_AIR_QUALITY_OBSERVATION_MAX_LAG_HOURS = 2
+_CURRENT_DOCUMENT_MAX_LAG_HOURS = 2
 
 
 async def collect_rss_articles(
@@ -74,42 +73,45 @@ async def collect_weather_documents(
         )
     else:
         snapshots = (await fetch_weather_context(provider, location.latitude, location.longitude, forecast_date),)
-    snapshots = _filter_stale_air_quality_observations(snapshots)
-    return tuple(document for snapshot in snapshots for document in snapshot_to_documents(snapshot))
+    timed_documents = tuple(item for snapshot in snapshots for item in _snapshot_documents_with_times(snapshot))
+    if forecast_date is not None:
+        return tuple(document for document, _ in timed_documents)
+    return _filter_stale_current_documents(timed_documents)
 
 
-def _filter_stale_air_quality_observations(
-    snapshots: tuple[WeatherContextSnapshot, ...],
-) -> tuple[WeatherContextSnapshot, ...]:
-    """Remove observations too old to support a current air-quality conflict."""
-    observation_times = tuple(_air_quality_observation_time(snapshot) for snapshot in snapshots)
-    available_times = tuple(value for value in observation_times if value is not None)
-    if len(available_times) < 2:
-        return snapshots
-
+def _filter_stale_current_documents(
+    timed_documents: tuple[tuple[SourceDocument, pendulum.DateTime | None], ...],
+) -> tuple[SourceDocument, ...]:
+    """Remove current documents too old to support a comparison."""
+    available_times = tuple(observed_at for _, observed_at in timed_documents if observed_at is not None)
     latest_time = max(available_times)
-    earliest_retained_time = latest_time.subtract(hours=_AIR_QUALITY_OBSERVATION_MAX_LAG_HOURS)
-    filtered: list[WeatherContextSnapshot] = []
-    for snapshot, observation_time in zip(snapshots, observation_times, strict=True):
-        air_quality = snapshot.air_quality
-        if observation_time is not None and observation_time < earliest_retained_time and air_quality is not None:
+    earliest_retained_time = latest_time.subtract(hours=_CURRENT_DOCUMENT_MAX_LAG_HOURS)
+    retained = tuple(
+        document
+        for document, observed_at in timed_documents
+        if observed_at is None or observed_at >= earliest_retained_time
+    )
+    for document, observed_at in timed_documents:
+        if observed_at is not None and observed_at < earliest_retained_time:
             _LOGGER.info(
-                "Discarding stale air-quality observation source_id=%s comparison_time=%s "
-                "latest_time=%s max_lag_hours=%d",
-                air_quality.source_id,
-                observation_time.to_iso8601_string(),
+                "Discarding stale current document source_id=%s observed_at=%s latest_time=%s max_lag_hours=%d",
+                document.id,
+                observed_at.to_iso8601_string(),
                 latest_time.to_iso8601_string(),
-                _AIR_QUALITY_OBSERVATION_MAX_LAG_HOURS,
+                _CURRENT_DOCUMENT_MAX_LAG_HOURS,
             )
-            filtered.append(replace(snapshot, air_quality=None))
-        else:
-            filtered.append(snapshot)
-    return tuple(filtered)
+    return retained
 
 
-def _air_quality_observation_time(snapshot: WeatherContextSnapshot) -> pendulum.DateTime | None:
-    """Return the best available time for comparing a current observation."""
+def _snapshot_documents_with_times(
+    snapshot: WeatherContextSnapshot,
+) -> tuple[tuple[SourceDocument, pendulum.DateTime | None], ...]:
+    """Attach current observation times to documents that can expire."""
+    observation_times = {snapshot.source_id: snapshot.observed_at}
     air_quality = snapshot.air_quality
-    if air_quality is None or air_quality.time_kind is not AirQualityTimeKind.OBSERVATION:
-        return None
-    return air_quality.effective_at or snapshot.observed_at
+    if air_quality is not None and air_quality.time_kind is AirQualityTimeKind.OBSERVATION:
+        observation_times[air_quality.source_id] = air_quality.effective_at or snapshot.observed_at
+    allergen = snapshot.allergen
+    if allergen is not None:
+        observation_times[allergen.source_id] = allergen.observed_at or snapshot.observed_at
+    return tuple((document, observation_times.get(document.id)) for document in snapshot_to_documents(snapshot))
