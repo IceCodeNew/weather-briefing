@@ -1,4 +1,5 @@
 import pendulum
+import pytest
 
 from weather_briefing.application.collection import collect_weather_documents
 from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
@@ -246,3 +247,45 @@ async def test_collection_does_not_filter_dated_forecast_snapshots() -> None:
         "air-quality:qweather",
         "air-quality:open-meteo",
     }
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "expected_context"),
+    (
+        (
+            _snapshot(
+                "qweather",
+                pendulum.datetime(2026, 7, 27, 21, tz=None),
+                air_quality_effective_at=None,
+            ),
+            "Weather snapshot weather:qweather observation time",
+        ),
+        (
+            _snapshot(
+                "qweather",
+                pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai"),
+                air_quality_effective_at=pendulum.datetime(2026, 7, 27, 21, tz=None),
+            ),
+            "Air-quality snapshot air-quality:qweather observation time",
+        ),
+        (
+            _snapshot(
+                "qweather",
+                pendulum.datetime(2026, 7, 27, 21, tz="Asia/Shanghai"),
+                air_quality_effective_at=None,
+                include_allergen=True,
+                allergen_observed_at=pendulum.datetime(2026, 7, 27, 21, tz=None),
+            ),
+            "Allergen snapshot allergen:qweather observation time",
+        ),
+    ),
+)
+async def test_collection_rejects_ambiguous_current_observation_times(
+    snapshot: WeatherContextSnapshot,
+    expected_context: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"^{expected_context} must include explicit timezone information$",
+    ):
+        await collect_weather_documents(_provider_set(snapshot), _LOCATION, None)

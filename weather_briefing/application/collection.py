@@ -18,6 +18,7 @@ from ..models import (
 )
 from ..sources import RSSFeedSource
 from ..state import SQLiteStateStore
+from ..time_utils import require_aware_datetime
 from ..weather import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
 
 _LOGGER = logging.getLogger("weather_briefing.service")
@@ -107,11 +108,29 @@ def _snapshot_documents_with_times(
     snapshot: WeatherContextSnapshot,
 ) -> tuple[tuple[SourceDocument, pendulum.DateTime | None], ...]:
     """Attach current observation times to documents that can expire."""
-    observation_times = {snapshot.source_id: snapshot.observed_at}
+    weather_observed_at = require_aware_datetime(
+        snapshot.observed_at,
+        context=f"Weather snapshot {snapshot.source_id} observation time",
+    )
+    observation_times = {snapshot.source_id: weather_observed_at}
     air_quality = snapshot.air_quality
     if air_quality is not None and air_quality.time_kind is AirQualityTimeKind.OBSERVATION:
-        observation_times[air_quality.source_id] = air_quality.effective_at or snapshot.observed_at
+        observation_times[air_quality.source_id] = (
+            require_aware_datetime(
+                air_quality.effective_at,
+                context=f"Air-quality snapshot {air_quality.source_id} observation time",
+            )
+            if air_quality.effective_at is not None
+            else weather_observed_at
+        )
     allergen = snapshot.allergen
     if allergen is not None:
-        observation_times[allergen.source_id] = allergen.observed_at or snapshot.observed_at
+        observation_times[allergen.source_id] = (
+            require_aware_datetime(
+                allergen.observed_at,
+                context=f"Allergen snapshot {allergen.source_id} observation time",
+            )
+            if allergen.observed_at is not None
+            else weather_observed_at
+        )
     return tuple((document, observation_times.get(document.id)) for document in snapshot_to_documents(snapshot))
