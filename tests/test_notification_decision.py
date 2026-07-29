@@ -4,11 +4,20 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from weather_briefing.application.notification import weather_notification_assessment
+from weather_briefing.composition.notifications import notification_decision_service
+from weather_briefing.models import BriefingResult
 from weather_briefing.notification_decision import (
     LLMPromptNotificationPolicy,
     NotificationAssessment,
     NotificationDecision,
     NotificationDecisionService,
+)
+from weather_briefing.notification_decision.policies import (
+    SERVICE_STATUS_NOTIFICATION_KIND,
+    SERVICE_STATUS_NOTIFICATION_PROMPT,
+    WEATHER_NOTIFICATION_KIND,
+    WEATHER_NOTIFICATION_PROMPT,
 )
 
 
@@ -115,3 +124,168 @@ async def test_decision_service_rejects_unknown_kind() -> None:
 
     with pytest.raises(ValueError, match="Unsupported notification kind: service_status"):
         await service.assess_notification(NotificationAssessment(kind="service_status", payload={}))
+
+
+async def test_application_registry_composes_distinct_prompt_policies() -> None:
+    model = AsyncMock()
+    model.decide_notification.return_value = NotificationDecision(True)
+    service = notification_decision_service(
+        model,
+        (WEATHER_NOTIFICATION_KIND, SERVICE_STATUS_NOTIFICATION_KIND),
+    )
+
+    await service.assess_notification(
+        NotificationAssessment(kind=WEATHER_NOTIFICATION_KIND, payload={"candidate_message": {}})
+    )
+    await service.assess_notification(
+        NotificationAssessment(kind=SERVICE_STATUS_NOTIFICATION_KIND, payload={"current": {}})
+    )
+
+    assert model.decide_notification.await_args_list[0].args[0] == WEATHER_NOTIFICATION_PROMPT
+    assert model.decide_notification.await_args_list[1].args[0] == SERVICE_STATUS_NOTIFICATION_PROMPT
+    assert WEATHER_NOTIFICATION_PROMPT != SERVICE_STATUS_NOTIFICATION_PROMPT
+
+
+def test_application_registry_rejects_unknown_policy_kind() -> None:
+    with pytest.raises(ValueError, match="Unsupported notification kind: future"):
+        notification_decision_service(AsyncMock(), ("future",))
+
+
+def test_weather_assessment_bounds_context_and_keeps_candidate_separate() -> None:
+    payload = {
+        "mode": "briefing",
+        "now": "2026-07-29T09:00:00+08:00",
+        "forecast_date": "2026-07-29",
+        "location_scope": {"full_name": "Example"},
+        "new_articles": [
+            {
+                "source_id": "article-new",
+                "publisher": "Example",
+                "title": "Rain approaching",
+                "published_at": "2026-07-29T08:50:00+08:00",
+                "content": "large article body",
+                "url": "https://example.invalid/new",
+                "verbatim": False,
+            }
+        ],
+        "deferred_articles": [
+            {
+                "source_id": "article-deferred",
+                "publisher": "Example",
+                "title": "Earlier forecast",
+                "published_at": "2026-07-29T07:00:00+08:00",
+                "content": "another large article body",
+                "url": "https://example.invalid/deferred",
+                "verbatim": False,
+            }
+        ],
+        "context_documents": [{"source_id": "weather", "content": "large current source body"}],
+        "recent_context_documents": [{"source_id": "weather", "content": "large historical source body"}],
+        "recent_briefings": [
+            {"mode": "briefing", "published_at": "2026-07-29T07:00:00+08:00", "body": "Older briefing"},
+            {"mode": "forecast", "published_at": "2026-07-29T08:45:00+08:00", "body": "Forecast"},
+            {"mode": "briefing", "published_at": "2026-07-29T08:30:00+08:00", "body": "Latest briefing"},
+        ],
+        "currently_active_warnings": [
+            {
+                "id": "warning",
+                "title": "Heat warning",
+                "status": "active",
+                "detail": "A long warning body that must not be duplicated.",
+                "source_ids": ["warning-source"],
+                "last_confirmed_at": "2026-07-29T08:45:00+08:00",
+            }
+        ],
+    }
+    result = BriefingResult(
+        headline="Rain soon",
+        headline_source_ids=("source",),
+        conclusions=(),
+        raw_payload={
+            "headline": "Rain soon",
+            "headline_source_ids": ["source"],
+            "conclusions": [],
+            "active_warnings": [],
+            "resolved_warning_ids": [],
+            "disaster_tracking": [],
+            "advice": [],
+        },
+    )
+
+    assessment = weather_notification_assessment(payload, result)
+
+    assert assessment.kind == "weather"
+    assert assessment.payload["candidate_message"] == result.raw_payload
+    assert assessment.payload["mode"] == "briefing"
+    assert assessment.payload["now"] == "2026-07-29T09:00:00+08:00"
+    assert assessment.payload["forecast_date"] == "2026-07-29"
+    assert assessment.payload["location_scope"] == {"full_name": "Example"}
+    assert assessment.payload["previous_briefing"] == {
+        "mode": "briefing",
+        "published_at": "2026-07-29T08:30:00+08:00",
+        "body": "Latest briefing",
+    }
+    new_articles = assessment.payload["new_articles"]
+    assert isinstance(new_articles, list)
+    assert new_articles == [
+        {
+            "source_id": "article-new",
+            "publisher": "Example",
+            "title": "Rain approaching",
+            "published_at": "2026-07-29T08:50:00+08:00",
+            "verbatim": False,
+        }
+    ]
+    assert assessment.payload["deferred_articles"] == [
+        {
+            "source_id": "article-deferred",
+            "publisher": "Example",
+            "title": "Earlier forecast",
+            "published_at": "2026-07-29T07:00:00+08:00",
+            "verbatim": False,
+        }
+    ]
+    assert assessment.payload["previous_active_warnings"] == [
+        {
+            "id": "warning",
+            "title": "Heat warning",
+            "status": "active",
+            "last_confirmed_at": "2026-07-29T08:45:00+08:00",
+        }
+    ]
+    assert isinstance(new_articles[0], dict)
+    assert "content" not in new_articles[0]
+    assert "context_documents" not in assessment.payload
+    assert "recent_context_documents" not in assessment.payload
+    assert "recent_briefings" not in assessment.payload
+
+
+def test_weather_assessment_ignores_invalid_optional_collections() -> None:
+    payload: dict[str, object] = {
+        "mode": "briefing",
+        "now": "2026-07-29T09:00:00+08:00",
+        "forecast_date": "2026-07-29",
+        "location_scope": {"full_name": "Example"},
+        "new_articles": "invalid",
+        "deferred_articles": [None, {1: "invalid key"}],
+        "recent_briefings": None,
+        "currently_active_warnings": [None, {1: "invalid key"}, {"id": "warning"}],
+    }
+    result = BriefingResult(
+        headline="Routine weather",
+        headline_source_ids=(),
+        conclusions=(),
+        raw_payload={},
+    )
+
+    assessment = weather_notification_assessment(payload, result)
+
+    assert assessment.payload["new_articles"] == []
+    assert assessment.payload["deferred_articles"] == []
+    assert assessment.payload["previous_briefing"] is None
+    assert assessment.payload["previous_active_warnings"] == [{"id": "warning"}]
+
+    payload["currently_active_warnings"] = None
+    assessment_without_warnings = weather_notification_assessment(payload, result)
+
+    assert assessment_without_warnings.payload["previous_active_warnings"] == []

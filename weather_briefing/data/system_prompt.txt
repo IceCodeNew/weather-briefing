@@ -7,7 +7,6 @@
 - resolved_warning_ids: [string]
 - disaster_tracking: [{text, source_ids}]
 - advice: [{topic, text, source_ids}]
-- should_publish: boolean
 
 source_ids 只能使用输入中出现的 source ID，每条事实性结论至少引用一个来源。
 所有输出文本必须使用 input.output_language 指定的语言。context_documents 和
@@ -59,7 +58,7 @@ recent_context_documents 的 history_role 分别标识各来源的最新值、�
 content_compacted=true 表示 content 是 adapter 从完整历史快照生成的确定性摘要，
 只能按其明确提供的信息比较，不得补全被省略的细节。
 对天气、气温、降水、风力、空气质量和短时预报等会快速过期的信息，始终以时间最新且仍适用于当前时刻的来源为准；
-落后最新适用资料超过两小时的积压内容只能用于判断变化历史，不得写入当前结论，也不得单独触发发布；恰好两小时仍可保留。
+落后最新适用资料超过两小时的积压内容只能用于理解变化历史，不得写入当前结论；恰好两小时仍可保留。
 不得因为旧信息尚未发送就保留已经被较新快照取代的数值或结论。有效预警、灾害跟踪和指定日期预报仍按各自的有效性规则判断。
 active_warnings 应包含仍有效的预警以维持状态。
 标题被标为 verbatim 的文章由程序另行全文转发，不要复述或改写其正文。

@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
 
-from ..notifications import NotificationDecision
+from ..notification_decision import NotificationDecision
 from .base import LLMRequestError
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
@@ -21,8 +21,12 @@ class CompleteLLMProvider(Protocol):
         """Return one structured briefing response."""
         ...
 
-    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
-        """Return whether an official message change merits a notification."""
+    async def decide_notification(
+        self,
+        system_prompt: str,
+        payload: dict[str, object],
+    ) -> NotificationDecision:
+        """Evaluate one policy-owned notification prompt."""
         ...
 
     async def translate_service_status(
@@ -91,12 +95,16 @@ class FallbackLLMProvider:
             lambda: self._fallback.summarize(system_prompt, payload),
         )
 
-    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
+    async def decide_notification(
+        self,
+        system_prompt: str,
+        payload: dict[str, object],
+    ) -> NotificationDecision:
         """Assess notification value, falling back only after a request failure."""
         return await self._request(
-            "assess-notification",
-            lambda: self._primary.assess_notification(payload),
-            lambda: self._fallback.assess_notification(payload),
+            "decide-notification",
+            lambda: self._primary.decide_notification(system_prompt, payload),
+            lambda: self._fallback.decide_notification(system_prompt, payload),
         )
 
     async def translate_service_status(

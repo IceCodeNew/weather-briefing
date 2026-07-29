@@ -13,7 +13,6 @@ from ..data.any_llm_compatibility import (
     UNSUPPORTED_DEFAULT_HEADER_PROVIDERS,
     UNSUPPORTED_JSON_OBJECT_PROVIDERS,
 )
-from ..data.prompts import NOTIFICATION_POLICY
 from ..notification_decision import NotificationDecision
 from . import any_llm_transport
 from .base import LLMOutputLimitError, SensitiveLLMDiagnostics, serialize_llm_payload
@@ -155,13 +154,6 @@ class AnyLLMStructuredProvider:
             )
             raise LLMOutputLimitError("LLM notification decision reached output token limit") from exc
         return NotificationDecision(should_notify=decode_notification_decision(response))
-
-    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
-        """Preserve the existing application boundary while policies migrate."""
-        return await self.decide_notification(
-            f"{NOTIFICATION_POLICY}\n根据输入返回 should_notify。只返回请求的 JSON 对象。",
-            payload,
-        )
 
     async def translate_service_status(
         self,

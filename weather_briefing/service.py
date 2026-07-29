@@ -7,94 +7,35 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Protocol
 
 import pendulum
 
+from .application.briefing_settings import BriefingSettings
+from .application.briefing_validation import briefing_result_validator, required_advice_topics
 from .application.collection import collect_rss_articles, collect_weather_documents
 from .application.context_history import (
     HistoricalContextOverflow as _HistoricalContextOverflow,
 )
 from .application.context_history import bounded_context_history as _bounded_context_history
 from .application.context_history import context_budget_fingerprints as _context_budget_fingerprints
+from .application.notification import weather_notification_assessment
 from .application.payloads import build_briefing_payload
 from .application.summarization import summarize_validated
 from .delivery import DeliveryError, DeliveryProvider
-from .llm import LLMError, LLMProvider, serialize_llm_payload
+from .llm import LLMProvider, serialize_llm_payload
 from .models import (
-    AdviceTopic,
     Article,
     BriefingResult,
-    FeedConfig,
     ResolvedLocation,
     SourceDocument,
 )
-from .notifications import NotificationDecision
+from .notification_decision import NotificationDecision, NotificationDecisionProvider
 from .sources import RSSFeedSource
 from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
 from .weather import WeatherContextProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service")
-
-
-class BriefingSettings(Protocol):
-    """Expose the settings required by briefing orchestration."""
-
-    @property
-    def timezone(self) -> pendulum.Timezone:
-        """Return the briefing timezone."""
-        ...
-
-    @property
-    def feeds(self) -> tuple[FeedConfig, ...]:
-        """Return configured RSS feeds."""
-        ...
-
-    @property
-    def rss_stale_hours(self) -> int:
-        """Return the RSS staleness threshold in hours."""
-        ...
-
-    @property
-    def rss_failure_threshold(self) -> int:
-        """Return the consecutive RSS failure alert threshold."""
-        ...
-
-    @property
-    def warning_retention_hours(self) -> int:
-        """Return the active-warning retention window in hours."""
-        ...
-
-    @property
-    def history_hours(self) -> int:
-        """Return the retained briefing context window in hours."""
-        ...
-
-    @property
-    def llm_history_max_documents(self) -> int:
-        """Return the maximum historical context snapshots sent to the LLM."""
-        ...
-
-    @property
-    def llm_history_max_characters(self) -> int:
-        """Return the serialized character budget for historical context."""
-        ...
-
-    @property
-    def briefing_max_characters(self) -> int:
-        """Return the configured briefing character budget."""
-        ...
-
-    @property
-    def llm_max_output_tokens(self) -> int:
-        """Return the configured structured output token budget."""
-        ...
-
-    @property
-    def llm_max_attempts(self) -> int:
-        """Return the maximum LLM validation attempts."""
-        ...
 
 
 class BriefingService:
@@ -107,6 +48,7 @@ class BriefingService:
         state: SQLiteStateStore,
         rss_source: RSSFeedSource,
         llm: LLMProvider,
+        notification_decisions: NotificationDecisionProvider,
         delivery: DeliveryProvider,
         ops_delivery: DeliveryProvider,
         weather_context_provider: WeatherContextProvider | None = None,
@@ -117,6 +59,7 @@ class BriefingService:
         self._state = state
         self._rss_source = rss_source
         self._llm = llm
+        self._notification_decisions = notification_decisions
         self._delivery = delivery
         self._ops_delivery = ops_delivery
         self._weather_context_provider = weather_context_provider
@@ -323,8 +266,8 @@ class BriefingService:
             "briefing_max_characters": briefing_limit,
             "llm_max_output_tokens": self._settings.llm_max_output_tokens,
         }
-        required_advice_topics = _required_advice_topics(kind, context)
-        payload["required_advice_topics"] = [topic.value for topic in required_advice_topics]
+        advice_topics = required_advice_topics(kind, context)
+        payload["required_advice_topics"] = [topic.value for topic in advice_topics]
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "LLM payload prepared: serialized_characters=%d",
@@ -333,34 +276,18 @@ class BriefingService:
         allergen_source_ids = {document.id for document in context if document.has_allergen_information}
         valid_source_ids = {article.id for article in source_articles} | {document.id for document in reference_context}
 
-        def validate_result(
-            candidate: BriefingResult,
-            candidate_notification: NotificationDecision,
-        ) -> None:
-            candidate_message = self._delivery.render_briefing(candidate, source_articles, reference_context)
-            if kind == "briefing" and candidate.advice:
-                raise LLMError("briefing must not repeat lifestyle advice")
-            if kind == "forecast" and not candidate_notification.should_notify:
-                raise LLMError("forecast must set should_publish=true")
-            missing_advice_topics = set(required_advice_topics) - {item.topic for item in candidate.advice}
-            if missing_advice_topics:
-                missing = ", ".join(sorted(topic.value for topic in missing_advice_topics))
-                raise LLMError(f"forecast advice is missing required topics: {missing}")
-            if any(
-                item.topic is AdviceTopic.ALLERGEN and allergen_source_ids.isdisjoint(item.source_ids)
-                for item in candidate.advice
-            ):
-                raise LLMError("allergen advice must cite a current allergen-capable source")
-            if not self._delivery.briefing_fits(
-                candidate_message,
-                self._settings.briefing_max_characters,
-            ):
-                raise LLMError(
-                    f"briefing has {candidate_message.visible_length} visible characters; "
-                    f"limit is {briefing_limit}; rendered fields do not fit the delivery chunks"
-                )
+        validate_result = briefing_result_validator(
+            kind=kind,
+            delivery=self._delivery,
+            source_articles=source_articles,
+            reference_context=reference_context,
+            required_topics=advice_topics,
+            allergen_source_ids=allergen_source_ids,
+            configured_max_characters=self._settings.briefing_max_characters,
+            delivery_limit=briefing_limit,
+        )
 
-        result, notification = await summarize_validated(
+        result = await summarize_validated(
             self._llm,
             payload,
             now,
@@ -376,19 +303,31 @@ class BriefingService:
                 "Ignoring %d distinct resolved warning ID(s) that are not currently active",
                 len(unknown_resolved_warning_ids),
             )
+            resolved_warning_ids = tuple(
+                warning_id for warning_id in result.resolved_warning_ids if warning_id in active_warning_ids
+            )
             result = replace(
                 result,
-                resolved_warning_ids=tuple(
-                    warning_id for warning_id in result.resolved_warning_ids if warning_id in active_warning_ids
-                ),
+                resolved_warning_ids=resolved_warning_ids,
+                raw_payload={
+                    **result.raw_payload,
+                    "resolved_warning_ids": list(resolved_warning_ids),
+                },
             )
+        notification = (
+            NotificationDecision(should_notify=True)
+            if kind == "forecast"
+            else await self._notification_decisions.assess_notification(
+                weather_notification_assessment(payload, result)
+            )
+        )
         message = self._delivery.render_briefing(
             result,
             source_articles,
             reference_context,
         )
         if kind == "briefing" and not notification.should_notify and not force_publish:
-            _LOGGER.info("Briefing skipped: should_publish=False")
+            _LOGGER.info("Briefing skipped: notification policy returned should_notify=False")
             self._save_result_state(
                 kind,
                 now,
@@ -529,23 +468,6 @@ def _format_context_overflows(overflows: list[_HistoricalContextOverflow]) -> st
 
 def _unique_articles(articles: tuple[Article, ...]) -> tuple[Article, ...]:
     return tuple({article.id: article for article in articles}.values())
-
-
-def _required_advice_topics(
-    kind: str,
-    context: tuple[SourceDocument, ...],
-) -> tuple[AdviceTopic, ...]:
-    if kind != "forecast":
-        return ()
-    topics = [
-        AdviceTopic.CLOTHING,
-        AdviceTopic.DEHUMIDIFICATION,
-        AdviceTopic.EXERCISE,
-        AdviceTopic.MASK,
-    ]
-    if any(document.has_allergen_information for document in context):
-        topics.append(AdviceTopic.ALLERGEN)
-    return tuple(topics)
 
 
 def _unique_documents(

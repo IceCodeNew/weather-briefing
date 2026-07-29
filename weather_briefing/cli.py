@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from . import __version__
 from .api_client import LoggedAsyncClient
+from .composition.notifications import notification_decision_service as _notification_decision_service
 from .composition.providers import delivery_provider as _delivery_provider
 from .composition.providers import delivery_providers as _delivery_providers
 from .composition.providers import llm_provider as _llm_provider
@@ -37,6 +38,7 @@ from .geocoding import (
 )
 from .llm import LazyServiceStatusLLM
 from .models import ResolvedLocation
+from .notification_decision.policies import WEATHER_NOTIFICATION_KIND
 from .persistence import locking as persistence_locking
 from .service import BriefingService
 from .service_status import ServiceStatusMonitor
@@ -304,6 +306,10 @@ async def _run_unlocked(
         delivery = _delivery_provider(settings, client, diagnostics)
         llm_provider = await _llm_provider(settings, diagnostics)
         stack.push_async_callback(llm_provider.aclose)
+        notification_decisions = _notification_decision_service(
+            llm_provider,
+            (WEATHER_NOTIFICATION_KIND,),
+        )
         nominatim_provider = NominatimGeocodingProvider(client)
         resolver = CachedLocationResolver(
             PrecisionReducingGeocodingProvider(
@@ -352,6 +358,7 @@ async def _run_unlocked(
                         retry_max_seconds=settings.rss_retry_max_seconds,
                     ),
                     llm_provider,
+                    notification_decisions,
                     delivery,
                     delivery,
                     _weather_context_provider(settings, client, location),

@@ -24,11 +24,10 @@ async def test_repair_payload_uses_explicit_warning_ids() -> None:
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": True,
             }
 
     provider = RepairingProvider()
-    result, decision = await summarize_validated(
+    result = await summarize_validated(
         provider,
         payload,
         pendulum.datetime(2026, 7, 23, tz="UTC"),
@@ -36,11 +35,10 @@ async def test_repair_payload_uses_explicit_warning_ids() -> None:
         {"warning-2", "warning-1"},
         max_attempts=2,
         output_language="en",
-        validator=lambda candidate, notification: None,
+        validator=lambda candidate: None,
     )
 
     assert isinstance(result, BriefingResult)
-    assert decision.should_notify
     assert provider.payloads[1]["original_input"] is payload
     assert provider.payloads[1]["allowed_resolved_warning_ids"] == ["warning-1", "warning-2"]
 
@@ -64,11 +62,10 @@ async def test_output_token_limit_retries_with_contract_repair() -> None:
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": True,
             }
 
     provider = TruncatedProvider()
-    result, decision = await summarize_validated(
+    result = await summarize_validated(
         provider,
         payload,
         pendulum.datetime(2026, 7, 24, tz="UTC"),
@@ -76,10 +73,9 @@ async def test_output_token_limit_retries_with_contract_repair() -> None:
         set(),
         max_attempts=2,
         output_language="en",
-        validator=lambda candidate, notification: None,
+        validator=lambda candidate: None,
     )
 
     assert isinstance(result, BriefingResult)
-    assert decision.should_notify
     assert len(provider.instructions) == 2
     assert "LLM response reached output token limit" in provider.instructions[1]
