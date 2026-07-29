@@ -3,6 +3,8 @@ from unittest.mock import patch
 import pytest
 
 from weather_briefing.data.prompts import NOTIFICATION_POLICY, SYSTEM_PROMPT, _load_system_prompt
+from weather_briefing.notification_decision import policies
+from weather_briefing.notification_decision.policies import _load_notification_prompt
 
 
 @pytest.mark.parametrize(
@@ -16,6 +18,17 @@ def test_system_prompt_load_failure_is_actionable(error: Exception) -> None:
         pytest.raises(RuntimeError, match="Unable to load prompt: system_prompt.txt"),
     ):
         _load_system_prompt()
+
+
+def test_notification_prompt_package_has_direct_execution_fallback() -> None:
+    with (
+        patch.object(policies, "__package__", None),
+        patch("importlib.resources.files") as files,
+    ):
+        files.return_value.joinpath.return_value.read_text.return_value = "prompt"
+        assert _load_notification_prompt("weather.txt") == "prompt"
+
+    files.assert_called_once_with("weather_briefing.notification_decision")
 
 
 def test_prompt_limits_disasters_to_the_location_scope() -> None:
