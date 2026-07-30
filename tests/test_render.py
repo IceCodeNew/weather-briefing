@@ -1,7 +1,13 @@
 import pendulum
 import pytest
 
-from weather_briefing.delivery import BarkTextRenderer, PlainTextRenderer, TelegramHTMLRenderer
+from weather_briefing.delivery import (
+    BarkTextRenderer,
+    PlainTextRenderer,
+    ServerChan3Renderer,
+    ServerChanTurboRenderer,
+    TelegramHTMLRenderer,
+)
 from weather_briefing.models import (
     Advice,
     AdviceTopic,
@@ -66,6 +72,67 @@ def test_plain_text_renderer_supports_numbered_source_names() -> None:
     )
 
     assert rendered.body == ("Daily [1]\n\nWeather information\n\n- Rain [1]\n\nSources: [1] Weather API")
+
+
+def test_serverchan_turbo_renderer_keeps_markdown_and_separates_title() -> None:
+    context = SourceDocument("source", "Weather API", "https://example.invalid/source", "")
+    result = BriefingResult(
+        "  Daily weather headline that exceeds thirty-two characters  ",
+        ("source",),
+        (Conclusion("Rain", ("source",)),),
+        output_language="en",
+    )
+
+    rendered = ServerChanTurboRenderer().render_briefing(result, (), (context,))
+
+    assert rendered.title == "Daily weather headline that exce"
+    assert rendered.body == (
+        "Daily weather headline that exceeds thirty-two characters   "
+        "(Sources: Weather API: https://example.invalid/source)\n\n"
+        "Weather information\n\n"
+        "- Rain (Sources: Weather API: https://example.invalid/source)"
+    )
+
+
+def test_serverchan_3_renderer_uses_double_newlines() -> None:
+    context = SourceDocument("source", "Weather API", "https://example.invalid/source", "")
+    result = BriefingResult(
+        "Daily",
+        ("source",),
+        (Conclusion("Rain", ("source",)),),
+        output_language="en",
+    )
+
+    rendered = ServerChan3Renderer().render_briefing(result, (), (context,))
+
+    assert rendered.title == "Daily"
+    assert "\n\n" in rendered.body
+    assert "\n\n\n" not in rendered.body
+    assert "\n" not in rendered.body.replace("\n\n", "")
+
+
+@pytest.mark.parametrize(
+    ("renderer", "expected_body"),
+    (
+        (ServerChanTurboRenderer(), "Body\nline"),
+        (ServerChan3Renderer(), "Body\n\nline"),
+    ),
+)
+def test_serverchan_renderers_separate_verbatim_titles(renderer, expected_body: str) -> None:
+    now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
+    article = Article("article", "feed", "Feed", "  Article\n title  ", "https://example.invalid", now, " Body\nline ")
+
+    rendered = renderer.render_verbatim(article)
+
+    assert rendered.title == "Article title"
+    assert rendered.body == expected_body
+
+
+def test_serverchan_renderer_uses_a_safe_default_alert_title() -> None:
+    rendered = ServerChanTurboRenderer().render_alert(" \n ", " Body ")
+
+    assert rendered.title == "weather-briefing"
+    assert rendered.body == "Body"
 
 
 def test_bark_text_renderer_uses_numbered_sources_without_urls() -> None:

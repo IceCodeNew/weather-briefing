@@ -33,5 +33,7 @@ class PublisherName(StrEnum):
     """Identify application-owned delivery provider adapters."""
 
     BARK = "bark"
+    SERVERCHAN_3 = "serverchan-3"
+    SERVERCHAN_TURBO = "serverchan-turbo"
     STDOUT = "stdout"
     TELEGRAM = "telegram"

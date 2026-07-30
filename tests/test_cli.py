@@ -50,7 +50,13 @@ from weather_briefing.composition.weather import build_weather_provider as _buil
 from weather_briefing.composition.weather import qweather_is_configured as _qweather_is_configured
 from weather_briefing.composition.weather import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
-from weather_briefing.delivery import BarkTextRenderer
+from weather_briefing.delivery import (
+    BarkTextRenderer,
+    ServerChan3Publisher,
+    ServerChan3Renderer,
+    ServerChanTurboPublisher,
+    ServerChanTurboRenderer,
+)
 from weather_briefing.llm import FallbackLLMProvider
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
@@ -817,6 +823,8 @@ _DEFAULT_SETTINGS = Settings(
     publisher="stdout",
     telegram_bot_token=None,
     telegram_chat_id=None,
+    serverchan_turbo_sendkey=None,
+    serverchan_3_sendkey=None,
     bark_device_key=None,
     bark_base_url="https://api.day.app",
     bark_group="weather-briefing",
@@ -847,6 +855,8 @@ def _make_fake_settings(
     publisher: str = "stdout",
     telegram_bot_token: str | None = None,
     telegram_chat_id: str | None = None,
+    serverchan_turbo_sendkey: str | None = None,
+    serverchan_3_sendkey: str | None = None,
     bark_device_key: str | None = None,
     bark_base_url: str = "https://api.day.app",
     bark_group: str = "weather-briefing",
@@ -868,6 +878,8 @@ def _make_fake_settings(
         publisher=publisher,
         telegram_bot_token=telegram_bot_token,
         telegram_chat_id=telegram_chat_id,
+        serverchan_turbo_sendkey=serverchan_turbo_sendkey,
+        serverchan_3_sendkey=serverchan_3_sendkey,
         bark_device_key=bark_device_key,
         bark_base_url=bark_base_url,
         bark_group=bark_group,
@@ -1364,6 +1376,38 @@ class TestDeliveryProvider:
         )
         provider = _delivery_provider(settings, async_client)
         assert provider.single_message_limit == 650
+
+    async def test_serverchan_turbo_requires_its_own_sendkey(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(publisher="serverchan-turbo")
+        with pytest.raises(ValueError, match="SERVERCHAN_TURBO_SENDKEY"):
+            _delivery_provider(settings, async_client)
+
+    async def test_serverchan_turbo_uses_its_own_adapter(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(
+            publisher="serverchan-turbo",
+            serverchan_turbo_sendkey="SCTtest",
+        )
+
+        provider = _delivery_provider(settings, async_client)
+
+        assert isinstance(provider.renderer, ServerChanTurboRenderer)
+        assert isinstance(provider.publisher, ServerChanTurboPublisher)
+
+    async def test_serverchan_3_requires_its_own_sendkey(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(publisher="serverchan-3")
+        with pytest.raises(ValueError, match="SERVERCHAN_3_SENDKEY"):
+            _delivery_provider(settings, async_client)
+
+    async def test_serverchan_3_uses_its_own_adapter(self, async_client: httpx.AsyncClient) -> None:
+        settings = _make_fake_settings(
+            publisher="serverchan-3",
+            serverchan_3_sendkey="sctp123tTest",
+        )
+
+        provider = _delivery_provider(settings, async_client)
+
+        assert isinstance(provider.renderer, ServerChan3Renderer)
+        assert isinstance(provider.publisher, ServerChan3Publisher)
 
     async def test_unsupported_publisher(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(publisher="unsupported")

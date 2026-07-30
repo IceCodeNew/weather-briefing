@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,10 @@ from ..data.any_llm_compatibility import (
     UNSUPPORTED_JSON_OBJECT_PROVIDERS,
 )
 from ..data.bark import BARK_DEFAULT_LLM_MAX_OUTPUT_TOKENS, BARK_MAX_MESSAGE_LENGTH
+from ..data.serverchan import (
+    SERVERCHAN_3_SENDKEY_PATTERN,
+    SERVERCHAN_TURBO_SENDKEY_PATTERN,
+)
 from ..data.service_endpoints import BARK_BASE_URL
 from ..models import FeedConfig, LocationSpec
 from ..registries import PublisherName
@@ -85,6 +90,8 @@ class Settings:
     publisher: str
     telegram_bot_token: str | None
     telegram_chat_id: str | None
+    serverchan_turbo_sendkey: str | None
+    serverchan_3_sendkey: str | None
     bark_device_key: str | None
     bark_base_url: str
     bark_group: str
@@ -133,6 +140,12 @@ class Settings:
         telegram_configured = selected_publisher == PublisherName.TELEGRAM or (
             service_status_enabled and PublisherName.TELEGRAM in service_status_publishers
         )
+        serverchan_turbo_configured = selected_publisher == PublisherName.SERVERCHAN_TURBO or (
+            service_status_enabled and PublisherName.SERVERCHAN_TURBO in service_status_publishers
+        )
+        serverchan_3_configured = selected_publisher == PublisherName.SERVERCHAN_3 or (
+            service_status_enabled and PublisherName.SERVERCHAN_3 in service_status_publishers
+        )
         telegram_bot_token = clean_env(os.getenv("TELEGRAM_BOT_TOKEN")) or None
         telegram_chat_id = clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None
         if telegram_configured:
@@ -140,6 +153,20 @@ class Settings:
                 raise ConfigurationError("Missing required environment variable: TELEGRAM_BOT_TOKEN")
             if telegram_chat_id is None:
                 raise ConfigurationError("Missing required environment variable: TELEGRAM_CHAT_ID")
+        serverchan_turbo_sendkey = clean_env(os.getenv("SERVERCHAN_TURBO_SENDKEY")) or None
+        if serverchan_turbo_configured:
+            if serverchan_turbo_sendkey is None:
+                raise ConfigurationError("Missing required environment variable: SERVERCHAN_TURBO_SENDKEY")
+            if re.fullmatch(SERVERCHAN_TURBO_SENDKEY_PATTERN, serverchan_turbo_sendkey) is None:
+                raise ConfigurationError(
+                    "SERVERCHAN_TURBO_SENDKEY must start with SCT and contain only letters and digits"
+                )
+        serverchan_3_sendkey = clean_env(os.getenv("SERVERCHAN_3_SENDKEY")) or None
+        if serverchan_3_configured:
+            if serverchan_3_sendkey is None:
+                raise ConfigurationError("Missing required environment variable: SERVERCHAN_3_SENDKEY")
+            if re.fullmatch(SERVERCHAN_3_SENDKEY_PATTERN, serverchan_3_sendkey) is None:
+                raise ConfigurationError("SERVERCHAN_3_SENDKEY must use the sctp{uid}t{token} format")
         if bark_selected:
             briefing_max_characters = bounded_positive_integer(
                 "BRIEFING_MAX_CHARACTERS",
@@ -279,6 +306,8 @@ class Settings:
             publisher=selected_publisher,
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
+            serverchan_turbo_sendkey=serverchan_turbo_sendkey,
+            serverchan_3_sendkey=serverchan_3_sendkey,
             bark_device_key=bark_device_key,
             bark_base_url=bark_base_url,
             bark_group=bark_group,

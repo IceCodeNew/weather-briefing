@@ -13,6 +13,10 @@ from ..delivery import (
     DeliveryProvider,
     PlainTextRenderer,
     RenderedTextDiagnostics,
+    ServerChan3Publisher,
+    ServerChan3Renderer,
+    ServerChanTurboPublisher,
+    ServerChanTurboRenderer,
     StdoutPublisher,
     TelegramHTMLRenderer,
     TelegramPublisher,
@@ -94,11 +98,41 @@ def _build_bark_publisher(
     )
 
 
+def _build_serverchan_turbo_publisher(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    diagnostics: RenderedTextDiagnostics | None,
+) -> DeliveryProvider:
+    if not settings.serverchan_turbo_sendkey:
+        raise ValueError("ServerChan Turbo publisher requires SERVERCHAN_TURBO_SENDKEY")
+    return DeliveryProvider(
+        ServerChanTurboRenderer(),
+        ServerChanTurboPublisher(client, settings.serverchan_turbo_sendkey, diagnostics),
+        diagnostics=diagnostics,
+    )
+
+
+def _build_serverchan_3_publisher(
+    settings: Settings,
+    client: httpx.AsyncClient,
+    diagnostics: RenderedTextDiagnostics | None,
+) -> DeliveryProvider:
+    if not settings.serverchan_3_sendkey:
+        raise ValueError("ServerChan 3 publisher requires SERVERCHAN_3_SENDKEY")
+    return DeliveryProvider(
+        ServerChan3Renderer(),
+        ServerChan3Publisher(client, settings.serverchan_3_sendkey, diagnostics),
+        diagnostics=diagnostics,
+    )
+
+
 PUBLISHER_BUILDERS: dict[
     str,
     Callable[[Settings, httpx.AsyncClient, RenderedTextDiagnostics | None], DeliveryProvider],
 ] = {
     PublisherName.BARK: _build_bark_publisher,
+    PublisherName.SERVERCHAN_3: _build_serverchan_3_publisher,
+    PublisherName.SERVERCHAN_TURBO: _build_serverchan_turbo_publisher,
     PublisherName.STDOUT: _build_stdout_publisher,
     PublisherName.TELEGRAM: _build_telegram_publisher,
 }
