@@ -205,7 +205,7 @@ CLI 负责关闭自己创建的模型服务对象及其网络资源。测试或�
 
 模型返回平台无关的 `BriefingResult`。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer。Bark 使用紧凑纯文本 renderer，将带来源编号的 headline 放入通知标题，正文不再重复标题，并以短编号关联末尾的来源名称表；来源 URL 省略，但仍保留逐项引用校验。
 
-Telegram 的目标配置、文本转换、分块和静默选项由 Apprise 承担。composition root 用运行时 Bot Token 和 Chat ID 分别构造普通与静默 Apprise 目标，固定输入纯文本、关闭链接预览并启用 Apprise 的文本安全分块；静默目标把最终时段的无声标志映射到 Telegram `disable_notification`。Apprise 的同步通知路径在单独的 worker 中执行，使同一消息的分片保持顺序且不阻塞事件循环；运行依赖显式启用 Requests SOCKS 支持，使标准 HTTP(S)/SOCKS 代理环境对 Telegram 仍然有效。应用只保留一个 SDK 兼容 sender，补充 Apprise 1.12 尚未提供的 Telegram `ok=true` 严格成功确认并收敛为安全的 `DeliveryError`，不再维护 Telegram 专用 renderer、HTML 分块器或错误正文分类表。
+Telegram 的目标配置、原始纯文本分块和静默选项由 Apprise 承担。composition root 用运行时 Bot Token 和 Chat ID 分别构造普通与静默 Apprise 目标，固定输入纯文本、关闭链接预览并启用 Apprise 分块；静默目标把最终时段的无声标志映射到 Telegram `disable_notification`。Apprise 的同步通知路径在单独的 worker 中执行，使同一消息的分片保持顺序且不阻塞事件循环；运行依赖显式启用 Requests SOCKS 支持，使标准 HTTP(S)/SOCKS 代理环境对 Telegram 仍然有效。应用只保留一个 SDK 兼容 sender，对每个独立分片执行 Telegram HTML 安全转义，补充 Apprise 1.12 尚未提供的 Telegram `ok=true` 严格成功确认，并把失败收敛为安全的 `DeliveryError`；项目不再维护 Telegram 专用 renderer、HTML 分块器或错误正文分类表。
 
 Apprise logger 在应用进程中完全关闭，因为插件 DEBUG 和 WARNING 可能包含消息、目标或第三方响应。应用自己的 INFO/WARNING 只记录消息长度、单条消息模式、静默标志和通用失败原因，不记录正文、Bot Token、Chat ID 或第三方异常文本。
 

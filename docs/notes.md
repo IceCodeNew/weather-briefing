@@ -144,7 +144,7 @@ any-llm 提供稳定的统一生命周期接口后，应删除属性探测并直
 
 ## Bark 暂不迁移到 Apprise
 
-Telegram 投递已迁移到 Apprise，由维护中的通知库承担目标配置、纯文本转义、分块和静默选项。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer。项目只保留配置组合、平台长度策略，以及一个发送请求并检查 Telegram JSON `ok=true` 的 SDK 兼容 sender；Apprise 1.12 只检查 HTTP 状态，不能作为严格成功确认。同步 Apprise 通知整体放入单个 worker，避免阻塞事件循环，同时防止同一长消息的分片并发到达。Apprise 自身日志保持关闭，避免第三方错误正文、目标或消息进入运行日志。
+Telegram 投递已迁移到 Apprise，由维护中的通知库承担目标配置、原始纯文本分块和静默选项。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer。项目只保留配置组合、平台长度策略，以及一个逐分片执行 Telegram HTML 安全转义、发送请求并检查 Telegram JSON `ok=true` 的 SDK 兼容 sender；Apprise 1.12 只检查 HTTP 状态，不能作为严格成功确认。同步 Apprise 通知整体放入单个 worker，避免阻塞事件循环，同时防止同一长消息的分片并发到达。Apprise 自身日志保持关闭，避免第三方错误正文、目标或消息进入运行日志。
 
 Apprise 1.12 不提供安全的结构化 Telegram 失败类别，兼容 sender 也不解析错误正文来推断目标是否永久不可用。因此 briefing 投递失败后，复用同一 Telegram 目标的运维告警仍会有界尝试一次；瞬时失败可能在第二次请求时恢复，永久失败则只增加一次失败请求和一条通用错误日志，不会递归发送告警。相比恢复 Telegram 错误正文映射，这一取舍保留了更小且不依赖私密第三方文本的边界。Apprise 提供不暴露响应正文的结构化失败类别后，再恢复提前跳过永久不可用目标。
 
