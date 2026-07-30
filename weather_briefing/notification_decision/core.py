@@ -8,11 +8,17 @@ from types import MappingProxyType
 from typing import Protocol, TypeGuard
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class NotificationDecision:
     """State whether one candidate is worth interrupting the user."""
 
     should_notify: bool
+
+    def __init__(self, should_notify: object) -> None:
+        """Reject non-boolean decisions at the portable policy boundary."""
+        if not isinstance(should_notify, bool):
+            raise ValueError("Notification decision should_notify must be a boolean")
+        object.__setattr__(self, "should_notify", should_notify)
 
 
 def _validated_kind(value: object, *, context: str) -> str:
@@ -67,8 +73,8 @@ class NotificationPolicy(Protocol):
     async def assess_notification(
         self,
         payload: Mapping[str, object],
-    ) -> NotificationDecision:
-        """Evaluate one candidate payload."""
+    ) -> object:
+        """Evaluate one candidate payload and return an untrusted decision."""
         ...
 
 
@@ -135,4 +141,7 @@ class NotificationDecisionService:
         policy = self._policies.get(assessment.kind)
         if policy is None:
             raise ValueError(f"Unsupported notification kind: {assessment.kind}")
-        return await policy.assess_notification(assessment.payload)
+        decision = await policy.assess_notification(assessment.payload)
+        if not isinstance(decision, NotificationDecision):
+            raise ValueError("Notification policy must return a NotificationDecision")
+        return decision

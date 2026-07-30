@@ -63,6 +63,26 @@ async def test_message_type_can_use_non_llm_policy_logic() -> None:
     assert decision.should_notify
 
 
+@pytest.mark.parametrize("should_notify", (None, 0, 1, "false", (), object()))
+def test_notification_decision_rejects_non_boolean_values(should_notify: object) -> None:
+    with pytest.raises(ValueError, match="should_notify must be a boolean"):
+        NotificationDecision(should_notify)
+
+
+async def test_decision_service_rejects_invalid_custom_policy_result() -> None:
+    @dataclass(frozen=True, slots=True)
+    class CustomPolicy:
+        kind: str = "custom"
+
+        async def assess_notification(self, payload: Mapping[str, object]) -> object:
+            return "false"
+
+    service = NotificationDecisionService((CustomPolicy(),))
+
+    with pytest.raises(ValueError, match="must return a NotificationDecision"):
+        await service.assess_notification(NotificationAssessment("custom", {}))
+
+
 @pytest.mark.parametrize("value", ("", " weather", "weather ", 1))
 def test_assessment_rejects_unnormalized_kind(value: object) -> None:
     with pytest.raises(ValueError, match="non-empty normalized"):
