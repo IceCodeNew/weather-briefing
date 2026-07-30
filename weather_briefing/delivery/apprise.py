@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from typing import Protocol
 
 from apprise import Apprise, AppriseAsset, NotifyFormat
+from apprise.plugins import telegram as apprise_telegram
+from apprise.plugins.telegram import NotifyTelegram
 
 from ..models import RenderedMessage
 from .base import DeliveryError
@@ -13,14 +17,68 @@ from .base import DeliveryError
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 
 
-class AppriseNotifier(Protocol):
-    """Expose the asynchronous Apprise notification entry point."""
+class _StrictNotifyTelegram(NotifyTelegram):
+    """Preserve strict Telegram success validation missing from Apprise 1.12."""
 
-    async def async_notify(
+    def send(
         self,
-        *,
+        body: str,
+        title: str = "",
+        notify_type: object = None,
+        attach: object = None,
+        body_format: NotifyFormat | None = None,
+        **kwargs: object,
+    ) -> bool:
+        """Send text messages sequentially and require Telegram ``ok=true``."""
+        if attach is not None or not self.targets:
+            return False
+
+        url = f"{self.notify_url}{self.bot_token}/sendMessage"
+        headers = {
+            "User-Agent": self.app_id,
+            "Content-Type": "application/json",
+        }
+        for chat_id, topic in self.targets:
+            payload: dict[str, object] = {
+                "chat_id": chat_id,
+                "disable_notification": self.silent,
+                "disable_web_page_preview": not self.preview,
+                "parse_mode": "HTML",
+                "text": body,
+            }
+            if topic:
+                payload["message_thread_id"] = topic
+            self.throttle()
+            try:
+                response = apprise_telegram.requests.post(
+                    url,
+                    data=json.dumps(payload),
+                    headers=headers,
+                    verify=self.verify_certificate,
+                    timeout=self.request_timeout,
+                    allow_redirects=self.redirects,
+                )
+            except apprise_telegram.requests.RequestException:
+                return False
+            if response.status_code != apprise_telegram.requests.codes.ok:
+                return False
+            try:
+                response_payload = json.loads(response.content)
+            except (TypeError, ValueError):
+                return False
+            if not isinstance(response_payload, dict) or response_payload.get("ok") is not True:
+                return False
+        return True
+
+
+class AppriseNotifier(Protocol):
+    """Expose the synchronous Apprise notification entry point."""
+
+    def notify(
+        self,
         body: str,
         title: str,
+        *,
         body_format: NotifyFormat,
     ) -> bool | None:
         """Send one notification."""
@@ -64,9 +122,10 @@ class TelegramPublisher:
         )
         notifier = self._silent_notifier if silent else self._notifier
         try:
-            delivered = await notifier.async_notify(
-                body=message.body,
-                title=message.title or "",
+            delivered = await asyncio.to_thread(
+                notifier.notify,
+                message.body,
+                message.title or "",
                 body_format=NotifyFormat.TEXT,
             )
         except Exception:
@@ -85,27 +144,32 @@ def telegram_notifier(
     timeout_seconds: float,
 ) -> Apprise:
     """Build one validated Telegram notification target."""
+    asset = AppriseAsset(
+        app_id="weather-briefing",
+        async_mode=False,
+        secure_logging=True,
+        storage_mode="memory",
+    )
     notifier = Apprise(
-        asset=AppriseAsset(
-            app_id="weather-briefing",
-            async_mode=True,
-            secure_logging=True,
-            storage_mode="memory",
+        asset=asset,
+    )
+    try:
+        service = _StrictNotifyTelegram(
+            token,
+            (chat_id,),
+            asset=asset,
+            schema="tgram",
+            detect_owner=False,
+            include_image=False,
+            format="html",
+            overflow="split",
+            preview=False,
+            silent=silent,
+            cto=timeout_seconds,
+            rto=timeout_seconds,
         )
-    )
-    configured = notifier.add(
-        {
-            "schema": "tgram",
-            "bot_token": token,
-            "targets": (chat_id,),
-            "format": "text",
-            "overflow": "split",
-            "preview": False,
-            "silent": silent,
-            "cto": timeout_seconds,
-            "rto": timeout_seconds,
-        }
-    )
-    if not configured:
+    except TypeError:
+        raise ValueError("Invalid Telegram publisher configuration") from None
+    if not service.targets or not notifier.add(service):
         raise ValueError("Invalid Telegram publisher configuration")
     return notifier

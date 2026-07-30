@@ -1,9 +1,14 @@
+import html
 import json
+import threading
 from typing import Any
 
 import pendulum
 import pytest
-from apprise import NotifyFormat
+from apprise import Apprise, AppriseAsset, NotifyFormat
+from apprise.plugins import telegram as apprise_telegram
+from apprise.plugins.telegram import NotifyTelegram
+from requests.adapters import SOCKSProxyManager
 
 from weather_briefing.delivery import (
     BarkTextRenderer,
@@ -69,11 +74,11 @@ class RecordingNotifier:
         self.error = error
         self.calls: list[tuple[str, str, NotifyFormat]] = []
 
-    async def async_notify(
+    def notify(
         self,
-        *,
         body: str,
         title: str,
+        *,
         body_format: NotifyFormat,
     ) -> bool | None:
         self.calls.append((body, title, body_format))
@@ -230,7 +235,9 @@ def test_telegram_notifier_configures_apprise_service_variants() -> None:
     )
 
     assert len(normal) == 1
-    assert "format=text" in normal.urls(privacy=False)[0]
+    assert isinstance(normal.asset, AppriseAsset)
+    assert normal.asset.async_mode is False
+    assert "format=html" in normal.urls(privacy=False)[0]
     assert "overflow=split" in normal.urls(privacy=False)[0]
     assert "preview=no" in normal.urls(privacy=False)[0]
     assert "silent=no" in normal.urls(privacy=False)[0]
@@ -240,10 +247,36 @@ def test_telegram_notifier_configures_apprise_service_variants() -> None:
     assert "abcdefghijklmnopqrstuvwxyzABCDE" not in normal.urls(privacy=True)[0]
 
 
+def test_apprise_transport_includes_socks_proxy_support() -> None:
+    assert SOCKSProxyManager("socks5h://127.0.0.1:1080") is not None
+
+
 def test_telegram_notifier_rejects_invalid_apprise_configuration() -> None:
     with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
         telegram_notifier(
             "invalid-token",
+            "-100123456",
+            silent=False,
+            timeout_seconds=12.5,
+        )
+
+
+def test_telegram_notifier_rejects_invalid_target() -> None:
+    with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
+        telegram_notifier(
+            "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+            "!",
+            silent=False,
+            timeout_seconds=12.5,
+        )
+
+
+def test_telegram_notifier_rejects_failed_registration(monkeypatch) -> None:
+    monkeypatch.setattr(Apprise, "add", lambda *args, **kwargs: False)
+
+    with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
+        telegram_notifier(
+            "123456:abcdefghijklmnopqrstuvwxyzABCDE",
             "-100123456",
             silent=False,
             timeout_seconds=12.5,
@@ -270,12 +303,21 @@ async def test_apprise_publisher_uses_text_and_selects_silent_notifier(caplog) -
 
 async def test_apprise_telegram_integration_splits_text_and_delivers_silently(monkeypatch) -> None:
     requests: list[tuple[str, dict[str, object]]] = []
+    first_request_started = threading.Event()
+    second_request_started = threading.Event()
+    requests_overlapped = False
 
     class SuccessfulResponse:
         status_code = 200
         content = b'{"ok":true}'
 
     def post(url: str, **kwargs: object) -> SuccessfulResponse:
+        nonlocal requests_overlapped
+        if not first_request_started.is_set():
+            first_request_started.set()
+            requests_overlapped = second_request_started.wait(timeout=0.1)
+        else:
+            second_request_started.set()
         requests.append((url, kwargs))
         return SuccessfulResponse()
 
@@ -293,11 +335,12 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(mo
         timeout_seconds=12.5,
     )
     publisher = TelegramPublisher(normal, silent)
-    body = "x" * 4097
+    body = "literal <b>tag</b> & <unknown>\n" + "x" * 4097
 
     await publisher.publish(RenderedMessage(body, 4097), silent=True)
 
     assert len(requests) == 2
+    assert requests_overlapped is False
     payloads = []
     for url, kwargs in requests:
         assert url == "https://api.telegram.org/bot123456:abcdefghijklmnopqrstuvwxyzABCDE/sendMessage"
@@ -308,7 +351,100 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(mo
     assert all(payload["disable_notification"] is True for payload in payloads)
     assert all(payload["disable_web_page_preview"] is True for payload in payloads)
     assert all(payload["parse_mode"] == "HTML" for payload in payloads)
-    assert "".join(payload["text"] for payload in payloads) == body
+    assert "&lt;b&gt;tag&lt;/b&gt;&nbsp;&amp;&nbsp;&lt;unknown&gt;" in payloads[0]["text"]
+    delivered_body = (
+        html.unescape("".join(payload["text"] for payload in payloads))
+        .replace("\N{NO-BREAK SPACE}", " ")
+        .replace("<br/>", "\n")
+    )
+    assert delivered_body == body
+
+
+@pytest.mark.parametrize("content", (b"not-json", b'{"ok":false}', b'{"ok":1}', b"[]"))
+async def test_apprise_telegram_requires_strict_success_response(monkeypatch, content: bytes) -> None:
+    class InvalidSuccessResponse:
+        status_code = 200
+
+        def __init__(self) -> None:
+            self.content = content
+
+    monkeypatch.setattr(
+        "apprise.plugins.telegram.requests.post",
+        lambda *args, **kwargs: InvalidSuccessResponse(),
+    )
+    notifier = telegram_notifier(
+        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+    publisher = TelegramPublisher(notifier, notifier)
+
+    with pytest.raises(DeliveryError, match="Telegram delivery failed"):
+        await publisher.publish(RenderedMessage("Body", 4))
+
+
+@pytest.mark.parametrize("failure", ("request", "status"))
+async def test_apprise_telegram_rejects_transport_failure(monkeypatch, failure: str) -> None:
+    class FailedResponse:
+        status_code = 500
+        content = b'{"ok":true}'
+
+    def post(*args: object, **kwargs: object) -> FailedResponse:
+        if failure == "request":
+            raise apprise_telegram.requests.ConnectionError("private transport detail")
+        return FailedResponse()
+
+    monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
+    notifier = telegram_notifier(
+        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+
+    with pytest.raises(DeliveryError, match="Telegram delivery failed"):
+        await TelegramPublisher(notifier, notifier).publish(RenderedMessage("Body", 4))
+
+
+async def test_apprise_telegram_preserves_topic_target(monkeypatch) -> None:
+    payloads: list[dict[str, object]] = []
+
+    class SuccessfulResponse:
+        status_code = 200
+        content = b'{"ok":true}'
+
+    def post(*args: object, **kwargs: object) -> SuccessfulResponse:
+        data = kwargs["data"]
+        assert isinstance(data, str)
+        payloads.append(json.loads(data))
+        return SuccessfulResponse()
+
+    monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
+    notifier = telegram_notifier(
+        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        "-100123456:42",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+
+    await TelegramPublisher(notifier, notifier).publish(RenderedMessage("Body", 4))
+
+    assert payloads[0]["message_thread_id"] == 42
+
+
+def test_apprise_telegram_compatibility_sender_rejects_unsupported_calls() -> None:
+    notifier = telegram_notifier(
+        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+    service = notifier[0]
+    assert isinstance(service, NotifyTelegram)
+    assert service.send("Body", attach=object()) is False
+    service.targets.clear()
+    assert service.send("Body") is False
 
 
 async def test_rendered_text_is_not_logged_without_runtime_diagnostics(caplog) -> None:

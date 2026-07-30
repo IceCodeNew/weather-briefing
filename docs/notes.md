@@ -144,7 +144,7 @@ any-llm 提供稳定的统一生命周期接口后，应删除属性探测并直
 
 ## Bark 暂不迁移到 Apprise
 
-Telegram 投递已迁移到 Apprise，由维护中的通知库承担 Bot API 请求、纯文本转义、分块和静默投递。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer，项目只保留配置组合、平台长度策略和安全的成功/失败边界；Apprise 自身日志保持关闭，避免第三方错误正文、目标或消息进入运行日志。
+Telegram 投递已迁移到 Apprise，由维护中的通知库承担目标配置、纯文本转义、分块和静默选项。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer。项目只保留配置组合、平台长度策略，以及一个发送请求并检查 Telegram JSON `ok=true` 的 SDK 兼容 sender；Apprise 1.12 只检查 HTTP 状态，不能作为严格成功确认。同步 Apprise 通知整体放入单个 worker，避免阻塞事件循环，同时防止同一长消息的分片并发到达。Apprise 自身日志保持关闭，避免第三方错误正文、目标或消息进入运行日志。
 
 Apprise 1.12.0 的 Bark 插件不支持项目使用的 AES-GCM `ciphertext` 和逐条随机 IV，也只按 HTTP 状态判断成功。Bark 因此继续作为与 Apprise 同级的自维护 publisher，以保留认证加密、严格 JSON 成功确认和安全错误分类。
 

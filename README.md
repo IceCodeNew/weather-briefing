@@ -122,7 +122,7 @@ At minimum, configure the following in `.env`:
 
 For private-chat delivery, open the bot in Telegram and send `/start` before the first briefing. A bot can send messages to a private Chat ID only after the user has initiated the conversation. For group delivery, add the bot to the group and grant it permission to send messages.
 
-Apprise owns Telegram API compatibility, text-safe message splitting, escaping, and silent delivery. The application supplies the same sourced plain-text rendering used by stdout and still owns delivery limits, safe operational logs, and runtime configuration validation.
+Apprise owns Telegram target configuration, text-safe message splitting, escaping, and silent-delivery options. The application supplies the same sourced plain-text rendering used by stdout and keeps a small compatibility boundary for strict Telegram success validation, delivery limits, safe operational logs, and runtime configuration validation.
 
 Bark sends plaintext when the encryption variables are absent. Encryption is recommended.
 
