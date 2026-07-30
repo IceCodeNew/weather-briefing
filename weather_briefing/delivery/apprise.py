@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import html
 import json
 import logging
 import time
@@ -66,14 +65,12 @@ class _StrictNotifyTelegram(NotifyTelegram):
             "User-Agent": self.app_id,
             "Content-Type": "application/json",
         }
-        escaped_body = html.escape(body, quote=False)
         for chat_id, topic in self.targets:
             payload: dict[str, object] = {
                 "chat_id": chat_id,
                 "disable_notification": self.silent,
                 "disable_web_page_preview": not self.preview,
-                "parse_mode": "HTML",
-                "text": escaped_body,
+                "text": body,
             }
             if topic:
                 payload["message_thread_id"] = topic
@@ -190,10 +187,14 @@ class TelegramPublisher:
                 message.title or "",
                 body_format=NotifyFormat.TEXT,
             )
-        except Exception:
+        except Exception as exc:
+            _LOGGER.warning(
+                "Telegram delivery through Apprise failed reason=%s",
+                type(exc).__name__,
+            )
             delivered = False
         if delivered is not True:
-            _LOGGER.warning("Telegram delivery through Apprise failed")
+            _LOGGER.debug("Telegram delivery through Apprise rejected")
             raise DeliveryError("Telegram delivery failed", reason="delivery-failed") from None
         _LOGGER.debug("Telegram delivery through Apprise accepted")
 

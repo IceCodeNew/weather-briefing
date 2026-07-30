@@ -1,4 +1,3 @@
-import html
 import json
 import threading
 from typing import Any
@@ -249,7 +248,7 @@ def test_telegram_notifier_configures_apprise_service_variants() -> None:
     assert "TEST_DUMMY_TELEGRAM_TOKEN" not in normal.urls(privacy=True)[0]
 
 
-def test_apprise_transport_includes_socks_proxy_support() -> None:
+def test_socks_proxy_extra_is_installed() -> None:
     assert SOCKSProxyManager("socks5h://127.0.0.1:1080") is not None
 
 
@@ -357,11 +356,10 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(
     assert all(payload["chat_id"] == -100123456 for payload in payloads)
     assert all(payload["disable_notification"] is True for payload in payloads)
     assert all(payload["disable_web_page_preview"] is True for payload in payloads)
-    assert all(payload["parse_mode"] == "HTML" for payload in payloads)
-    assert "&lt;b&gt;tag&lt;/b&gt;&amp;&lt;unknown&gt;" in payloads[0]["text"]
-    assert all("&nbsp;" not in payload["text"] for payload in payloads)
-    assert payloads[0]["text"].endswith("&amp;")
-    delivered_body = "".join(html.unescape(payload["text"]) for payload in payloads)
+    assert all("parse_mode" not in payload for payload in payloads)
+    assert all(len(payload["text"]) <= 4096 for payload in payloads)
+    assert payloads[0]["text"].startswith(prefix)
+    delivered_body = "".join(payload["text"] for payload in payloads)
     assert delivered_body == body
     assert caplog.text.count("API call succeeded provider=telegram operation=send-message method=POST") == 2
 
@@ -540,7 +538,7 @@ async def test_apprise_failure_is_safe_and_structured(
     publisher = TelegramPublisher(notifier, RecordingNotifier())
 
     with (
-        caplog.at_level("INFO", logger="weather_briefing.publishers"),
+        caplog.at_level("DEBUG", logger="weather_briefing.publishers"),
         pytest.raises(DeliveryError, match="Telegram delivery failed") as caught,
     ):
         await publisher.publish(RenderedMessage("Private body", 12))
@@ -548,8 +546,7 @@ async def test_apprise_failure_is_safe_and_structured(
     assert caught.value.reason == "delivery-failed"
     assert caught.value.__cause__ is None
     assert "private provider detail" not in caplog.text
-    warnings = [record for record in caplog.records if record.levelno == 30]
-    assert [record.getMessage() for record in warnings] == ["Telegram delivery through Apprise failed"]
+    assert "Telegram delivery through Apprise rejected" in caplog.text
 
 
 async def test_apprise_rejects_oversized_single_message_before_delivery() -> None:
