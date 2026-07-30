@@ -231,6 +231,39 @@ def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> No
         assert tuple(delivery.silent for delivery in queued) == (True,)
 
 
+def test_active_warnings_rejects_invalid_stored_payload(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="UTC")
+    state_path = tmp_path / "state.db"
+    warning = Warning("warning", "Warning", "active", "detail", ("source",), now)
+    valid_fields = '"id":"warning","title":"Warning","status":"active","detail":"detail"'
+
+    with SQLiteStateStore(state_path) as state:
+        state.update_warnings((warning,), (), now)
+        for stored_value, message in (
+            (
+                b'{"id":"warning","title":"Warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "must be JSON text",
+            ),
+            ("[]", "must be an object with string keys"),
+            (f'{{{valid_fields},"source_ids":"source"}}', "source_ids must be a list of strings"),
+            (f'{{{valid_fields},"source_ids":["source",1]}}', "source_ids must be a list of strings"),
+            (
+                '{"id":"warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "title must be a string",
+            ),
+            (
+                '{"id":1,"title":"Warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "id must be a string",
+            ),
+        ):
+            with closing(sqlite3.connect(state_path)) as connection:
+                connection.execute("UPDATE warnings SET payload = ?", (stored_value,))
+                connection.commit()
+
+            with pytest.raises(ValueError, match=message):
+                state.active_warnings(now, 1)
+
+
 def test_briefing_history_rejects_invalid_notification_payload(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="UTC")
     state_path = tmp_path / "state.db"

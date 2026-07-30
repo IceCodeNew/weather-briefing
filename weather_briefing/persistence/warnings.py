@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import TypeGuard
 
 import pendulum
 
@@ -11,6 +12,39 @@ from ..models import Warning
 from ..time_utils import require_aware_datetime
 from .serialization import _parse_time as parse_time
 from .serialization import _storage_time as storage_time
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _required_text_field(payload: dict[str, object], field: str) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str):
+        raise ValueError(f"Stored warning payload {field} must be a string")
+    return value
+
+
+def _is_string_list(value: object) -> TypeGuard[list[str]]:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _stored_warning_payload(value: object) -> tuple[str, str, str, str, tuple[str, ...]]:
+    if not isinstance(value, str):
+        raise ValueError("Stored warning payload must be JSON text")
+    decoded: object = json.loads(value)
+    if not _is_string_object_dict(decoded):
+        raise ValueError("Stored warning payload must be an object with string keys")
+    source_ids = decoded.get("source_ids")
+    if not _is_string_list(source_ids):
+        raise ValueError("Stored warning payload source_ids must be a list of strings")
+    return (
+        _required_text_field(decoded, "id"),
+        _required_text_field(decoded, "title"),
+        _required_text_field(decoded, "status"),
+        _required_text_field(decoded, "detail"),
+        tuple(source_ids),
+    )
 
 
 class WarningStateOperations:
@@ -28,14 +62,14 @@ class WarningStateOperations:
         )
         warnings: list[Warning] = []
         for row in rows:
-            payload = json.loads(row["payload"])
+            warning_id, title, status, detail, source_ids = _stored_warning_payload(row["payload"])
             warnings.append(
                 Warning(
-                    id=payload["id"],
-                    title=payload["title"],
-                    status=payload["status"],
-                    detail=payload["detail"],
-                    source_ids=tuple(payload["source_ids"]),
+                    id=warning_id,
+                    title=title,
+                    status=status,
+                    detail=detail,
+                    source_ids=source_ids,
                     last_confirmed_at=parse_time(row["last_confirmed_at"]),
                 )
             )
