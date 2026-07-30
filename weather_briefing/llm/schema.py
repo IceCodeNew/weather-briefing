@@ -72,7 +72,6 @@ class LLMStructuredOutput(_StrictLLMPayload):
     resolved_warning_ids: list[NonEmptyString]
     disaster_tracking: list[SourcedTextPayload]
     advice: list[AdvicePayload]
-    should_publish: bool
 
 
 def validate_structured_output(payload: Mapping[str, Any]) -> LLMStructuredOutput:

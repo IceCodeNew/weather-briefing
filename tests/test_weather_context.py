@@ -26,13 +26,23 @@ from weather_briefing.weather import (
     WeatherContextError,
     snapshot_to_documents,
 )
-from weather_briefing.weather.open_meteo import (
-    _open_meteo_daily_peak_values,
-    _open_meteo_weather_description,
+from weather_briefing.weather.open_meteo_parsing import (
+    daily_peak_values as _open_meteo_daily_peak_values,
 )
-from weather_briefing.weather.qweather import (
-    _format_qweather_day,
-    _format_qweather_lifestyle,
+from weather_briefing.weather.open_meteo_parsing import (
+    parse_allergen as _parse_open_meteo_allergen,
+)
+from weather_briefing.weather.open_meteo_parsing import (
+    weather_description as _open_meteo_weather_description,
+)
+from weather_briefing.weather.qweather_parsing import (
+    air_quality_snapshot as _qweather_air_quality_snapshot,
+)
+from weather_briefing.weather.qweather_parsing import (
+    format_day as _format_qweather_day,
+)
+from weather_briefing.weather.qweather_parsing import (
+    format_lifestyle as _format_qweather_lifestyle,
 )
 
 
@@ -94,6 +104,30 @@ def _qweather_air_quality_values(*, aqi: float, forecast_start: str) -> dict[str
             }
         ],
     }
+
+
+@pytest.mark.parametrize(
+    ("output_language", "expected"),
+    (
+        ("zh-CN", "中国环境空气质量指数（cn-mee）"),
+        ("zh-TW", "中国环境空气质量指数（cn-mee）"),
+        ("en", "中国环境空气质量指数 (cn-mee)"),
+        ("ja", "中国环境空气质量指数（cn-mee）"),
+    ),
+)
+def test_qweather_air_quality_standard_uses_localized_punctuation(
+    output_language: str,
+    expected: str,
+) -> None:
+    snapshot = _qweather_air_quality_snapshot(
+        _qweather_air_quality_values(aqi=42, forecast_start="2026-07-13T08:00Z"),
+        "https://example.invalid/air-quality",
+        None,
+        AirQualityTimeKind.OBSERVATION,
+        output_language,
+    )
+
+    assert snapshot.aqi_standard == expected
 
 
 def test_qweather_jwt_authenticator_delegates_eddsa_signing_to_pyjwt(monkeypatch) -> None:
@@ -1551,6 +1585,57 @@ def test_qweather_scaffold_matches_selected_language() -> None:
     )
 
 
+def test_qweather_air_quality_rejects_non_object_nested_value() -> None:
+    payload: dict[str, object] = {
+        "indexes": [{"code": "cn-mee", "aqi": 42, "health": []}],
+        "pollutants": [
+            {
+                "code": "pm2p5",
+                "concentration": {"value": 12, "unit": "μg/m3"},
+                "subIndexes": [],
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="health must be an object"):
+        _qweather_air_quality_snapshot(
+            payload,
+            "https://example.invalid/air",
+            None,
+            AirQualityTimeKind.OBSERVATION,
+            "en",
+        )
+
+
+@pytest.mark.parametrize(
+    ("aqi", "error"),
+    ((True, TypeError), ("nan", ValueError), (10**1000, ValueError)),
+)
+def test_qweather_air_quality_rejects_invalid_numeric_value(
+    aqi: object,
+    error: type[Exception],
+) -> None:
+    payload: dict[str, object] = {
+        "indexes": [{"code": "cn-mee", "aqi": aqi, "health": {"advice": {}}}],
+        "pollutants": [
+            {
+                "code": "pm2p5",
+                "concentration": {"value": 12, "unit": "μg/m3"},
+                "subIndexes": [],
+            }
+        ],
+    }
+
+    with pytest.raises(error):
+        _qweather_air_quality_snapshot(
+            payload,
+            "https://example.invalid/air",
+            None,
+            AirQualityTimeKind.OBSERVATION,
+            "en",
+        )
+
+
 async def test_qweather_air_quality_parses_invalid_indexes_gracefully() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
@@ -1800,6 +1885,61 @@ async def test_qweather_air_quality_handles_missing_pm2p5_pollutant() -> None:
         ).fetch(1, 2)
 
     assert snapshot.air_quality is None
+
+
+@pytest.mark.parametrize(
+    ("concentration", "expected_value", "expected_unit"),
+    (
+        (None, None, None),
+        ({"value": 22.0}, 22.0, None),
+        ({"unit": "μg/m3"}, None, "μg/m3"),
+    ),
+)
+async def test_qweather_air_quality_keeps_aqi_when_concentration_is_incomplete(
+    concentration: dict[str, object] | None,
+    expected_value: float | None,
+    expected_unit: str | None,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v7/weather/3d":
+            return _qweather_weather_response(fx_link="https://www.qweather.com/")
+        if request.url.path == "/v7/indices/1d":
+            return _qweather_successful_indices_response()
+        pollutant: dict[str, object] = {
+            "code": "pm2p5",
+            "subIndexes": [{"code": "cn-mee", "aqi": 68}],
+        }
+        if concentration is not None:
+            pollutant["concentration"] = concentration
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"attributions": ["https://developer.qweather.com/attribution.html"]},
+                "indexes": [
+                    {
+                        "code": "cn-mee",
+                        "aqi": 68,
+                        "aqiDisplay": "68",
+                        "category": "良",
+                        "health": {"advice": {"generalPopulation": "ok"}},
+                    }
+                ],
+                "pollutants": [pollutant],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await QWeatherProvider(
+            client,
+            authenticator=StaticAuthenticator(),
+            base_url="https://api.example.invalid",
+        ).fetch(1, 2)
+
+    assert snapshot.air_quality is not None
+    assert snapshot.air_quality.aqi == 68
+    assert snapshot.air_quality.pm25_aqi == 68
+    assert snapshot.air_quality.pm25_concentration == expected_value
+    assert snapshot.air_quality.pm25_unit == expected_unit
 
 
 async def test_qweather_air_quality_handles_non_list_subindexes() -> None:
@@ -2069,7 +2209,7 @@ async def test_open_meteo_allergen_handles_missing_time_gracefully() -> None:
 
 
 def test_open_meteo_allergen_handles_invalid_time_gracefully() -> None:
-    snapshot = OpenMeteoProvider._parse_allergen(
+    snapshot = _parse_open_meteo_allergen(
         {"time": "not-a-time", "birch_pollen": 5},
         {"timezone": "Europe/Berlin"},
         (("birch", "桦木"),),
@@ -2132,12 +2272,47 @@ async def test_open_meteo_allergen_guidance_failure_keeps_air_quality(monkeypatc
             },
         )
 
-    monkeypatch.setattr(OpenMeteoProvider, "_parse_allergen", fail_to_parse_allergen)
+    monkeypatch.setattr(
+        "weather_briefing.weather.open_meteo_parsing.parse_allergen",
+        fail_to_parse_allergen,
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         snapshot = await OpenMeteoProvider(client).fetch(52.52, 13.41)
 
     assert snapshot.air_quality is not None
     assert snapshot.allergen is None
+
+
+async def test_open_meteo_air_quality_guidance_failure_keeps_allergen(monkeypatch) -> None:
+    def fail_to_load_guidance(_: int) -> tuple[str, str]:
+        raise ReferenceDataError("invalid air-quality guidance")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Europe/Berlin",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                    "birch_pollen": 5,
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.health_guidance",
+        fail_to_load_guidance,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(52.52, 13.41)
+
+    assert snapshot.air_quality is None
+    assert snapshot.allergen is not None
 
 
 async def test_snapshot_to_documents_includes_allergen_document() -> None:

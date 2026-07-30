@@ -1,5 +1,5 @@
-"""Compatibility exports for SQLite-backed application state."""
+"""Application-facing exports for SQLite-backed briefing state."""
 
-from .persistence import ServiceStatusMessageState, SQLiteRuntimeDiagnostics, SQLiteStateStore, VerbatimDelivery
+from .persistence import SQLiteRuntimeDiagnostics, SQLiteStateStore, VerbatimDelivery
 
-__all__ = ["SQLiteRuntimeDiagnostics", "SQLiteStateStore", "ServiceStatusMessageState", "VerbatimDelivery"]
+__all__ = ["SQLiteRuntimeDiagnostics", "SQLiteStateStore", "VerbatimDelivery"]

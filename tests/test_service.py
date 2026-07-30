@@ -6,7 +6,8 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeGuard
+from typing import Protocol, TypeGuard, runtime_checkable
+from unittest.mock import AsyncMock
 
 import pendulum
 import pytest
@@ -24,12 +25,13 @@ from weather_briefing.application.context_history import context_history_candida
 from weather_briefing.application.context_history import serialize_context_document as _serialize_context_document
 from weather_briefing.application.payloads import build_briefing_payload
 from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
-from weather_briefing.delivery import DeliveryError, DeliveryProvider, PlainTextRenderer
-from weather_briefing.llm import LLMError, LLMRequestError
+from weather_briefing.delivery import BarkTextRenderer, DeliveryError, DeliveryProvider, PlainTextRenderer
+from weather_briefing.llm import LLMError, LLMProvider, LLMRequestError
 from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
     Article,
+    BriefingResult,
     FeedConfig,
     RenderedMessage,
     ResolvedLocation,
@@ -37,11 +39,15 @@ from weather_briefing.models import (
     Warning,
     WeatherContextSnapshot,
 )
-from weather_briefing.service import (
-    BriefingService,
+from weather_briefing.notification_decision import (
+    NotificationAssessment,
+    NotificationDecision,
+    NotificationDecisionProvider,
 )
+from weather_briefing.service import BriefingService as _BriefingService
+from weather_briefing.sources import RSSFeedSource
 from weather_briefing.state import SQLiteStateStore
-from weather_briefing.weather import WeatherContextError
+from weather_briefing.weather import WeatherContextError, WeatherContextProvider
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +71,10 @@ def _is_dict_list(value: object) -> TypeGuard[list[dict[str, object]]]:
     )
 
 
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
 class EmptyRSSSource:
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         raise AssertionError("No RSS feed should be requested in this test")
@@ -76,6 +86,21 @@ class StaticRSSSource:
 
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         return self._articles
+
+
+class CountingPlainTextRenderer(PlainTextRenderer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.briefing_calls = 0
+
+    def render_briefing(
+        self,
+        result: BriefingResult,
+        reference_articles: tuple[Article, ...],
+        context: tuple[SourceDocument, ...],
+    ) -> RenderedMessage:
+        self.briefing_calls += 1
+        return super().render_briefing(result, reference_articles, context)
 
 
 class FailingRSSSource:
@@ -138,12 +163,12 @@ class RecordingLLM:
     def __init__(
         self,
         *,
-        should_publish: bool = True,
+        should_notify: bool = True,
         include_briefing_advice: bool = False,
     ) -> None:
         self.payload: dict[str, object] | None = None
-        self._should_publish = should_publish
         self._include_briefing_advice = include_briefing_advice
+        self.notification_decisions = RecordingNotificationDecisions(should_notify)
 
     async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
         self.payload = payload
@@ -173,8 +198,67 @@ class RecordingLLM:
             "resolved_warning_ids": [],
             "advice": advice,
             "disaster_tracking": [],
-            "should_publish": self._should_publish,
         }
+
+
+class RecordingNotificationDecisions:
+    def __init__(self, should_notify: bool = True) -> None:
+        self.should_notify = should_notify
+        self.assessments: list[NotificationAssessment] = []
+
+    async def assess_notification(
+        self,
+        assessment: NotificationAssessment,
+    ) -> NotificationDecision:
+        self.assessments.append(assessment)
+        return NotificationDecision(self.should_notify)
+
+
+class SequenceNotificationDecisions:
+    def __init__(self, *decisions: bool) -> None:
+        self._decisions = iter(decisions)
+        self.assessments: list[NotificationAssessment] = []
+
+    async def assess_notification(
+        self,
+        assessment: NotificationAssessment,
+    ) -> NotificationDecision:
+        self.assessments.append(assessment)
+        return NotificationDecision(next(self._decisions))
+
+
+@runtime_checkable
+class _NotificationDecisionOwner(Protocol):
+    @property
+    def notification_decisions(self) -> NotificationDecisionProvider:
+        """Return the decision provider paired with this test LLM."""
+        ...
+
+
+def _briefing_service(
+    settings: _TestSettings,
+    location: ResolvedLocation,
+    state: SQLiteStateStore,
+    rss_source: RSSFeedSource,
+    llm: LLMProvider,
+    delivery: DeliveryProvider,
+    ops_delivery: DeliveryProvider,
+    weather_context_provider: WeatherContextProvider | None = None,
+) -> _BriefingService:
+    notification_decisions = (
+        llm.notification_decisions if isinstance(llm, _NotificationDecisionOwner) else RecordingNotificationDecisions()
+    )
+    return _BriefingService(
+        settings,
+        location,
+        state,
+        rss_source,
+        llm,
+        notification_decisions,
+        delivery,
+        ops_delivery,
+        weather_context_provider,
+    )
 
 
 class RecordingPublisher:
@@ -584,7 +668,6 @@ async def test_bounded_history_excludes_omitted_sources_from_citation_validation
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": True,
             }
 
     timezone = pendulum.timezone("Asia/Shanghai")
@@ -607,7 +690,7 @@ async def test_bounded_history_excludes_omitted_sources_from_citation_validation
             (_context_document("selected-history", "newer history"),),
             now.subtract(hours=1),
         )
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -682,7 +765,7 @@ async def test_context_budget_alert_is_deduplicated_until_recovery(tmp_path: Pat
     )
 
     with SQLiteStateStore(tmp_path / "context-budget.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -719,7 +802,7 @@ async def test_context_budget_alert_delivery_failure_is_retried(tmp_path: Path, 
     )
 
     with SQLiteStateStore(tmp_path / "context-budget-retry.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -860,7 +943,7 @@ async def test_forecast_uses_configured_coordinates_and_air_quality_context(
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         state.save_briefing("briefing", "Earlier update", now.subtract(hours=1))
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             location,
             state,
@@ -928,7 +1011,7 @@ async def test_forecast_rejects_missing_allergen_advice_when_input_contains_it(t
     now = pendulum.datetime(2026, 7, 13, 8, tz=settings.timezone)
 
     with SQLiteStateStore(tmp_path / "missing-allergen.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -963,7 +1046,7 @@ async def test_forecast_rejects_allergen_advice_without_allergen_source(tmp_path
     now = pendulum.datetime(2026, 7, 13, 8, tz=settings.timezone)
 
     with SQLiteStateStore(tmp_path / "wrong-allergen-source.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1019,7 +1102,7 @@ async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provi
     delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
 
     with SQLiteStateStore(tmp_path / "future-forecast.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1038,7 +1121,7 @@ async def test_forecast_date_is_separate_from_run_time_and_reaches_weather_provi
 
 
 async def test_forecast_date_is_rejected_for_briefing_mode() -> None:
-    service = object.__new__(BriefingService)
+    service = object.__new__(_BriefingService)
     service._settings = _TestSettings(timezone=pendulum.timezone("Asia/Shanghai"))
 
     with pytest.raises(ValueError, match="only supported in forecast mode"):
@@ -1072,7 +1155,7 @@ async def test_briefing_also_uses_the_llm_provider(tmp_path: Path) -> None:
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1111,9 +1194,10 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
         briefing_max_characters=3500,
         llm_max_attempts=3,
     )
-    llm = RecordingLLM(should_publish=False)
+    llm = RecordingLLM(should_notify=False)
     publisher = RecordingPublisher()
-    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    renderer = CountingPlainTextRenderer()
+    delivery = DeliveryProvider(renderer, publisher)
     weather_context = StaticWeatherContextProvider()
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
@@ -1122,7 +1206,7 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
             (_context_document("weather:test", "sensitive historical body"),),
             now.subtract(hours=1),
         )
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1137,6 +1221,7 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
         remembered = state.recent_context_documents(now, 1)
 
     assert result is None
+    assert renderer.briefing_calls == 1
     assert llm.payload is not None
     assert llm.payload["mode"] == "briefing"
     assert publisher.messages == []
@@ -1184,6 +1269,9 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
     )
 
     class UnchangedWarningLLM:
+        def __init__(self) -> None:
+            self.notification_decisions = RecordingNotificationDecisions(False)
+
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             return {
                 "headline": "Warning unchanged",
@@ -1201,7 +1289,6 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": False,
             }
 
     publisher = RecordingPublisher()
@@ -1209,7 +1296,7 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
     with SQLiteStateStore(tmp_path / "warning.sqlite3") as state:
         state.save_articles((article,), now)
         state.update_warnings((warning,), (), now, {article.id})
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1250,6 +1337,7 @@ async def test_unknown_resolved_warning_id_is_ignored(tmp_path: Path, caplog: py
     class ResolvingWarningLLM:
         def __init__(self) -> None:
             self.attempts = 0
+            self.notification_decisions = RecordingNotificationDecisions(False)
 
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             self.attempts += 1
@@ -1263,7 +1351,6 @@ async def test_unknown_resolved_warning_id_is_ignored(tmp_path: Path, caplog: py
                 "resolved_warning_ids": ["invented-warning", "invented-warning", warning.id],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": False,
             }
 
     llm = ResolvingWarningLLM()
@@ -1272,7 +1359,7 @@ async def test_unknown_resolved_warning_id_is_ignored(tmp_path: Path, caplog: py
     with SQLiteStateStore(tmp_path / "warning.sqlite3") as state:
         state.save_articles((article,), now)
         state.update_warnings((warning,), (), now, {article.id})
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1286,6 +1373,9 @@ async def test_unknown_resolved_warning_id_is_ignored(tmp_path: Path, caplog: py
             assert await service.run("briefing", now.add(hours=1)) is None
         assert state.active_warnings(now.add(hours=1), 12) == ()
 
+    candidate_message = llm.notification_decisions.assessments[0].payload["candidate_message"]
+    assert _is_string_object_dict(candidate_message)
+    assert candidate_message["resolved_warning_ids"] == [warning.id]
     assert llm.attempts == 1
     assert publisher.messages == []
     assert "Ignoring 1 distinct resolved warning ID(s) that are not currently active" in caplog.text
@@ -1319,6 +1409,7 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
     class PublishingOnSecondRunLLM:
         def __init__(self) -> None:
             self.payloads: list[dict[str, object]] = []
+            self.notification_decisions = SequenceNotificationDecisions(False, True)
 
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             self.payloads.append(payload)
@@ -1336,7 +1427,6 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": len(self.payloads) == 2,
             }
 
     llm = PublishingOnSecondRunLLM()
@@ -1344,7 +1434,7 @@ async def test_unpublished_article_is_included_until_a_later_briefing_is_publish
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "deferred.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1396,12 +1486,12 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
         briefing_max_characters=3500,
         llm_max_attempts=1,
     )
-    llm = RecordingLLM(should_publish=False)
+    llm = RecordingLLM(should_notify=False)
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "forced.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1432,6 +1522,70 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
     assert publisher.messages[1][1:] == (False, True)
 
 
+async def test_forced_audible_briefing_does_not_depend_on_notification_decision(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = _TestSettings(timezone=timezone)
+    llm = RecordingLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    decision_provider = AsyncMock(spec=NotificationDecisionProvider)
+    decision_provider.assess_notification.side_effect = RuntimeError("decision unavailable")
+
+    with SQLiteStateStore(tmp_path / "forced-audible.sqlite3") as state:
+        service = _BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            llm,
+            decision_provider,
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        body = await service.run(
+            "briefing",
+            pendulum.datetime(2026, 7, 13, 15, tz=timezone),
+            force_publish=True,
+            silent=False,
+        )
+
+    assert body is not None
+    assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
+    decision_provider.assess_notification.assert_not_awaited()
+
+
+async def test_bark_notification_baseline_preserves_previous_headline(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    llm = RecordingLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(BarkTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 15, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "bark-baseline.sqlite3") as state:
+        service = _briefing_service(
+            _TestSettings(timezone=timezone),
+            _location(),
+            state,
+            EmptyRSSSource(),
+            llm,
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        first_body = await service.run("briefing", now, force_publish=True)
+        await service.run("briefing", now.add(hours=1))
+
+    assert first_body is not None
+    assert "Daily briefing" not in first_body
+    assert len(llm.notification_decisions.assessments) == 1
+    previous = llm.notification_decisions.assessments[0].payload["previous_briefing"]
+    assert _is_string_object_dict(previous)
+    assert previous["headline"] == "Daily briefing"
+
+
 async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 23, tz=timezone)
@@ -1449,12 +1603,12 @@ async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "worthy-final.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
             EmptyRSSSource(),
-            RecordingLLM(should_publish=True),
+            RecordingLLM(should_notify=True),
             delivery,
             delivery,
             StaticWeatherContextProvider(),
@@ -1472,10 +1626,7 @@ async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path
 
 @pytest.mark.parametrize(
     ("kind", "llm", "message"),
-    (
-        ("briefing", RecordingLLM(include_briefing_advice=True), "must not repeat"),
-        ("forecast", RecordingLLM(should_publish=False), "should_publish=true"),
-    ),
+    (("briefing", RecordingLLM(include_briefing_advice=True), "must not repeat"),),
 )
 async def test_service_rejects_mode_specific_llm_contract_violations(
     tmp_path: Path,
@@ -1500,7 +1651,7 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
     ops_delivery = DeliveryProvider(PlainTextRenderer(), ops_publisher)
 
     with SQLiteStateStore(tmp_path / f"{kind}.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1515,6 +1666,32 @@ async def test_service_rejects_mode_specific_llm_contract_violations(
 
     assert message in str(error.value.__cause__)
     assert publisher.messages == []
+
+
+async def test_forecast_does_not_run_notification_policy(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    llm = RecordingLLM(should_notify=False)
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    with SQLiteStateStore(tmp_path / "forecast.sqlite3") as state:
+        service = _briefing_service(
+            _TestSettings(timezone=timezone),
+            _location(),
+            state,
+            EmptyRSSSource(),
+            llm,
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        body = await service.run(
+            "forecast",
+            pendulum.datetime(2026, 7, 13, 9, tz=timezone),
+        )
+
+    assert body is not None
+    assert llm.notification_decisions.assessments == []
 
 
 async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
@@ -1536,7 +1713,7 @@ async def test_task_failure_alert_is_sent_only_on_first_consecutive_failure(
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "failure.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1581,7 +1758,7 @@ async def test_task_failure_alert_delivery_failure_is_retried(
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "failure-alert.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1622,7 +1799,7 @@ async def test_task_failure_alert_skips_unavailable_shared_delivery_channel(
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "unavailable-delivery.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1657,7 +1834,7 @@ async def test_failure_recording_error_does_not_mask_task_error(
 
     monkeypatch.setattr(SQLiteStateStore, "record_failure", fail_to_record_failure)
     with SQLiteStateStore(tmp_path / "failure-recording.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1705,7 +1882,7 @@ async def test_forecast_publishes_verbatim_articles(tmp_path: Path, caplog) -> N
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with caplog.at_level("DEBUG"), SQLiteStateStore(tmp_path / "v.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1749,7 +1926,7 @@ async def test_failed_first_verbatim_is_retried_without_republishing_briefing(tm
     ops_delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
 
     with SQLiteStateStore(tmp_path / "state.db") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1807,7 +1984,7 @@ async def test_failed_later_verbatim_retries_only_unacknowledged_item(tmp_path: 
     ops_delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
 
     with SQLiteStateStore(tmp_path / "state.db") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1865,7 +2042,7 @@ async def test_verbatim_acknowledgement_failure_keeps_at_least_once_retry(
                 """CREATE TRIGGER abort_verbatim_ack BEFORE DELETE ON verbatim_delivery_queue
                 BEGIN SELECT RAISE(ABORT, 'acknowledgement unavailable'); END;"""
             )
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1919,7 +2096,7 @@ async def test_failed_main_checkpoint_leaves_no_partial_result_state(tmp_path: P
                 """CREATE TRIGGER abort_briefing_insert BEFORE INSERT ON briefings
                 BEGIN SELECT RAISE(ABORT, 'briefing insert failed'); END;"""
             )
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -1961,7 +2138,7 @@ async def test_run_returns_none_when_no_content_and_no_warnings(tmp_path: Path) 
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "empty.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2006,7 +2183,7 @@ async def test_stale_feed_triggers_ops_alert(tmp_path: Path) -> None:
 
     with SQLiteStateStore(tmp_path / "stale.sqlite3") as state:
         state.record_source_check("feed", yesterday, yesterday)
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2041,7 +2218,6 @@ class FailingOnceLLM:
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": True,
             }
             if self._omit_headline:
                 del invalid_result["headline"]
@@ -2059,7 +2235,6 @@ class FailingOnceLLM:
             "resolved_warning_ids": [],
             "advice": [],
             "disaster_tracking": [],
-            "should_publish": True,
         }
 
 
@@ -2094,7 +2269,7 @@ async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_respo
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "retry.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2144,7 +2319,7 @@ async def test_llm_request_failure_does_not_enter_contract_repair(tmp_path: Path
     delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
 
     with SQLiteStateStore(tmp_path / "request-failure.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2186,14 +2361,13 @@ async def test_briefing_exceeding_character_limit_is_rejected(tmp_path: Path) ->
                 "resolved_warning_ids": [],
                 "advice": [],
                 "disaster_tracking": [],
-                "should_publish": True,
             }
 
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
 
     with SQLiteStateStore(tmp_path / "long.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2237,7 +2411,7 @@ async def test_is_forecast_article_returns_false_for_unknown_feed(tmp_path: Path
     llm = RecordingLLM()
 
     with SQLiteStateStore(tmp_path / "unknown.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2273,7 +2447,7 @@ async def test_rss_failure_does_not_crash_forecast_with_weather_context(
     now = pendulum.datetime(2026, 7, 13, 8, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "rss-fail.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2308,7 +2482,7 @@ async def test_rss_cancellation_aborts_task_without_recording_failure(
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "rss-canceled.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2351,7 +2525,7 @@ async def test_rss_cancellation_records_other_completed_feed_results(
 
     with SQLiteStateStore(tmp_path / "rss-canceled-results.sqlite3") as state:
         state.record_rss_fetch_failure("recovered-feed")
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2391,7 +2565,7 @@ async def test_rss_failure_alert_is_sent_after_threshold(
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "rss-alert.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,
@@ -2438,7 +2612,7 @@ async def test_failed_rss_alert_delivery_is_retried(
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
     with SQLiteStateStore(tmp_path / "rss-alert-retry.sqlite3") as state:
-        service = BriefingService(
+        service = _briefing_service(
             settings,
             _location(),
             state,

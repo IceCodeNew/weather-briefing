@@ -1,4 +1,6 @@
 import asyncio
+import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -8,7 +10,8 @@ import pendulum
 import pytest
 
 from weather_briefing.llm import LLMError
-from weather_briefing.notifications import NotificationDecision
+from weather_briefing.notification_decision import NotificationDecision
+from weather_briefing.persistence.service_status import ServiceStatusMessageState
 from weather_briefing.service_status import (
     AnthropicStatusProvider,
     DeepSeekStatusProvider,
@@ -24,6 +27,7 @@ from weather_briefing.service_status import (
     official_message_matches,
     service_status_providers,
 )
+from weather_briefing.service_status.notification import service_status_notification_assessment
 from weather_briefing.service_status.providers._surface import keyword_surface
 from weather_briefing.service_status.providers.deepseek import _deepseek_surface
 from weather_briefing.service_status.providers.kimi import _kimi_surface
@@ -376,14 +380,36 @@ def _monitor_dependencies(
     return provider, delivery, decision, translator
 
 
+def test_legacy_handled_state_omits_unknown_previous_surfaces() -> None:
+    message = _message()
+    previous = ServiceStatusMessageState(
+        observed_revision_id="revision-1",
+        decided_revision_id="revision-1",
+        should_notify=True,
+        handled_revision_id="revision-1",
+        handled_title=message.title,
+        handled_status=message.status,
+        handled_body=message.body,
+        handled_surfaces=None,
+    )
+
+    assessment = service_status_notification_assessment(_snapshot(message), message, previous)
+
+    assert assessment.payload["previous"] == {
+        "title": message.title,
+        "status": message.status,
+        "body": message.body,
+    }
+
+
 async def test_initial_resolved_history_is_a_silent_baseline(tmp_path: Path) -> None:
     message = _message(status="resolved")
     provider, delivery, decision, translator = _monitor_dependencies(_snapshot(message))
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        published = await ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator).run(
-            pendulum.now("UTC")
-        )
-        stored = state.service_status_message_state("service-status:test", message.incident_id)
+        published = await ServiceStatusMonitor(
+            (provider,), state.service_status, (("test", delivery),), decision, translator
+        ).run(pendulum.now("UTC"))
+        stored = state.service_status.service_status_message_state("service-status:test", message.incident_id)
 
     assert published == 0
     assert stored is not None and stored.handled_revision_id == message.revision_id
@@ -398,7 +424,7 @@ async def test_meaningful_active_message_is_forwarded_to_every_delivery(tmp_path
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         monitor = ServiceStatusMonitor(
             (provider,),
-            state,
+            state.service_status,
             (("first", first), ("second", second)),
             decision,
             translator,
@@ -417,11 +443,13 @@ async def test_handled_revision_does_not_write_unchanged_observation(tmp_path: P
     message = _message()
     provider, delivery, decision, translator = _monitor_dependencies(_snapshot(message))
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        monitor = ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator)
+        monitor = ServiceStatusMonitor((provider,), state.service_status, (("test", delivery),), decision, translator)
         assert await monitor.run(pendulum.now("UTC")) == 1
-        state.observe_service_status_message = Mock(side_effect=state.observe_service_status_message)
+        state.service_status.observe_service_status_message = Mock(
+            side_effect=state.service_status.observe_service_status_message
+        )
         assert await monitor.run(pendulum.now("UTC")) == 0
-        state.observe_service_status_message.assert_not_called()
+        state.service_status.observe_service_status_message.assert_not_called()
 
 
 async def test_unworthy_revision_is_handled_without_delivery(tmp_path: Path) -> None:
@@ -431,7 +459,7 @@ async def test_unworthy_revision_is_handled_without_delivery(tmp_path: Path) -> 
         should_notify=False,
     )
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        monitor = ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator)
+        monitor = ServiceStatusMonitor((provider,), state.service_status, (("test", delivery),), decision, translator)
         assert await monitor.run(pendulum.now("UTC")) == 0
         assert await monitor.run(pendulum.now("UTC")) == 0
 
@@ -446,22 +474,26 @@ async def test_changed_revision_supplies_previous_official_message_to_decision(t
         revision_id="revision-2",
         status="resolved",
         body="This incident has been resolved.",
+        surfaces=(ServiceSurface.WEB, ServiceSurface.API),
     )
     provider, delivery, decision, translator = _monitor_dependencies(_snapshot(first_message))
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        monitor = ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator)
+        monitor = ServiceStatusMonitor((provider,), state.service_status, (("test", delivery),), decision, translator)
         await monitor.run(pendulum.now("UTC"))
         provider.fetch.return_value = _snapshot(second_message)
         await monitor.run(pendulum.now("UTC"))
 
-    payload = decision.assess_notification.await_args_list[1].args[0]
-    assert payload["notification_kind"] == "service_status"
+    assessment = decision.assess_notification.await_args_list[1].args[0]
+    assert assessment.kind == "service_status"
+    payload = assessment.payload
     assert payload["previous"] == {
         "title": first_message.title,
         "status": first_message.status,
         "body": first_message.body,
+        "surfaces": ["api"],
     }
     assert payload["current"]["status"] == "resolved"
+    assert payload["current"]["surfaces"] == ["web", "api"]
 
 
 async def test_delivery_failure_retries_the_same_revision(tmp_path: Path, caplog) -> None:
@@ -472,9 +504,9 @@ async def test_delivery_failure_retries_the_same_revision(tmp_path: Path, caplog
         SQLiteStateStore(tmp_path / "state.sqlite3") as state,
         caplog.at_level("ERROR", logger="weather_briefing.service_status"),
     ):
-        monitor = ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator)
+        monitor = ServiceStatusMonitor((provider,), state.service_status, (("test", delivery),), decision, translator)
         assert await monitor.run(pendulum.now("UTC")) == 0
-        stored = state.service_status_message_state("service-status:test", message.incident_id)
+        stored = state.service_status.service_status_message_state("service-status:test", message.incident_id)
         assert stored is not None and stored.handled_revision_id is None
         assert await monitor.run(pendulum.now("UTC")) == 1
 
@@ -490,13 +522,13 @@ async def test_partial_delivery_failure_retries_only_pending_publishers(tmp_path
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         monitor = ServiceStatusMonitor(
             (provider,),
-            state,
+            state.service_status,
             (("first", first), ("second", second)),
             decision,
             translator,
         )
         assert await monitor.run(pendulum.now("UTC")) == 0
-        assert state.service_status_delivered_publishers(
+        assert state.service_status.service_status_delivered_publishers(
             "service-status:test",
             message.incident_id,
             message.revision_id,
@@ -516,14 +548,14 @@ async def test_message_failure_does_not_block_remaining_messages(tmp_path: Path)
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         monitor = ServiceStatusMonitor(
             (provider,),
-            state,
+            state.service_status,
             (("test", delivery),),
             decision,
             translator,
         )
         assert await monitor.run(pendulum.now("UTC")) == 1
-        first_state = state.service_status_message_state("service-status:test", "first")
-        second_state = state.service_status_message_state("service-status:test", "second")
+        first_state = state.service_status.service_status_message_state("service-status:test", "first")
+        second_state = state.service_status.service_status_message_state("service-status:test", "second")
 
     assert first_state is not None and first_state.handled_revision_id is None
     assert second_state is not None
@@ -538,9 +570,9 @@ async def test_mismatched_official_language_is_translated(tmp_path: Path) -> Non
         "搜索服务发生错误。",
     )
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        await ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator, "zh-CN").run(
-            pendulum.now("UTC")
-        )
+        await ServiceStatusMonitor(
+            (provider,), state.service_status, (("test", delivery),), decision, translator, "zh-CN"
+        ).run(pendulum.now("UTC"))
 
     translator.translate_service_status.assert_awaited_once_with(
         message.title,
@@ -561,9 +593,9 @@ async def test_translation_failure_falls_back_to_official_text(tmp_path: Path, c
         SQLiteStateStore(tmp_path / "state.sqlite3") as state,
         caplog.at_level("WARNING", logger="weather_briefing.service_status"),
     ):
-        await ServiceStatusMonitor((provider,), state, (("test", delivery),), decision, translator, "zh-CN").run(
-            pendulum.now("UTC")
-        )
+        await ServiceStatusMonitor(
+            (provider,), state.service_status, (("test", delivery),), decision, translator, "zh-CN"
+        ).run(pendulum.now("UTC"))
 
     delivery.publish_alert.assert_awaited_once_with(
         message.title,
@@ -597,7 +629,7 @@ def test_official_message_language_matching(
 def test_state_rejects_handling_a_changed_observation(tmp_path: Path) -> None:
     now = pendulum.now("UTC")
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        state.observe_service_status_message(
+        state.service_status.observe_service_status_message(
             "source",
             "incident",
             "new",
@@ -607,20 +639,61 @@ def test_state_rejects_handling_a_changed_observation(tmp_path: Path) -> None:
             now,
         )
         with pytest.raises(RuntimeError, match="changed before handling"):
-            state.mark_service_status_message_handled(
+            state.service_status.mark_service_status_message_handled(
                 "source",
                 "incident",
                 "old",
                 "Title",
                 "monitoring",
                 "Body",
+                (ServiceSurface.API,),
                 now,
             )
 
 
+def test_state_rejects_invalid_stored_service_status_surfaces(tmp_path: Path) -> None:
+    now = pendulum.now("UTC")
+    state_path = tmp_path / "state.sqlite3"
+    with SQLiteStateStore(state_path) as state:
+        state.service_status.observe_service_status_message(
+            "source",
+            "incident",
+            "revision",
+            "Title",
+            "monitoring",
+            "Body",
+            now,
+        )
+        state.service_status.mark_service_status_message_handled(
+            "source",
+            "incident",
+            "revision",
+            "Title",
+            "monitoring",
+            "Body",
+            (ServiceSurface.API,),
+            now,
+        )
+        for stored_value, message in (
+            ("{}", "must be a list"),
+            ("[1]", "must contain strings"),
+            ('["bogus"]', "is unsupported"),
+            (b'["api"]', "must be JSON text"),
+        ):
+            with closing(sqlite3.connect(state_path)) as connection:
+                connection.execute(
+                    "UPDATE service_status_message_state SET handled_surfaces = ?",
+                    (stored_value,),
+                )
+                connection.commit()
+
+            with pytest.raises(ValueError, match=message):
+                state.service_status.service_status_message_state("source", "incident")
+
+
 def test_state_rejects_deciding_a_changed_observation(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
-        state.observe_service_status_message(
+        state.service_status.observe_service_status_message(
             "source",
             "incident",
             "new",
@@ -630,7 +703,7 @@ def test_state_rejects_deciding_a_changed_observation(tmp_path: Path) -> None:
             pendulum.now("UTC"),
         )
         with pytest.raises(RuntimeError, match="changed before its decision"):
-            state.mark_service_status_message_decided(
+            state.service_status.mark_service_status_message_decided(
                 "source",
                 "incident",
                 "old",

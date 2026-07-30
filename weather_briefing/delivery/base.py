@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ..models import Article, BriefingResult, RenderedMessage, SourceDocument
-from .renderers import MessageRenderer
+from .rendering import MessageRenderer
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 _SAFE_DELIVERY_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")

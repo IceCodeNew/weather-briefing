@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 
 import pendulum
 
-
-class ServiceSurface(StrEnum):
-    """Distinguish user-facing web services from programmatic APIs."""
-
-    WEB = "web"
-    API = "api"
-    OTHER = "other"
+from ..models import ServiceSurface
 
 
 @dataclass(frozen=True, slots=True)

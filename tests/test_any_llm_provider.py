@@ -26,7 +26,7 @@ from weather_briefing.llm import (
     create_any_llm_provider,
 )
 from weather_briefing.llm.schema import NotificationDecisionOutput, ServiceStatusTranslationOutput
-from weather_briefing.notifications import NotificationDecision
+from weather_briefing.notification_decision import NotificationDecision
 
 
 class _CompletionCall(TypedDict):
@@ -87,7 +87,7 @@ def _provider_status_error(response: httpx.Response) -> Exception:
 
 async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     provider = AsyncMock()
-    provider.assess_notification.return_value = NotificationDecision(True)
+    provider.decide_notification.return_value = NotificationDecision(True)
     provider.translate_service_status.return_value = ("Translated", "Translated body")
     factory = AsyncMock(return_value=provider)
     lazy = LazyServiceStatusLLM(factory)
@@ -95,7 +95,7 @@ async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     await lazy.aclose()
     factory.assert_not_called()
 
-    assert await lazy.assess_notification({"current": {}}) == NotificationDecision(True)
+    assert await lazy.decide_notification("notification prompt", {"current": {}}) == NotificationDecision(True)
     assert await lazy.translate_service_status("Title", "Body", "en") == (
         "Translated",
         "Translated body",
@@ -103,7 +103,7 @@ async def test_service_status_llm_is_created_only_on_first_operation() -> None:
     await lazy.aclose()
 
     factory.assert_awaited_once_with()
-    provider.assess_notification.assert_awaited_once_with({"current": {}})
+    provider.decide_notification.assert_awaited_once_with("notification prompt", {"current": {}})
     provider.translate_service_status.assert_awaited_once_with("Title", "Body", "en")
     provider.aclose.assert_awaited_once()
 
@@ -117,7 +117,6 @@ async def test_any_llm_provider_uses_json_object_with_the_strict_schema() -> Non
         "resolved_warning_ids": [],
         "advice": [],
         "disaster_tracking": [],
-        "should_publish": True,
     }
     client = _CompletionClientStub(
         SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(model_result)))])
@@ -236,11 +235,11 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
         max_output_tokens=4096,
     )
 
-    result = await provider.assess_notification(
+    result = await provider.decide_notification(
+        "Decide whether this status change merits a notification.",
         {
-            "notification_kind": "service_status",
             "current": {"status": "monitoring"},
-        }
+        },
     )
 
     assert not result.should_notify
@@ -285,8 +284,8 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
         (
             "openai",
             _openai_bad_request,
-            "assess_notification",
-            ({"current": {"status": "operational"}},),
+            "decide_notification",
+            ("notification prompt", {"current": {"status": "operational"}}),
             "LLM notification decision request failed",
         ),
         (
@@ -388,7 +387,6 @@ async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -
         "resolved_warning_ids": [],
         "advice": [],
         "disaster_tracking": [],
-        "should_publish": True,
     }
     fallback_client = _CompletionClientStub(
         SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(fallback_result)))])
@@ -646,7 +644,6 @@ async def test_openai_compatible_providers_send_configured_headers(
         "resolved_warning_ids": [],
         "advice": [],
         "disaster_tracking": [],
-        "should_publish": True,
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -722,7 +719,6 @@ async def test_openai_compatible_provider_sends_json_object_with_the_application
         "resolved_warning_ids": [],
         "advice": [],
         "disaster_tracking": [],
-        "should_publish": True,
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -792,7 +788,6 @@ async def test_any_llm_deepseek_uses_injected_logged_http_client(caplog) -> None
         "resolved_warning_ids": [],
         "advice": [],
         "disaster_tracking": [],
-        "should_publish": True,
     }
 
     def handler(request: httpx.Request) -> httpx.Response:

@@ -167,24 +167,28 @@
     },
     "qweather": {
       "en": {
+        "aqi_standard": "{name} ({code})",
         "day": "{date}: {day} to {night}; {minimum}-{maximum} °C; {wind}, force {scale}; relative humidity {humidity}%; forecast precipitation {precipitation} mm",
         "lifestyle": "{name} ({category}): {text}",
         "no_details": "No detailed advice",
         "unknown": "Unknown"
       },
       "ja": {
+        "aqi_standard": "{name}（{code}）",
         "day": "{date}：{day}から{night}、{minimum}～{maximum}℃、{wind}{scale}級、相対湿度{humidity}%、予想降水量{precipitation}mm",
         "lifestyle": "{name}（{category}）：{text}",
         "no_details": "詳しいアドバイスはありません",
         "unknown": "不明"
       },
       "zh-CN": {
+        "aqi_standard": "{name}（{code}）",
         "day": "{date}：{day}转{night}，{minimum}~{maximum}℃，{wind}{scale}级，相对湿度{humidity}%，预计降水量{precipitation}毫米",
         "lifestyle": "{name}（{category}）：{text}",
         "no_details": "无详细建议",
         "unknown": "未知"
       },
       "zh-TW": {
+        "aqi_standard": "{name}（{code}）",
         "day": "{date}：{day}轉{night}，{minimum}~{maximum}℃，{wind}{scale}級，相對濕度{humidity}%，預計降水量{precipitation}毫米",
         "lifestyle": "{name}（{category}）：{text}",
         "no_details": "無詳細建議",

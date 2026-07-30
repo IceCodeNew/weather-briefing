@@ -1,10 +1,9 @@
-"""Runtime composition of LLM, delivery, and weather providers."""
+"""Runtime composition of weather and capability providers."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import Sequence
 
 import httpx
 
@@ -12,19 +11,8 @@ from ..air_quality import AirQualityProvider, AQICNProvider
 from ..capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
 from ..config import Settings
 from ..config import environment as config_environment
-from ..delivery import (
-    BarkPublisher,
-    BarkTextRenderer,
-    DeliveryProvider,
-    PlainTextRenderer,
-    RenderedTextDiagnostics,
-    StdoutPublisher,
-    TelegramHTMLRenderer,
-    TelegramPublisher,
-)
-from ..llm import CompleteLLMProvider, FallbackLLMProvider, SensitiveLLMDiagnostics, any_llm
 from ..models import ResolvedLocation
-from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, PublisherName, WeatherProviderName
+from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, WeatherProviderName
 from ..weather import (
     JMA_LANGUAGE_SUPPORT,
     NEA_LANGUAGE_SUPPORT,
@@ -41,126 +29,6 @@ from ..weather import (
 )
 
 _LOGGER = logging.getLogger("weather_briefing")
-
-
-async def llm_provider(
-    settings: Settings,
-    diagnostics: SensitiveLLMDiagnostics | None = None,
-) -> CompleteLLMProvider:
-    """Build the configured primary and optional fallback LLM adapters."""
-    primary = any_llm.create_any_llm_provider(
-        settings.llm_provider,
-        settings.llm_model,
-        settings.llm_max_output_tokens,
-        api_key=settings.api_key,
-        api_base=settings.llm_base_url,
-        extra_headers=settings.llm_extra_headers,
-        diagnostics=diagnostics,
-    )
-    if settings.llm_fallback_provider is None or settings.llm_fallback_model is None:
-        return primary
-    async with AsyncExitStack() as stack:
-        stack.push_async_callback(primary.aclose)
-        fallback = any_llm.create_any_llm_provider(
-            settings.llm_fallback_provider,
-            settings.llm_fallback_model,
-            settings.llm_max_output_tokens,
-            extra_headers=settings.llm_fallback_extra_headers,
-            diagnostics=diagnostics,
-        )
-        stack.push_async_callback(fallback.aclose)
-        provider = FallbackLLMProvider(
-            primary,
-            fallback,
-            primary_name=settings.llm_provider,
-            fallback_name=settings.llm_fallback_provider,
-        )
-        stack.pop_all()
-        return provider
-
-
-def delivery_provider(
-    settings: Settings,
-    client: httpx.AsyncClient,
-    diagnostics: RenderedTextDiagnostics | None = None,
-    *,
-    publisher: str | None = None,
-) -> DeliveryProvider:
-    """Build the configured publisher and renderer pair."""
-    selected = publisher or settings.publisher
-    builder = PUBLISHER_BUILDERS.get(selected)
-    if builder is None:
-        raise ValueError(f"Unsupported publisher: {selected}")
-    return builder(settings, client, diagnostics)
-
-
-def delivery_providers(
-    settings: Settings,
-    client: httpx.AsyncClient,
-    publishers: tuple[str, ...],
-    diagnostics: RenderedTextDiagnostics | None = None,
-) -> tuple[DeliveryProvider, ...]:
-    """Build an ordered group of delivery targets."""
-    if not publishers:
-        raise ValueError("At least one publisher is required")
-    return tuple(delivery_provider(settings, client, diagnostics, publisher=publisher) for publisher in publishers)
-
-
-def _build_stdout_publisher(
-    settings: Settings,
-    client: httpx.AsyncClient,
-    diagnostics: RenderedTextDiagnostics | None,
-) -> DeliveryProvider:
-    return DeliveryProvider(PlainTextRenderer(), StdoutPublisher(), diagnostics=diagnostics)
-
-
-def _build_telegram_publisher(
-    settings: Settings,
-    client: httpx.AsyncClient,
-    diagnostics: RenderedTextDiagnostics | None,
-) -> DeliveryProvider:
-    if not settings.telegram_bot_token or not settings.telegram_chat_id:
-        raise ValueError("Telegram publisher requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
-    return DeliveryProvider(
-        TelegramHTMLRenderer(),
-        TelegramPublisher(client, settings.telegram_bot_token, settings.telegram_chat_id, diagnostics),
-        single_message_limit=TelegramPublisher.MAX_MESSAGE_LENGTH,
-        diagnostics=diagnostics,
-    )
-
-
-def _build_bark_publisher(
-    settings: Settings,
-    client: httpx.AsyncClient,
-    diagnostics: RenderedTextDiagnostics | None,
-) -> DeliveryProvider:
-    if not settings.bark_device_key:
-        raise ValueError("Bark publisher requires BARK_DEVICE_KEY")
-    return DeliveryProvider(
-        BarkTextRenderer(),
-        BarkPublisher(
-            client,
-            settings.bark_device_key,
-            settings.bark_encryption_key,
-            settings.bark_encryption_iv,
-            diagnostics,
-            base_url=settings.bark_base_url,
-            group=settings.bark_group,
-        ),
-        single_message_limit=BarkPublisher.MAX_MESSAGE_LENGTH,
-        briefing_max_messages=2,
-        diagnostics=diagnostics,
-    )
-
-
-PUBLISHER_BUILDERS: dict[
-    str,
-    Callable[[Settings, httpx.AsyncClient, RenderedTextDiagnostics | None], DeliveryProvider],
-] = {
-    PublisherName.BARK: _build_bark_publisher,
-    PublisherName.STDOUT: _build_stdout_publisher,
-    PublisherName.TELEGRAM: _build_telegram_publisher,
-}
 
 _WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
     WeatherProviderName.QWEATHER: ProviderCapabilities(
@@ -192,6 +60,8 @@ _WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
 
 def weather_provider_metadata(names: Sequence[str]) -> ProviderCapabilities:
     """Describe capabilities common to every active fallback provider."""
+    if not names:
+        raise ValueError("At least one weather provider name is required")
     metadata: list[ProviderCapabilities] = []
     for name in names:
         item = _WEATHER_PROVIDER_METADATA.get(name)

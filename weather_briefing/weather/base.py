@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import suppress
+from math import isfinite
 from typing import Protocol, TypeGuard, runtime_checkable
 
 import httpx
@@ -169,6 +170,18 @@ def _safe_provider_error(exc: Exception) -> str:
     if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
     return type(exc).__name__
+
+
+def _float_value(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
+        raise TypeError("value must be numeric")
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ValueError("value must be finite") from exc
+    if not isfinite(number):
+        raise ValueError("value must be finite")
+    return number
 
 
 def _is_string_keyed_dict(value: object) -> TypeGuard[dict[str, object]]:

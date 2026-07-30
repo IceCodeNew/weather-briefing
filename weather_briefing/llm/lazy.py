@@ -5,14 +5,18 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from ..notifications import NotificationDecision
+from ..notification_decision import NotificationDecision
 
 
 class ServiceStatusLLM(Protocol):
     """Provide the LLM operations used by service-status monitoring."""
 
-    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
-        """Return whether an official message change merits a notification."""
+    async def decide_notification(
+        self,
+        system_prompt: str,
+        payload: dict[str, object],
+    ) -> NotificationDecision:
+        """Evaluate one policy-owned notification prompt."""
         ...
 
     async def translate_service_status(
@@ -42,10 +46,14 @@ class LazyServiceStatusLLM:
             self._provider = await self._factory()
         return self._provider
 
-    async def assess_notification(self, payload: dict[str, object]) -> NotificationDecision:
+    async def decide_notification(
+        self,
+        system_prompt: str,
+        payload: dict[str, object],
+    ) -> NotificationDecision:
         """Lazily evaluate whether a change merits a notification."""
         provider = await self._get()
-        return await provider.assess_notification(payload)
+        return await provider.decide_notification(system_prompt, payload)
 
     async def translate_service_status(
         self,

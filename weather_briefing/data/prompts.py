@@ -12,14 +12,8 @@ def _load_prompt(filename: str) -> str:
 
 
 def _load_system_prompt() -> str:
-    """Load the weather briefing prompt plus the shared notification policy."""
-    return (
-        _load_prompt("system_prompt.txt")
-        + "\n"
-        + _load_prompt("notification_policy.txt")
-        + "\n本次 weather 任务把通知判断写入 should_publish。forecast 模式必须设为 true。"
-    )
+    """Load the weather content-generation prompt."""
+    return _load_prompt("system_prompt.txt")
 
 
-NOTIFICATION_POLICY = _load_prompt("notification_policy.txt")
 SYSTEM_PROMPT = _load_system_prompt()

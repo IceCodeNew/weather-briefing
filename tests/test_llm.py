@@ -88,7 +88,6 @@ def _valid_payload() -> dict[str, object]:
         "resolved_warning_ids": [],
         "disaster_tracking": [],
         "advice": [],
-        "should_publish": True,
     }
 
 
@@ -151,7 +150,7 @@ async def test_sensitive_llm_diagnostic_state_failure_does_not_affect_request(ca
     assert "private system prompt" not in caplog.text
 
 
-def test_accepts_complete_suppressed_message_with_active_warning() -> None:
+def test_accepts_complete_message_with_active_warning() -> None:
     payload = _valid_payload()
     payload.update(
         active_warnings=[
@@ -166,12 +165,10 @@ def test_accepts_complete_suppressed_message_with_active_warning() -> None:
         advice=[{"topic": "clothing", "text": "Wear layers", "source_ids": ["source"]}],
         conclusions=[{"text": "Cool morning", "source_ids": ["source"]}],
         disaster_tracking=[{"text": "Storm nearby", "source_ids": ["source"]}],
-        should_publish=False,
     )
 
-    result, decision = parse_result(payload, _now(), {"source"})
+    result = parse_result(payload, _now(), {"source"})
 
-    assert not decision.should_notify
     assert result.active_warnings[0].id == "warning"
     assert result.advice[0].topic.value == "clothing"
     assert result.conclusions[0].text == "Cool morning"
@@ -205,7 +202,6 @@ def test_rejects_every_missing_required_top_level_field(field: str) -> None:
         ("resolved_warning_ids", "warning"),
         ("disaster_tracking", "not-an-array"),
         ("advice", "not-an-array"),
-        ("should_publish", "yes"),
     ),
 )
 def test_rejects_invalid_top_level_field(field: str, value: object) -> None:
@@ -514,7 +510,10 @@ async def test_notification_decision_wraps_sdk_failures(
         caplog.at_level(logging.WARNING, logger="weather_briefing.llm"),
         pytest.raises(exception, match=message),
     ):
-        await provider.assess_notification({"notification_kind": "service_status"})
+        await provider.decide_notification(
+            "notification prompt",
+            {"current": {"status": "investigating"}},
+        )
 
     if isinstance(error, LengthFinishReasonError):
         assert "LLM notification decision reached output token limit" in caplog.text

@@ -96,6 +96,7 @@ class HealthStateOperations:
         alerted_at: pendulum.DateTime,
     ) -> None:
         """Record successful stale-source alert delivery."""
+        alerted_at = require_aware_datetime(alerted_at, context="Stale source alert time")
         if not source_ids:
             return
         placeholders = ",".join("?" for _ in source_ids)
@@ -178,6 +179,7 @@ class HealthStateOperations:
         alerted_at: pendulum.DateTime,
     ) -> None:
         """Record successful RSS failure alert delivery for sources."""
+        alerted_at = require_aware_datetime(alerted_at, context="RSS failure alert time")
         if not source_ids:
             return
         placeholders = ",".join("?" for _ in source_ids)

@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, call
 import pytest
 
 from weather_briefing.llm import FallbackLLMProvider, LLMError, LLMRequestError
-from weather_briefing.notifications import NotificationDecision
+from weather_briefing.notification_decision import NotificationDecision
 
 
 def _provider() -> AsyncMock:
     provider = AsyncMock()
     provider.summarize.return_value = {"provider": "result"}
-    provider.assess_notification.return_value = NotificationDecision(True)
+    provider.decide_notification.return_value = NotificationDecision(True)
     provider.translate_service_status.return_value = ("title", "body")
     return provider
 
@@ -20,7 +20,11 @@ def _provider() -> AsyncMock:
     ("operation", "args", "expected"),
     (
         ("summarize", ("system", {"input": "value"}), {"provider": "fallback"}),
-        ("assess_notification", ({"input": "value"},), NotificationDecision(True)),
+        (
+            "decide_notification",
+            ("notification prompt", {"input": "value"}),
+            NotificationDecision(True),
+        ),
         ("translate_service_status", ("title", "body", "en"), ("translated", "content")),
     ),
 )
@@ -99,11 +103,17 @@ async def test_request_failure_pins_fallback_across_operations() -> None:
     )
 
     await provider.summarize("system", {"input": "value"})
-    decision = await provider.assess_notification({"notification": "value"})
+    decision = await provider.decide_notification(
+        "notification prompt",
+        {"notification": "value"},
+    )
 
     assert decision == NotificationDecision(True)
-    primary.assess_notification.assert_not_awaited()
-    fallback.assess_notification.assert_awaited_once_with({"notification": "value"})
+    primary.decide_notification.assert_not_awaited()
+    fallback.decide_notification.assert_awaited_once_with(
+        "notification prompt",
+        {"notification": "value"},
+    )
 
 
 async def test_concurrent_failure_switches_before_another_primary_request() -> None:

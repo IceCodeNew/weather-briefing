@@ -8,7 +8,6 @@ from typing import Any
 import pendulum
 
 from ..models import Advice, AdviceTopic, BriefingResult, Conclusion, Warning
-from ..notifications import NotificationDecision
 from ..time_utils import require_aware_datetime
 from .base import LLMError
 from .schema import SourcedTextPayload, validate_structured_output
@@ -18,8 +17,8 @@ def parse_result(
     payload: Mapping[str, Any],
     now: pendulum.DateTime,
     valid_source_ids: set[str],
-) -> tuple[BriefingResult, NotificationDecision]:
-    """Validate an LLM payload and separate content from its notification decision."""
+) -> BriefingResult:
+    """Validate an LLM payload and convert it to the briefing domain model."""
     require_aware_datetime(now, context="Briefing result time")
     structured = validate_structured_output(payload)
 
@@ -52,16 +51,13 @@ def parse_result(
         for value in structured.advice
     )
     raw_payload = structured.model_dump(mode="json")
-    return (
-        BriefingResult(
-            headline=structured.headline,
-            headline_source_ids=cited_source_ids(structured.headline_source_ids),
-            conclusions=sourced_text_items(structured.conclusions),
-            active_warnings=warnings,
-            resolved_warning_ids=tuple(structured.resolved_warning_ids),
-            advice=advice,
-            disaster_tracking=sourced_text_items(structured.disaster_tracking),
-            raw_payload=raw_payload,
-        ),
-        NotificationDecision(should_notify=structured.should_publish),
+    return BriefingResult(
+        headline=structured.headline,
+        headline_source_ids=cited_source_ids(structured.headline_source_ids),
+        conclusions=sourced_text_items(structured.conclusions),
+        active_warnings=warnings,
+        resolved_warning_ids=tuple(structured.resolved_warning_ids),
+        advice=advice,
+        disaster_tracking=sourced_text_items(structured.disaster_tracking),
+        raw_payload=raw_payload,
     )

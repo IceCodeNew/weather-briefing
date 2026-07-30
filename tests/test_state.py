@@ -18,6 +18,46 @@ def test_schema_initializes_with_default_sqlite_rows() -> None:
         assert connection.execute("SELECT consecutive_failures FROM task_health").fetchone() == (0,)
 
 
+def test_existing_service_status_schema_adds_handled_surfaces(tmp_path: Path) -> None:
+    state_path = tmp_path / "legacy-state.db"
+    with closing(sqlite3.connect(state_path)) as connection:
+        connection.execute(
+            """CREATE TABLE service_status_message_state (
+                source_id TEXT NOT NULL,
+                incident_id TEXT NOT NULL,
+                observed_revision_id TEXT NOT NULL,
+                observed_title TEXT NOT NULL,
+                observed_status TEXT NOT NULL,
+                observed_body TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                PRIMARY KEY(source_id, incident_id)
+            )"""
+        )
+        initialize_state(connection)
+
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(service_status_message_state)")}
+
+    assert "handled_surfaces" in columns
+
+
+def test_existing_briefing_schema_adds_notification_payload(tmp_path: Path) -> None:
+    state_path = tmp_path / "legacy-briefings.db"
+    with closing(sqlite3.connect(state_path)) as connection:
+        connection.execute(
+            """CREATE TABLE briefings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                body TEXT NOT NULL,
+                published_at TEXT NOT NULL
+            )"""
+        )
+        initialize_state(connection)
+
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(briefings)")}
+
+    assert "notification_payload" in columns
+
+
 def test_rendered_text_diagnostics_can_be_enabled_and_disabled(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 14, 7, tz="UTC")
     expires_at = now.add(minutes=15)
@@ -96,6 +136,25 @@ def test_articles_are_deduplicated(tmp_path: Path) -> None:
         assert stored.published_at.to_iso8601_string() == "2026-07-13T01:00:00Z"
 
 
+def test_save_articles_rolls_back_partial_batch(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    accepted = Article("accepted", "source", "Source", "Accepted", "https://example.invalid/a", now, "body")
+    rejected = Article("rejected", "source", "Source", "Rejected", "https://example.invalid/r", now, "body")
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_rejected_article BEFORE INSERT ON articles
+                WHEN NEW.id = 'rejected'
+                BEGIN SELECT RAISE(ABORT, 'article insert failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="article insert failed"):
+            state.save_articles((accepted, rejected), now)
+
+        assert state.known_article_ids((accepted.id, rejected.id)) == set()
+
+
 def test_pending_articles_remain_until_marked_processed(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     article = Article("id", "source", "Source", "Title", "https://example.invalid", now, "body")
@@ -109,6 +168,25 @@ def test_pending_articles_remain_until_marked_processed(tmp_path: Path) -> None:
 
         assert state.pending_articles() == ()
         assert state.known_article_ids((article.id,)) == {article.id}
+
+
+def test_mark_articles_processed_rolls_back_when_pending_delete_fails(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    article = Article("id", "source", "Source", "Title", "https://example.invalid", now, "body")
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.save_pending_articles((article,), now)
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_pending_delete BEFORE DELETE ON pending_articles
+                BEGIN SELECT RAISE(ABORT, 'pending delete failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="pending delete failed"):
+            state.mark_articles_processed((article,), now.add(hours=1))
+
+        assert state.pending_articles() == (article,)
+        assert state.known_article_ids((article.id,)) == set()
 
 
 def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> None:
@@ -138,16 +216,78 @@ def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> No
             resolved_warning_ids=(),
             recorded_at=now,
             verbatim_silent=True,
+            notification_payload={"headline": "Platform-neutral headline"},
         )
 
         assert state.pending_articles() == ()
         assert state.known_article_ids((regular.id, verbatim.id)) == {regular.id, verbatim.id}
-        assert tuple(record.body for record in state.recent_briefings(now, 1)) == ("Published briefing",)
+        recent_briefings = state.recent_briefings(now, 1)
+        assert tuple(record.body for record in recent_briefings) == ("Published briefing",)
+        assert recent_briefings[0].notification_payload == {"headline": "Platform-neutral headline"}
         assert state.recent_context_documents(now, 1) == (document,)
         assert state.active_warnings(now, 1) == (warning,)
         queued = state.pending_verbatim_deliveries()
         assert tuple(delivery.article for delivery in queued) == (verbatim,)
         assert tuple(delivery.silent for delivery in queued) == (True,)
+
+
+def test_active_warnings_rejects_invalid_stored_payload(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="UTC")
+    state_path = tmp_path / "state.db"
+    warning = Warning("warning", "Warning", "active", "detail", ("source",), now)
+    valid_fields = '"id":"warning","title":"Warning","status":"active","detail":"detail"'
+
+    with SQLiteStateStore(state_path) as state:
+        state.update_warnings((warning,), (), now)
+        for stored_value, message in (
+            (
+                b'{"id":"warning","title":"Warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "must be JSON text",
+            ),
+            ("[]", "must be an object with string keys"),
+            (f'{{{valid_fields},"source_ids":"source"}}', "source_ids must be a list of strings"),
+            (f'{{{valid_fields},"source_ids":["source",1]}}', "source_ids must be a list of strings"),
+            (
+                '{"id":"warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "title must be a string",
+            ),
+            (
+                '{"id":1,"title":"Warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "id must be a string",
+            ),
+            (
+                '{"id":"different","title":"Warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "id must match its row id",
+            ),
+        ):
+            with closing(sqlite3.connect(state_path)) as connection:
+                connection.execute("UPDATE warnings SET payload = ?", (stored_value,))
+                connection.commit()
+
+            with pytest.raises(ValueError, match=message):
+                state.active_warnings(now, 1)
+
+
+def test_briefing_history_rejects_invalid_notification_payload(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="UTC")
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.save_briefing(
+            "briefing",
+            "Published briefing",
+            now,
+            notification_payload={"headline": "Valid"},
+        )
+        for stored_value, message in (("[]", "object with string keys"), (b"{}", "must be JSON text")):
+            with closing(sqlite3.connect(state_path)) as connection:
+                connection.execute(
+                    "UPDATE briefings SET notification_payload = ?",
+                    (stored_value,),
+                )
+                connection.commit()
+
+            with pytest.raises(ValueError, match=message):
+                state.recent_briefings(now, 1)
 
 
 def test_unpublished_result_commits_pending_state_without_delivery_queue(tmp_path: Path) -> None:
@@ -302,6 +442,52 @@ def test_result_checkpoint_rolls_back_all_state_and_can_be_retried(tmp_path: Pat
         assert tuple(delivery.article for delivery in state.pending_verbatim_deliveries()) == (article,)
 
 
+def test_update_warnings_rolls_back_resolutions_when_insert_fails(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    old_warning = Warning("old-warning", "Old", "active", "old", ("source",), now)
+    new_warning = Warning("new-warning", "New", "active", "new", ("source",), now.add(minutes=1))
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.update_warnings((old_warning,), (), now, {"source"})
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_new_warning BEFORE INSERT ON warnings
+                WHEN NEW.id = 'new-warning'
+                BEGIN SELECT RAISE(ABORT, 'warning insert failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="warning insert failed"):
+            state.update_warnings((new_warning,), (old_warning.id,), now.add(minutes=1), {"source"})
+
+        assert state.active_warnings(now.add(minutes=1), 1) == (old_warning,)
+
+
+def test_record_success_rolls_back_pruning_when_health_reset_fails(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
+    article = Article(
+        "old",
+        "source",
+        "Source",
+        "Old",
+        "https://example.invalid/old",
+        now.subtract(hours=3),
+        "body",
+    )
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.save_articles((article,), now.subtract(hours=3))
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.executescript(
+                """CREATE TRIGGER abort_health_reset BEFORE UPDATE ON task_health
+                BEGIN SELECT RAISE(ABORT, 'health reset failed'); END;"""
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="health reset failed"):
+            state.record_success(now, history_hours=1, warning_retention_hours=1)
+
+        assert state.known_article_ids((article.id,)) == {article.id}
+
+
 def test_source_becomes_stale_after_threshold(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     with SQLiteStateStore(tmp_path / "state.db") as state:
@@ -393,6 +579,59 @@ def test_context_snapshots_are_available_for_briefing_change_detection(tmp_path:
 
         assert state.recent_context_documents(now.add(hours=1), 2) == (document,)
         assert state.recent_context_documents(now.add(hours=3), 2) == ()
+
+
+def test_history_boundaries_reject_naive_times(tmp_path: Path) -> None:
+    naive = pendulum.naive(2026, 7, 13, 9)
+    document = SourceDocument(
+        "weather:test",
+        "Weather API",
+        "https://example.invalid/weather",
+        "Current weather",
+    )
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        with pytest.raises(ValueError, match="Context observation time"):
+            state.save_context_documents((document,), naive)
+        with pytest.raises(ValueError, match="Context history time"):
+            state.recent_context_documents(naive, 1)
+        with pytest.raises(ValueError, match="Article history time"):
+            state.recent_articles(naive, 1)
+        with pytest.raises(ValueError, match="Briefing history time"):
+            state.recent_briefings(naive, 1)
+        with pytest.raises(ValueError, match="Warning retention time"):
+            state.active_warnings(naive, 1)
+        with pytest.raises(ValueError, match="State pruning time"):
+            state.record_success(naive, history_hours=1, warning_retention_hours=1)
+
+
+def test_empty_persistence_writes_reject_naive_times(tmp_path: Path) -> None:
+    naive = pendulum.naive(2026, 7, 13, 9)
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        with pytest.raises(ValueError, match="Article processing time"):
+            state.save_articles((), naive)
+        with pytest.raises(ValueError, match="Pending article observation time"):
+            state.save_pending_articles((), naive)
+        with pytest.raises(ValueError, match="Article processing time"):
+            state.mark_articles_processed((), naive)
+        with pytest.raises(ValueError, match="Warning update time"):
+            state.update_warnings((), (), naive)
+        with pytest.raises(ValueError, match="Result recording time"):
+            state.commit_result(
+                kind="briefing",
+                body=None,
+                articles=(),
+                context_documents=(),
+                active_warnings=(),
+                resolved_warning_ids=(),
+                recorded_at=naive,
+                verbatim_silent=False,
+            )
+        with pytest.raises(ValueError, match="Stale source alert time"):
+            state.mark_stale_sources_alerted((), naive)
+        with pytest.raises(ValueError, match="RSS failure alert time"):
+            state.mark_rss_failure_alerted((), naive)
 
 
 def test_context_snapshot_language_is_persisted(tmp_path: Path) -> None:
