@@ -132,10 +132,10 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         logging.root.handlers.clear()
         logging.root.handlers.extend(original_root_handlers)
         logging.root.setLevel(original_root_level)
-        for logger, original_level in zip(sdk_loggers, original_sdk_levels, strict=True):
-            logger.setLevel(original_level)
-        for logger, original_level in zip(silenced_sdk_loggers, original_silenced_sdk_levels, strict=True):
-            logger.setLevel(original_level)
+        for logger, sdk_level in zip(sdk_loggers, original_sdk_levels, strict=True):
+            logger.setLevel(sdk_level)
+        for logger, sdk_level in zip(silenced_sdk_loggers, original_silenced_sdk_levels, strict=True):
+            logger.setLevel(sdk_level)
 
 
 def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() -> None:
@@ -177,8 +177,8 @@ def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() 
         logging.root.handlers.clear()
         logging.root.handlers.extend(original_root_handlers)
         logging.root.setLevel(original_root_level)
-        for logger, original_level in zip(sdk_loggers, original_sdk_levels, strict=True):
-            logger.setLevel(original_level)
+        for logger, sdk_level in zip(sdk_loggers, original_sdk_levels, strict=True):
+            logger.setLevel(sdk_level)
 
 
 @pytest.mark.parametrize(
