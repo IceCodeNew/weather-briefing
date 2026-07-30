@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from unittest.mock import AsyncMock
 
 import pytest
@@ -81,6 +82,7 @@ def test_assessment_copies_valid_payload() -> None:
 
     assert assessment.payload == payload
     assert assessment.payload is not payload
+    assert isinstance(assessment.payload, MappingProxyType)
 
 
 @pytest.mark.parametrize(

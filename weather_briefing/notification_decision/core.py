@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Protocol, TypeGuard
 
 
@@ -24,10 +25,10 @@ def _is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
     return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
 
 
-def _validated_payload(value: object) -> dict[str, object]:
+def _validated_payload(value: object) -> Mapping[str, object]:
     if not _is_string_object_mapping(value):
         raise ValueError("Notification payload must be a mapping with string keys")
-    return dict(value)
+    return MappingProxyType(dict(value))
 
 
 @dataclass(frozen=True, slots=True, init=False)
