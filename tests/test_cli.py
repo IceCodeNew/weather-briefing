@@ -117,6 +117,9 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         assert logging.root.level == logging.WARNING
         assert root_handler.level == logging.WARNING
         assert all(logger.level == logging.WARNING for logger in sdk_loggers)
+        record = logging.LogRecord("weather_briefing", logging.INFO, __file__, 1, "message", (), None)
+        record.created = pendulum.datetime(2026, 7, 30, 3, 4, 5, 678901, tz="UTC").timestamp()
+        assert own_handler.format(record).startswith("2026-07-30T03:04:05.678901Z [INFO] weather_briefing: message")
     finally:
         _LOGGER.handlers.clear()
         _LOGGER.handlers.extend(original_handlers)
@@ -645,17 +648,28 @@ def test_main_manages_rendered_text_diagnostics_without_loading_service_settings
     ("action", "duration", "message"),
     (
         ("enable", None, "require a duration"),
+        ("enable", True, "positive integer"),
+        ("enable", 0, "positive integer"),
+        ("enable", -1, "positive integer"),
+        ("enable", "15", "positive integer"),
+        ("disable", 1, "only valid for enable"),
+        ("status", 1, "only valid for enable"),
         ("unsupported", None, "Unsupported rendered text diagnostics action"),
+        (1, None, "Unsupported rendered text diagnostics action"),
     ),
 )
 def test_rendered_text_diagnostics_reject_invalid_internal_requests(
-    action: str,
-    duration: int | None,
+    action: object,
+    duration: object,
     message: str,
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("BRIEFING_STATE_PATH", str(tmp_path / "state.sqlite3"))
+    monkeypatch.setattr(
+        "weather_briefing.persistence.diagnostics.SQLiteRuntimeDiagnostics",
+        lambda path: pytest.fail(f"opened diagnostics state at {path}"),
+    )
 
     with pytest.raises(ValueError, match=message):
         _manage_rendered_text_diagnostics(action, duration)

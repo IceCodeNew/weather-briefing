@@ -19,6 +19,15 @@ _LOGGER = logging.getLogger("weather_briefing")
 SENSITIVE_SDK_LOGGERS = ("any_llm", "openai", "httpx", "httpcore")
 
 
+class _UTCISOFormatter(logging.Formatter):
+    """Render log record timestamps as explicit UTC ISO-8601 values."""
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        """Format the record creation time without relying on the host timezone."""
+        del datefmt
+        return pendulum.from_timestamp(record.created, tz="UTC").to_iso8601_string()
+
+
 @contextmanager
 def runtime_diagnostics(path: Path) -> Iterator[RenderedTextDiagnostics | None]:
     """Open diagnostics without making their unavailability fatal."""
@@ -38,9 +47,8 @@ def runtime_diagnostics(path: Path) -> Iterator[RenderedTextDiagnostics | None]:
 def configure_logging(*, debug: bool) -> None:
     """Configure application logging while keeping third-party SDKs quiet."""
     level = logging.DEBUG if debug else logging.INFO
-    formatter = logging.Formatter(
+    formatter = _UTCISOFormatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
     )
     if not _LOGGER.handlers:
         handler = logging.StreamHandler(sys.stderr)
@@ -59,13 +67,23 @@ def configure_logging(*, debug: bool) -> None:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
-def manage_rendered_text_diagnostics(action: str, duration_seconds: int | None = None) -> None:
+def manage_rendered_text_diagnostics(action: object, duration_seconds: object = None) -> None:
     """Enable, disable, or inspect the temporary rendered-text diagnostic switch."""
+    if not isinstance(action, str) or action not in {"enable", "disable", "status"}:
+        raise ValueError(f"Unsupported rendered text diagnostics action: {action}")
+    validated_duration: int | None = None
+    if action == "enable":
+        if duration_seconds is None:
+            raise ValueError("Rendered text diagnostics require a duration")
+        if not isinstance(duration_seconds, int) or isinstance(duration_seconds, bool) or duration_seconds <= 0:
+            raise ValueError("Rendered text diagnostics duration must be a positive integer")
+        validated_duration = duration_seconds
+    elif duration_seconds is not None:
+        raise ValueError("Rendered text diagnostics duration is only valid for enable")
+
     with diagnostics_store.SQLiteRuntimeDiagnostics(state_path_from_env()) as diagnostics:
-        if action == "enable":
-            if duration_seconds is None:
-                raise ValueError("Rendered text diagnostics require a duration")
-            expires_at = pendulum.now("UTC").add(seconds=duration_seconds)
+        if validated_duration is not None:
+            expires_at = pendulum.now("UTC").add(seconds=validated_duration)
             diagnostics.enable_rendered_text_logging(expires_at)
             print(
                 "Rendered text diagnostic logging enabled until "
@@ -86,4 +104,3 @@ def manage_rendered_text_diagnostics(action: str, duration_seconds: int | None =
                     f"{expires_at.to_iso8601_string()}; rendered bodies require DEBUG logging"
                 )
             return
-        raise ValueError(f"Unsupported rendered text diagnostics action: {action}")
