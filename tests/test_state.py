@@ -18,6 +18,28 @@ def test_schema_initializes_with_default_sqlite_rows() -> None:
         assert connection.execute("SELECT consecutive_failures FROM task_health").fetchone() == (0,)
 
 
+def test_existing_service_status_schema_adds_handled_surfaces(tmp_path: Path) -> None:
+    state_path = tmp_path / "legacy-state.db"
+    with closing(sqlite3.connect(state_path)) as connection:
+        connection.execute(
+            """CREATE TABLE service_status_message_state (
+                source_id TEXT NOT NULL,
+                incident_id TEXT NOT NULL,
+                observed_revision_id TEXT NOT NULL,
+                observed_title TEXT NOT NULL,
+                observed_status TEXT NOT NULL,
+                observed_body TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                PRIMARY KEY(source_id, incident_id)
+            )"""
+        )
+        initialize_state(connection)
+
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(service_status_message_state)")}
+
+    assert "handled_surfaces" in columns
+
+
 def test_rendered_text_diagnostics_can_be_enabled_and_disabled(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 14, 7, tz="UTC")
     expires_at = now.add(minutes=15)

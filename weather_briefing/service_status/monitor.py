@@ -55,6 +55,7 @@ class ServiceStatusStateStore(Protocol):
         title: str,
         status: str,
         body: str,
+        surfaces: tuple[str, ...],
         handled_at: pendulum.DateTime,
     ) -> None:
         """Record successful delivery or an intentional skip."""
@@ -224,6 +225,7 @@ class ServiceStatusMonitor:
             message.title,
             message.status,
             message.body,
+            tuple(surface.value for surface in message.surfaces),
             now,
         )
 

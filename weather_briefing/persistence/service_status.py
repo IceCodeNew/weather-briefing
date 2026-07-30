@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -21,6 +22,22 @@ class ServiceStatusMessageState:
     handled_title: str | None
     handled_status: str | None
     handled_body: str | None
+    handled_surfaces: tuple[str, ...] | None
+
+
+def _stored_surfaces(value: object) -> tuple[str, ...] | None:
+    """Decode one optional list of application-owned service surfaces."""
+    if value is None:
+        return None
+    decoded: object = json.loads(str(value))
+    if not isinstance(decoded, list):
+        raise ValueError("Stored service-status surfaces must be a list")
+    surfaces: list[str] = []
+    for surface in decoded:
+        if not isinstance(surface, str):
+            raise ValueError("Stored service-status surfaces must contain strings")
+        surfaces.append(surface)
+    return tuple(surfaces)
 
 
 class SQLiteServiceStatusStore:
@@ -38,7 +55,7 @@ class SQLiteServiceStatusStore:
         """Return durable handling state for one official incident."""
         row = self._connection.execute(
             """SELECT observed_revision_id, decided_revision_id, should_notify,
-            handled_revision_id, handled_title, handled_status, handled_body
+            handled_revision_id, handled_title, handled_status, handled_body, handled_surfaces
             FROM service_status_message_state WHERE source_id = ? AND incident_id = ?""",
             (source_id, incident_id),
         ).fetchone()
@@ -52,6 +69,7 @@ class SQLiteServiceStatusStore:
             handled_title=str(row["handled_title"]) if row["handled_title"] is not None else None,
             handled_status=str(row["handled_status"]) if row["handled_status"] is not None else None,
             handled_body=str(row["handled_body"]) if row["handled_body"] is not None else None,
+            handled_surfaces=_stored_surfaces(row["handled_surfaces"]),
         )
 
     def observe_service_status_message(
@@ -139,6 +157,7 @@ class SQLiteServiceStatusStore:
         title: str,
         status: str,
         body: str,
+        surfaces: tuple[str, ...],
         handled_at: pendulum.DateTime,
     ) -> None:
         """Mark one observed message as delivered or intentionally skipped."""
@@ -148,6 +167,7 @@ class SQLiteServiceStatusStore:
                 handled_title = ?,
                 handled_status = ?,
                 handled_body = ?,
+                handled_surfaces = ?,
                 handled_at = ?
             WHERE source_id = ? AND incident_id = ? AND observed_revision_id = ?""",
             (
@@ -155,6 +175,7 @@ class SQLiteServiceStatusStore:
                 title,
                 status,
                 body,
+                json.dumps(surfaces, ensure_ascii=False, separators=(",", ":")),
                 storage_time(handled_at),
                 source_id,
                 incident_id,

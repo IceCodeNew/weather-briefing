@@ -56,6 +56,7 @@ def initialize_state(connection: sqlite3.Connection) -> None:
                     handled_title TEXT,
                     handled_status TEXT,
                     handled_body TEXT,
+                    handled_surfaces TEXT,
                     handled_at TEXT,
                     PRIMARY KEY(source_id, incident_id)
                 );
@@ -92,4 +93,9 @@ def initialize_state(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE context_snapshots ADD COLUMN history_value TEXT")
     if "language" not in context_columns:
         connection.execute("ALTER TABLE context_snapshots ADD COLUMN language TEXT NOT NULL DEFAULT 'zh-CN'")
+    service_status_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(service_status_message_state)")
+    }
+    if "handled_surfaces" not in service_status_columns:
+        connection.execute("ALTER TABLE service_status_message_state ADD COLUMN handled_surfaces TEXT")
     connection.commit()

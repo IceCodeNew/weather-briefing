@@ -33,6 +33,8 @@ def service_status_notification_assessment(
             "status": previous.handled_status,
             "body": previous.handled_body,
         }
+        if previous.handled_surfaces is not None:
+            previous_message["surfaces"] = list(previous.handled_surfaces)
     return NotificationAssessment(
         kind=SERVICE_STATUS_NOTIFICATION_KIND,
         payload={

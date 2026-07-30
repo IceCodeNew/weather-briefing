@@ -448,6 +448,7 @@ async def test_changed_revision_supplies_previous_official_message_to_decision(t
         revision_id="revision-2",
         status="resolved",
         body="This incident has been resolved.",
+        surfaces=(ServiceSurface.WEB, ServiceSurface.API),
     )
     provider, delivery, decision, translator = _monitor_dependencies(_snapshot(first_message))
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
@@ -463,8 +464,10 @@ async def test_changed_revision_supplies_previous_official_message_to_decision(t
         "title": first_message.title,
         "status": first_message.status,
         "body": first_message.body,
+        "surfaces": ["api"],
     }
     assert payload["current"]["status"] == "resolved"
+    assert payload["current"]["surfaces"] == ["web", "api"]
 
 
 async def test_delivery_failure_retries_the_same_revision(tmp_path: Path, caplog) -> None:
@@ -617,6 +620,7 @@ def test_state_rejects_handling_a_changed_observation(tmp_path: Path) -> None:
                 "Title",
                 "monitoring",
                 "Body",
+                ("api",),
                 now,
             )
 
