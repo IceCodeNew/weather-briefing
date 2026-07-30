@@ -32,6 +32,7 @@ class SQLiteStateStore(
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
         initialize_state(self._connection)
+        # Service-status methods own transactions and must not run inside commit_result().
         self.service_status = SQLiteServiceStatusStore(self._connection)
 
     def close(self) -> None:
