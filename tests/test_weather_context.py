@@ -2259,6 +2259,38 @@ async def test_open_meteo_allergen_guidance_failure_keeps_air_quality(monkeypatc
     assert snapshot.allergen is None
 
 
+async def test_open_meteo_air_quality_guidance_failure_keeps_allergen(monkeypatch) -> None:
+    def fail_to_load_guidance(_: int) -> tuple[str, str]:
+        raise ReferenceDataError("invalid air-quality guidance")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/forecast":
+            return httpx.Response(200, json=_open_meteo_weather_response())
+        return httpx.Response(
+            200,
+            json={
+                "timezone": "Europe/Berlin",
+                "current": {
+                    "time": "2026-07-13T08:00",
+                    "us_aqi": 42,
+                    "us_aqi_pm2_5": 35,
+                    "pm2_5": 9.5,
+                    "birch_pollen": 5,
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        "weather_briefing.air_quality.health_guidance",
+        fail_to_load_guidance,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await OpenMeteoProvider(client).fetch(52.52, 13.41)
+
+    assert snapshot.air_quality is None
+    assert snapshot.allergen is not None
+
+
 async def test_snapshot_to_documents_includes_allergen_document() -> None:
     snapshot = WeatherContextSnapshot(
         source_id="weather:test",

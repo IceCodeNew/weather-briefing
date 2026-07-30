@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 
+from .. import air_quality as air_quality_module
 from .. import allergen as allergen_module
-from ..air_quality import health_guidance
+from ..data.resources import ReferenceDataError
 from ..models import AirQualitySnapshot, AirQualityTimeKind, AllergenLevel, AllergenSnapshot
 from ..time_utils import parse_datetime_with_default_timezone
 from . import open_meteo_reference
@@ -125,7 +126,7 @@ def parse_air_quality(
     """Convert optional Open-Meteo air-quality values."""
     try:
         aqi = round(_float_value(current["us_aqi"]))
-        category, guidance = health_guidance(aqi)
+        category, guidance = air_quality_module.health_guidance(aqi)
         return AirQualitySnapshot(
             source_id="air-quality:open-meteo",
             source_name="Open-Meteo",
@@ -146,7 +147,7 @@ def parse_air_quality(
             health_guidance=guidance,
             output_language="en",
         )
-    except (KeyError, TypeError, ValueError) as exc:
+    except (ReferenceDataError, KeyError, TypeError, ValueError) as exc:
         _LOGGER.warning(
             "Weather API optional call failed provider=open-meteo operation=air-quality reason=%s",
             type(exc).__name__,
