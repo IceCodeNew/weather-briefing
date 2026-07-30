@@ -106,6 +106,30 @@ def _qweather_air_quality_values(*, aqi: float, forecast_start: str) -> dict[str
     }
 
 
+@pytest.mark.parametrize(
+    ("output_language", "expected"),
+    (
+        ("zh-CN", "中国环境空气质量指数（cn-mee）"),
+        ("zh-TW", "中国环境空气质量指数（cn-mee）"),
+        ("en", "中国环境空气质量指数 (cn-mee)"),
+        ("ja", "中国环境空气质量指数（cn-mee）"),
+    ),
+)
+def test_qweather_air_quality_standard_uses_localized_punctuation(
+    output_language: str,
+    expected: str,
+) -> None:
+    snapshot = _qweather_air_quality_snapshot(
+        _qweather_air_quality_values(aqi=42, forecast_start="2026-07-13T08:00Z"),
+        "https://example.invalid/air-quality",
+        None,
+        AirQualityTimeKind.OBSERVATION,
+        output_language,
+    )
+
+    assert snapshot.aqi_standard == expected
+
+
 def test_qweather_jwt_authenticator_delegates_eddsa_signing_to_pyjwt(monkeypatch) -> None:
     private_pem = "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----\n"
     encode_call: dict[str, object] = {}

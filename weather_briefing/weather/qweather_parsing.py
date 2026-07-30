@@ -60,7 +60,7 @@ def air_quality_snapshot(
         time_kind=time_kind,
         aqi=aqi,
         aqi_display=str(index.get("aqiDisplay", index["aqi"])),
-        aqi_standard=_aqi_standard(index),
+        aqi_standard=_aqi_standard(index, output_language),
         pm25_aqi=_sub_index(pm25, str(index["code"])),
         pm25_concentration=None if concentration_value is None else _float_value(concentration_value),
         pm25_unit=None if concentration_unit is None else str(concentration_unit),
@@ -97,10 +97,13 @@ def _sub_index(pollutant: dict[str, object], standard: str) -> float | None:
     return None
 
 
-def _aqi_standard(index: dict[str, object]) -> str:
+def _aqi_standard(index: dict[str, object], output_language: str) -> str:
     code = str(index["code"])
     name = str(index.get("name") or code)
-    return name if name == code else f"{name}（{code}）"
+    if name == code:
+        return name
+    labels = localized_labels(output_language, _QWEATHER_FORMATS)
+    return labels["aqi_standard"].format(name=name, code=code)
 
 
 def format_lifestyle(item: dict[str, object], language: str) -> str:

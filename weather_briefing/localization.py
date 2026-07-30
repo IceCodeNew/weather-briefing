@@ -46,7 +46,7 @@ _LOCALIZATION_FIELDS = {
             "detail_separator",
         }
     ),
-    "qweather": frozenset({"day", "lifestyle", "unknown", "no_details"}),
+    "qweather": frozenset({"aqi_standard", "day", "lifestyle", "unknown", "no_details"}),
     "weather_document": frozenset(
         {
             "separator",
