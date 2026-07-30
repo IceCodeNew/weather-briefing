@@ -237,7 +237,7 @@ def test_telegram_notifier_configures_apprise_service_variants() -> None:
     assert len(normal) == 1
     assert isinstance(normal.asset, AppriseAsset)
     assert normal.asset.async_mode is False
-    assert "format=html" in normal.urls(privacy=False)[0]
+    assert "format=text" in normal.urls(privacy=False)[0]
     assert "overflow=split" in normal.urls(privacy=False)[0]
     assert "preview=no" in normal.urls(privacy=False)[0]
     assert "silent=no" in normal.urls(privacy=False)[0]
@@ -335,9 +335,10 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(mo
         timeout_seconds=12.5,
     )
     publisher = TelegramPublisher(normal, silent)
-    body = "literal <b>tag</b> & <unknown>\n" + "x" * 4097
+    prefix = "<b>tag</b>&<unknown>"
+    body = prefix + ("x" * (4095 - len(prefix))) + "&tail"
 
-    await publisher.publish(RenderedMessage(body, 4097), silent=True)
+    await publisher.publish(RenderedMessage(body, len(body)), silent=True)
 
     assert len(requests) == 2
     assert requests_overlapped is False
@@ -351,12 +352,10 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(mo
     assert all(payload["disable_notification"] is True for payload in payloads)
     assert all(payload["disable_web_page_preview"] is True for payload in payloads)
     assert all(payload["parse_mode"] == "HTML" for payload in payloads)
-    assert "&lt;b&gt;tag&lt;/b&gt;&nbsp;&amp;&nbsp;&lt;unknown&gt;" in payloads[0]["text"]
-    delivered_body = (
-        html.unescape("".join(payload["text"] for payload in payloads))
-        .replace("\N{NO-BREAK SPACE}", " ")
-        .replace("<br/>", "\n")
-    )
+    assert "&lt;b&gt;tag&lt;/b&gt;&amp;&lt;unknown&gt;" in payloads[0]["text"]
+    assert all("&nbsp;" not in payload["text"] for payload in payloads)
+    assert payloads[0]["text"].endswith("&amp;")
+    delivered_body = "".join(html.unescape(payload["text"]) for payload in payloads)
     assert delivered_body == body
 
 

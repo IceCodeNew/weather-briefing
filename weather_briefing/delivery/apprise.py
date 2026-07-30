@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 from typing import Protocol
@@ -38,13 +39,14 @@ class _StrictNotifyTelegram(NotifyTelegram):
             "User-Agent": self.app_id,
             "Content-Type": "application/json",
         }
+        escaped_body = html.escape(body, quote=False)
         for chat_id, topic in self.targets:
             payload: dict[str, object] = {
                 "chat_id": chat_id,
                 "disable_notification": self.silent,
                 "disable_web_page_preview": not self.preview,
                 "parse_mode": "HTML",
-                "text": body,
+                "text": escaped_body,
             }
             if topic:
                 payload["message_thread_id"] = topic
@@ -161,7 +163,7 @@ def telegram_notifier(
             schema="tgram",
             detect_owner=False,
             include_image=False,
-            format="html",
+            format="text",
             overflow="split",
             preview=False,
             silent=silent,
