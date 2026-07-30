@@ -18,6 +18,7 @@ class ContextStateOperations:
 
     def save_context_documents(self, documents: tuple[SourceDocument, ...], observed_at: pendulum.DateTime) -> None:
         """Persist context documents observed during a successful run."""
+        observed_at = require_aware_datetime(observed_at, context="Context observation time")
         with self._connection:
             self._insert_context_documents(documents, observed_at)
 
@@ -47,6 +48,7 @@ class ContextStateOperations:
 
     def recent_context_documents(self, now: pendulum.DateTime, history_hours: int) -> tuple[SourceDocument, ...]:
         """Return context documents inside the configured history window."""
+        now = require_aware_datetime(now, context="Context history time")
         threshold = storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             """SELECT source_id, name, url, content, language, history_summary, history_value FROM context_snapshots

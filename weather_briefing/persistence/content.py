@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import pendulum
 
 from ..models import Article, BriefingRecord
+from ..time_utils import require_aware_datetime
 from .serialization import _article_from_row as article_from_row
 from .serialization import _parse_time as parse_time
 from .serialization import _storage_time as storage_time
@@ -115,6 +116,7 @@ class ContentStateOperations:
 
     def recent_articles(self, now: pendulum.DateTime, history_hours: int) -> tuple[Article, ...]:
         """Return processed articles inside the configured history window."""
+        now = require_aware_datetime(now, context="Article history time")
         threshold = storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             "SELECT * FROM articles WHERE published_at >= ? ORDER BY published_at",
@@ -124,6 +126,7 @@ class ContentStateOperations:
 
     def recent_briefings(self, now: pendulum.DateTime, history_hours: int) -> tuple[BriefingRecord, ...]:
         """Return briefings inside the configured history window."""
+        now = require_aware_datetime(now, context="Briefing history time")
         threshold = storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
             "SELECT kind, body, published_at FROM briefings WHERE published_at >= ? ORDER BY published_at",

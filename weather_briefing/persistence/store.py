@@ -8,6 +8,7 @@ from pathlib import Path
 import pendulum
 
 from ..models import Article, SourceDocument, Warning
+from ..time_utils import require_aware_datetime
 from .content import ContentStateOperations
 from .context import ContextStateOperations
 from .health import HealthStateOperations
@@ -86,6 +87,7 @@ class SQLiteStateStore(
         warning_retention_hours: int,
     ) -> None:
         """Record task success and prune expired history in one transaction."""
+        now = require_aware_datetime(now, context="State pruning time")
         history_threshold = storage_time(now.subtract(hours=history_hours))
         warning_threshold = storage_time(now.subtract(hours=warning_retention_hours))
         with self._connection:

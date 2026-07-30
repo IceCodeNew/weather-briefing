@@ -479,6 +479,30 @@ def test_context_snapshots_are_available_for_briefing_change_detection(tmp_path:
         assert state.recent_context_documents(now.add(hours=3), 2) == ()
 
 
+def test_history_boundaries_reject_naive_times(tmp_path: Path) -> None:
+    naive = pendulum.naive(2026, 7, 13, 9)
+    document = SourceDocument(
+        "weather:test",
+        "Weather API",
+        "https://example.invalid/weather",
+        "Current weather",
+    )
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        with pytest.raises(ValueError, match="Context observation time"):
+            state.save_context_documents((document,), naive)
+        with pytest.raises(ValueError, match="Context history time"):
+            state.recent_context_documents(naive, 1)
+        with pytest.raises(ValueError, match="Article history time"):
+            state.recent_articles(naive, 1)
+        with pytest.raises(ValueError, match="Briefing history time"):
+            state.recent_briefings(naive, 1)
+        with pytest.raises(ValueError, match="Warning retention time"):
+            state.active_warnings(naive, 1)
+        with pytest.raises(ValueError, match="State pruning time"):
+            state.record_success(naive, history_hours=1, warning_retention_hours=1)
+
+
 def test_context_snapshot_language_is_persisted(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     document = SourceDocument(

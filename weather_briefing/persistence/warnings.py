@@ -8,6 +8,7 @@ import sqlite3
 import pendulum
 
 from ..models import Warning
+from ..time_utils import require_aware_datetime
 from .serialization import _parse_time as parse_time
 from .serialization import _storage_time as storage_time
 
@@ -19,6 +20,7 @@ class WarningStateOperations:
 
     def active_warnings(self, now: pendulum.DateTime, retention_hours: int) -> tuple[Warning, ...]:
         """Return warnings confirmed inside the retention window."""
+        now = require_aware_datetime(now, context="Warning retention time")
         threshold = storage_time(now.subtract(hours=retention_hours))
         rows = self._connection.execute(
             "SELECT payload, last_confirmed_at FROM warnings WHERE last_confirmed_at >= ?",
