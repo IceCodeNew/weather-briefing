@@ -50,12 +50,13 @@ from weather_briefing.composition.weather import build_weather_provider as _buil
 from weather_briefing.composition.weather import qweather_is_configured as _qweather_is_configured
 from weather_briefing.composition.weather import weather_provider_metadata as _weather_provider_metadata
 from weather_briefing.config import ConfigurationError, Settings
-from weather_briefing.delivery import BarkTextRenderer
+from weather_briefing.delivery import BarkTextRenderer, PlainTextRenderer, TelegramPublisher
 from weather_briefing.llm import FallbackLLMProvider
 from weather_briefing.models import LocationSpec, ResolvedLocation
 from weather_briefing.persistence import StateDirectoryInUseError, daemon_state_owner
 from weather_briefing.registries import PublisherName, WeatherProviderName
 from weather_briefing.runtime_diagnostics import SENSITIVE_SDK_LOGGERS as _SENSITIVE_SDK_LOGGERS
+from weather_briefing.runtime_diagnostics import SILENCED_SDK_LOGGERS as _SILENCED_SDK_LOGGERS
 from weather_briefing.scheduling import hour_in_cron as _hour_in_cron
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 from weather_briefing.weather import QWeatherProvider
@@ -100,7 +101,9 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
     original_root_level = logging.root.level
     assert set(_SENSITIVE_SDK_LOGGERS) >= _REQUIRED_SENSITIVE_SDK_LOGGERS
     sdk_loggers = [logging.getLogger(name) for name in _SENSITIVE_SDK_LOGGERS]
+    silenced_sdk_loggers = [logging.getLogger(name) for name in _SILENCED_SDK_LOGGERS]
     original_sdk_levels = [logger.level for logger in sdk_loggers]
+    original_silenced_sdk_levels = [logger.level for logger in silenced_sdk_loggers]
     try:
         _LOGGER.handlers.clear()
         logging.root.handlers.clear()
@@ -117,6 +120,7 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         assert logging.root.level == logging.WARNING
         assert root_handler.level == logging.WARNING
         assert all(logger.level == logging.WARNING for logger in sdk_loggers)
+        assert all(logger.level > logging.CRITICAL for logger in silenced_sdk_loggers)
         record = logging.LogRecord("weather_briefing", logging.INFO, __file__, 1, "message", (), None)
         record.created = pendulum.datetime(2026, 7, 30, 3, 4, 5, 678901, tz="UTC").timestamp()
         assert own_handler.format(record).startswith("2026-07-30T03:04:05.678901Z [INFO] weather_briefing: message")
@@ -130,6 +134,8 @@ def test_configure_logging_is_idempotent_and_updates_level() -> None:
         logging.root.setLevel(original_root_level)
         for logger, original_level in zip(sdk_loggers, original_sdk_levels, strict=True):
             logger.setLevel(original_level)
+        for logger, original_level in zip(silenced_sdk_loggers, original_silenced_sdk_levels, strict=True):
+            logger.setLevel(original_level)
 
 
 def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() -> None:
@@ -138,7 +144,9 @@ def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() 
     original_propagate = _LOGGER.propagate
     original_root_handlers = logging.root.handlers[:]
     original_root_level = logging.root.level
-    sdk_loggers = [logging.getLogger(name) for name in (*_SENSITIVE_SDK_LOGGERS, "provider_sdk")]
+    sdk_loggers = [
+        logging.getLogger(name) for name in (*_SENSITIVE_SDK_LOGGERS, *_SILENCED_SDK_LOGGERS, "provider_sdk")
+    ]
     original_sdk_levels = [logger.level for logger in sdk_loggers]
     try:
         _LOGGER.handlers.clear()
@@ -151,6 +159,7 @@ def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() 
         logging.getLogger("weather_briefing.service").debug("LLM attempt=1 input_characters=42")
         logging.getLogger("any_llm").debug("private prompt from any-llm")
         logging.getLogger("openai._base_client").debug("private request body from OpenAI SDK")
+        logging.getLogger("apprise").warning("private notification target and response")
         logging.getLogger("provider_sdk").setLevel(logging.DEBUG)
         logging.getLogger("provider_sdk").debug("private payload from a provider SDK")
 
@@ -158,6 +167,7 @@ def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() 
         assert "LLM attempt=1 input_characters=42" in logged_text
         assert "private prompt" not in logged_text
         assert "private request body" not in logged_text
+        assert "private notification target" not in logged_text
         assert "private payload" not in logged_text
     finally:
         _LOGGER.handlers.clear()
@@ -1338,10 +1348,12 @@ class TestDeliveryProvider:
     async def test_telegram_with_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             publisher="telegram",
-            telegram_bot_token="test-token",
+            telegram_bot_token="123456:abcdefghijklmnopqrstuvwxyzABCDE",
             telegram_chat_id="test-chat",
         )
         provider = _delivery_provider(settings, async_client)
+        assert isinstance(provider.renderer, PlainTextRenderer)
+        assert isinstance(provider.publisher, TelegramPublisher)
         assert provider.single_message_limit == 4096
 
     async def test_bark_missing_config(self, async_client: httpx.AsyncClient) -> None:
@@ -1376,7 +1388,7 @@ class TestDeliveryProvider:
     ) -> None:
         settings = _make_fake_settings(
             publisher="stdout",
-            telegram_bot_token="test-token",
+            telegram_bot_token="123456:abcdefghijklmnopqrstuvwxyzABCDE",
             telegram_chat_id="test-chat",
         )
 

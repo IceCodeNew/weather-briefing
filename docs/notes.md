@@ -142,13 +142,13 @@ any-llm 提供稳定的统一生命周期接口后，应删除属性探测并直
 
 如果第三方 SDK 以后提供稳定的结构化安全日志接口，可以评估接入；不能依赖异常消息或事后正则清洗来保护隐私。
 
-## Telegram 投递继续直接调用 Bot API
+## Bark 暂不迁移到 Apprise
 
-Telegram 投递目前只调用 Bot API 的 `sendMessage`。项目继续复用已有的 HTTPX 客户端、统一网络生命周期和隐私安全日志，不为这一个端点引入 `python-telegram-bot` 等完整框架。
+Telegram 投递已迁移到 Apprise，由维护中的通知库承担 Bot API 请求、纯文本转义、分块和静默投递。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer，项目只保留配置组合、平台长度策略和安全的成功/失败边界；Apprise 自身日志保持关闭，避免第三方错误正文、目标或消息进入运行日志。
 
-Telegram publisher 只负责构造请求、平台长度限制、HTML 分块和安全错误分类。它不实现更新轮询、Webhook、会话状态或 Bot 命令路由。
+Apprise 1.12.0 的 Bark 插件不支持项目使用的 AES-GCM `ciphertext` 和逐条随机 IV，也只按 HTTP 状态判断成功。Bark 因此继续作为与 Apprise 同级的自维护 publisher，以保留认证加密、严格 JSON 成功确认和安全错误分类。
 
-如果投递开始使用多个 Telegram 端点、需要接收更新，或者 Bot API 兼容工作持续增加，就重新评估维护活跃的 SDK，并删除能由 SDK 可靠承担的自定义协议代码。
+当 Apprise 的 Bark 插件同时支持现有加密协议和严格成功确认时，再重新评估迁移。迁移不能降低加密、响应验证、消息长度或隐私日志边界。
 
 ## 服务状态使用事件 feed，不轮询完整历史 API
 

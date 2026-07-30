@@ -117,10 +117,12 @@ At minimum, configure the following in `.env`:
 
 - `LLM_PROVIDER` and `LLM_MODEL`;
 - the credentials required by your chosen model service;
-- for Telegram delivery: `PUBLISHER=telegram`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`; or
+- for Telegram delivery through Apprise: `PUBLISHER=telegram`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`; or
 - for Bark delivery: `PUBLISHER=bark` and `BARK_DEVICE_KEY`, plus both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV` when encryption is enabled.
 
 For private-chat delivery, open the bot in Telegram and send `/start` before the first briefing. A bot can send messages to a private Chat ID only after the user has initiated the conversation. For group delivery, add the bot to the group and grant it permission to send messages.
+
+Apprise owns Telegram API compatibility, text-safe message splitting, escaping, and silent delivery. The application supplies the same sourced plain-text rendering used by stdout and still owns delivery limits, safe operational logs, and runtime configuration validation.
 
 Bark sends plaintext when the encryption variables are absent. Encryption is recommended.
 

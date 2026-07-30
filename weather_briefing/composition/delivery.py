@@ -14,8 +14,8 @@ from ..delivery import (
     PlainTextRenderer,
     RenderedTextDiagnostics,
     StdoutPublisher,
-    TelegramHTMLRenderer,
     TelegramPublisher,
+    telegram_notifier,
 )
 from ..registries import PublisherName
 
@@ -57,14 +57,27 @@ def _build_stdout_publisher(
 
 def _build_telegram_publisher(
     settings: Settings,
-    client: httpx.AsyncClient,
+    _client: httpx.AsyncClient,
     diagnostics: RenderedTextDiagnostics | None,
 ) -> DeliveryProvider:
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
         raise ValueError("Telegram publisher requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
     return DeliveryProvider(
-        TelegramHTMLRenderer(),
-        TelegramPublisher(client, settings.telegram_bot_token, settings.telegram_chat_id, diagnostics),
+        PlainTextRenderer(),
+        TelegramPublisher(
+            telegram_notifier(
+                settings.telegram_bot_token,
+                settings.telegram_chat_id,
+                silent=False,
+                timeout_seconds=settings.http_timeout_seconds,
+            ),
+            telegram_notifier(
+                settings.telegram_bot_token,
+                settings.telegram_chat_id,
+                silent=True,
+                timeout_seconds=settings.http_timeout_seconds,
+            ),
+        ),
         single_message_limit=TelegramPublisher.MAX_MESSAGE_LENGTH,
         diagnostics=diagnostics,
     )

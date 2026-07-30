@@ -203,11 +203,11 @@ CLI 负责关闭自己创建的模型服务对象及其网络资源。测试或�
 
 每天最后一个 briefing 时段会查询当天是否已经成功发送过变化提醒。尚未发送时，即使天气通知策略判定无需提醒，也会投递一条无声消息。手动运行不使用无声投递。
 
-模型返回平台无关的 `BriefingResult`。Telegram 和纯文本渲染器分别负责标题、链接、转义和长度限制。Bark 使用紧凑纯文本渲染器，将带来源编号的 headline 放入通知标题，正文不再重复标题，并以短编号关联末尾的来源名称表；来源 URL 省略，但仍保留逐项引用校验。
+模型返回平台无关的 `BriefingResult`。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer。Bark 使用紧凑纯文本 renderer，将带来源编号的 headline 放入通知标题，正文不再重复标题，并以短编号关联末尾的来源名称表；来源 URL 省略，但仍保留逐项引用校验。
 
-Telegram publisher 把静默标志转换为 `disable_notification=true`。INFO 日志记录消息长度、分块数量、单条消息模式和静默投递选项，但不记录正文、Bot Token 或 Chat ID。
+Telegram 传输由 Apprise 承担。composition root 用运行时 Bot Token 和 Chat ID 分别构造普通与静默 Apprise 目标，固定输入纯文本、关闭链接预览并启用 Apprise 的文本安全分块；静默目标把最终时段的无声标志映射到 Telegram `disable_notification`。应用 publisher 只选择目标、检查单条消息限制并把 Apprise 的布尔结果收敛为安全的 `DeliveryError`，不再维护 Telegram 专用 renderer、Bot API 请求、HTML 分块器或错误正文分类表。
 
-Telegram 拒绝请求时，publisher 以唯一一条 WARNING 记录 HTTP 状态、分块位置和安全错误类别。错误类别来自已知的 Telegram API 描述、`parameters.migrate_to_chat_id` 字段和 HTTP 状态映射，未知响应不会原样进入日志。投递异常携带结构化错误类别；当业务消息因目标会话、Bot 身份或发送权限不可用而失败，且运维告警复用同一投递对象时，服务不再尝试通过该对象发送失败告警，只记录跳过原因。
+Apprise logger 在应用进程中完全关闭，因为插件 DEBUG 和 WARNING 可能包含消息、目标或第三方响应。应用自己的 INFO/WARNING 只记录消息长度、单条消息模式、静默标志和通用失败原因，不记录正文、Bot Token、Chat ID 或第三方异常文本。
 
 Bark publisher 支持明文推送和可选的 AES-GCM 加密推送。只配置 device key 时，请求体始终包含 `body`，并在 rendered message 提供标题时包含 `title`；配置边界要求加密 key 和初始 IV 同时存在或同时缺失，并允许用不含凭据、query 或 fragment 的绝对 HTTP(S) `BARK_BASE_URL` 覆盖官方端点。加密 key 接受 16、24 或 32 个 ASCII 字符，对应 Bark 的 AES128、AES192 和 AES256；初始 IV 是与 Bark App 设置一致的 12 字符值，App 端模式必须设为 GCM 和 noPadding。publisher 每次加密生成新的 12 字符随机 IV，并在请求中与 ciphertext 一起发送；Bark App 优先使用请求携带的 IV 解密。`cryptography` 的 `AESGCM` 直接生成 Bark 所需的 ciphertext 与 16 字节 tag 组合，再以 Base64 编码；正文始终加密，标题存在时随正文一起加密。两种模式都使用 `/push` JSON 请求体，避免 device key 进入 HTTP URL 日志。`BARK_GROUP` 原样映射到 `group`；普通投递的内部 level 固定为 `timeSensitive`，无声投递固定为 `passive`。
 
