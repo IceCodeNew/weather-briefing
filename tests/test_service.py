@@ -7,6 +7,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TypeGuard, runtime_checkable
+from unittest.mock import AsyncMock
 
 import pendulum
 import pytest
@@ -1529,13 +1530,8 @@ async def test_forced_audible_briefing_does_not_depend_on_notification_decision(
     llm = RecordingLLM()
     publisher = RecordingPublisher()
     delivery = DeliveryProvider(PlainTextRenderer(), publisher)
-
-    class FailingNotificationDecisions:
-        async def assess_notification(
-            self,
-            assessment: NotificationAssessment,
-        ) -> NotificationDecision:
-            raise RuntimeError(f"unexpected notification assessment: {assessment.kind}")
+    decision_provider = AsyncMock(spec=NotificationDecisionProvider)
+    decision_provider.assess_notification.side_effect = RuntimeError("decision unavailable")
 
     with SQLiteStateStore(tmp_path / "forced-audible.sqlite3") as state:
         service = _BriefingService(
@@ -1544,7 +1540,7 @@ async def test_forced_audible_briefing_does_not_depend_on_notification_decision(
             state,
             EmptyRSSSource(),
             llm,
-            FailingNotificationDecisions(),
+            decision_provider,
             delivery,
             delivery,
             StaticWeatherContextProvider(),
@@ -1558,6 +1554,7 @@ async def test_forced_audible_briefing_does_not_depend_on_notification_decision(
 
     assert body is not None
     assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
+    decision_provider.assess_notification.assert_not_awaited()
 
 
 async def test_bark_notification_baseline_preserves_previous_headline(tmp_path: Path) -> None:

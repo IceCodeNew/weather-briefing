@@ -231,6 +231,24 @@ def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> No
         assert tuple(delivery.silent for delivery in queued) == (True,)
 
 
+def test_briefing_history_rejects_invalid_notification_payload(tmp_path: Path) -> None:
+    now = pendulum.datetime(2026, 7, 13, 9, tz="UTC")
+    state_path = tmp_path / "state.db"
+    with SQLiteStateStore(state_path) as state:
+        state.save_briefing(
+            "briefing",
+            "Published briefing",
+            now,
+            notification_payload={"headline": "Valid"},
+        )
+        with closing(sqlite3.connect(state_path)) as connection:
+            connection.execute("UPDATE briefings SET notification_payload = '[]'")
+            connection.commit()
+
+        with pytest.raises(ValueError, match="object with string keys"):
+            state.recent_briefings(now, 1)
+
+
 def test_unpublished_result_commits_pending_state_without_delivery_queue(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     article = Article(

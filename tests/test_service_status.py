@@ -1,4 +1,6 @@
 import asyncio
+import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -9,6 +11,7 @@ import pytest
 
 from weather_briefing.llm import LLMError
 from weather_briefing.notification_decision import NotificationDecision
+from weather_briefing.persistence.service_status import ServiceStatusMessageState
 from weather_briefing.service_status import (
     AnthropicStatusProvider,
     DeepSeekStatusProvider,
@@ -24,6 +27,7 @@ from weather_briefing.service_status import (
     official_message_matches,
     service_status_providers,
 )
+from weather_briefing.service_status.notification import service_status_notification_assessment
 from weather_briefing.service_status.providers._surface import keyword_surface
 from weather_briefing.service_status.providers.deepseek import _deepseek_surface
 from weather_briefing.service_status.providers.kimi import _kimi_surface
@@ -376,6 +380,28 @@ def _monitor_dependencies(
     return provider, delivery, decision, translator
 
 
+def test_legacy_handled_state_omits_unknown_previous_surfaces() -> None:
+    message = _message()
+    previous = ServiceStatusMessageState(
+        observed_revision_id="revision-1",
+        decided_revision_id="revision-1",
+        should_notify=True,
+        handled_revision_id="revision-1",
+        handled_title=message.title,
+        handled_status=message.status,
+        handled_body=message.body,
+        handled_surfaces=None,
+    )
+
+    assessment = service_status_notification_assessment(_snapshot(message), message, previous)
+
+    assert assessment.payload["previous"] == {
+        "title": message.title,
+        "status": message.status,
+        "body": message.body,
+    }
+
+
 async def test_initial_resolved_history_is_a_silent_baseline(tmp_path: Path) -> None:
     message = _message(status="resolved")
     provider, delivery, decision, translator = _monitor_dependencies(_snapshot(message))
@@ -623,6 +649,41 @@ def test_state_rejects_handling_a_changed_observation(tmp_path: Path) -> None:
                 ("api",),
                 now,
             )
+
+
+def test_state_rejects_invalid_stored_service_status_surfaces(tmp_path: Path) -> None:
+    now = pendulum.now("UTC")
+    state_path = tmp_path / "state.sqlite3"
+    with SQLiteStateStore(state_path) as state:
+        state.service_status.observe_service_status_message(
+            "source",
+            "incident",
+            "revision",
+            "Title",
+            "monitoring",
+            "Body",
+            now,
+        )
+        state.service_status.mark_service_status_message_handled(
+            "source",
+            "incident",
+            "revision",
+            "Title",
+            "monitoring",
+            "Body",
+            ("api",),
+            now,
+        )
+        for stored_value, message in (("{}", "must be a list"), ("[1]", "must contain strings")):
+            with closing(sqlite3.connect(state_path)) as connection:
+                connection.execute(
+                    "UPDATE service_status_message_state SET handled_surfaces = ?",
+                    (stored_value,),
+                )
+                connection.commit()
+
+            with pytest.raises(ValueError, match=message):
+                state.service_status.service_status_message_state("source", "incident")
 
 
 def test_state_rejects_deciding_a_changed_observation(tmp_path: Path) -> None:

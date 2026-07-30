@@ -94,13 +94,11 @@ def manage_rendered_text_diagnostics(action: object, duration_seconds: object = 
             diagnostics.disable_rendered_text_logging()
             print("Rendered text diagnostic logging disabled")
             return
-        if action == "status":
-            expires_at = diagnostics.rendered_text_logging_until()
-            if expires_at is None:
-                print("Rendered text diagnostic logging is disabled")
-            else:
-                print(
-                    "Rendered text diagnostic logging is enabled until "
-                    f"{expires_at.to_iso8601_string()}; rendered bodies require DEBUG logging"
-                )
-            return
+        expires_at = diagnostics.rendered_text_logging_until()
+        if expires_at is None:
+            print("Rendered text diagnostic logging is disabled")
+        else:
+            print(
+                "Rendered text diagnostic logging is enabled until "
+                f"{expires_at.to_iso8601_string()}; rendered bodies require DEBUG logging"
+            )
