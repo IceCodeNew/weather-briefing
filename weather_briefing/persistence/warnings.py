@@ -29,7 +29,11 @@ def _is_string_list(value: object) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-def _stored_warning_payload(value: object) -> tuple[str, str, str, str, tuple[str, ...]]:
+def _stored_warning_payload(
+    value: object,
+    *,
+    row_id: object,
+) -> tuple[str, str, str, str, tuple[str, ...]]:
     if not isinstance(value, str):
         raise ValueError("Stored warning payload must be JSON text")
     decoded: object = json.loads(value)
@@ -38,8 +42,11 @@ def _stored_warning_payload(value: object) -> tuple[str, str, str, str, tuple[st
     source_ids = decoded.get("source_ids")
     if not _is_string_list(source_ids):
         raise ValueError("Stored warning payload source_ids must be a list of strings")
+    warning_id = _required_text_field(decoded, "id")
+    if warning_id != row_id:
+        raise ValueError("Stored warning payload id must match its row id")
     return (
-        _required_text_field(decoded, "id"),
+        warning_id,
         _required_text_field(decoded, "title"),
         _required_text_field(decoded, "status"),
         _required_text_field(decoded, "detail"),
@@ -57,12 +64,15 @@ class WarningStateOperations:
         now = require_aware_datetime(now, context="Warning retention time")
         threshold = storage_time(now.subtract(hours=retention_hours))
         rows = self._connection.execute(
-            "SELECT payload, last_confirmed_at FROM warnings WHERE last_confirmed_at >= ?",
+            "SELECT id, payload, last_confirmed_at FROM warnings WHERE last_confirmed_at >= ?",
             (threshold,),
         )
         warnings: list[Warning] = []
         for row in rows:
-            warning_id, title, status, detail, source_ids = _stored_warning_payload(row["payload"])
+            warning_id, title, status, detail, source_ids = _stored_warning_payload(
+                row["payload"],
+                row_id=row["id"],
+            )
             warnings.append(
                 Warning(
                     id=warning_id,

@@ -255,6 +255,10 @@ def test_active_warnings_rejects_invalid_stored_payload(tmp_path: Path) -> None:
                 '{"id":1,"title":"Warning","status":"active","detail":"detail","source_ids":["source"]}',
                 "id must be a string",
             ),
+            (
+                '{"id":"different","title":"Warning","status":"active","detail":"detail","source_ids":["source"]}',
+                "id must match its row id",
+            ),
         ):
             with closing(sqlite3.connect(state_path)) as connection:
                 connection.execute("UPDATE warnings SET payload = ?", (stored_value,))
