@@ -241,12 +241,16 @@ def test_briefing_history_rejects_invalid_notification_payload(tmp_path: Path) -
             now,
             notification_payload={"headline": "Valid"},
         )
-        with closing(sqlite3.connect(state_path)) as connection:
-            connection.execute("UPDATE briefings SET notification_payload = '[]'")
-            connection.commit()
+        for stored_value, message in (("[]", "object with string keys"), (b"{}", "must be JSON text")):
+            with closing(sqlite3.connect(state_path)) as connection:
+                connection.execute(
+                    "UPDATE briefings SET notification_payload = ?",
+                    (stored_value,),
+                )
+                connection.commit()
 
-        with pytest.raises(ValueError, match="object with string keys"):
-            state.recent_briefings(now, 1)
+            with pytest.raises(ValueError, match=message):
+                state.recent_briefings(now, 1)
 
 
 def test_unpublished_result_commits_pending_state_without_delivery_queue(tmp_path: Path) -> None:

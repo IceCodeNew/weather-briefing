@@ -32,7 +32,9 @@ def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
 def _stored_notification_payload(value: object) -> dict[str, object] | None:
     if value is None:
         return None
-    decoded: object = json.loads(str(value))
+    if not isinstance(value, str):
+        raise ValueError("Stored notification payload must be JSON text")
+    decoded: object = json.loads(value)
     if not _is_string_object_dict(decoded):
         raise ValueError("Stored notification payload must be an object with string keys")
     return decoded

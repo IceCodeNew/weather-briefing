@@ -678,6 +678,7 @@ def test_state_rejects_invalid_stored_service_status_surfaces(tmp_path: Path) ->
             ("{}", "must be a list"),
             ("[1]", "must contain strings"),
             ('["bogus"]', "is unsupported"),
+            (b'["api"]', "must be JSON text"),
         ):
             with closing(sqlite3.connect(state_path)) as connection:
                 connection.execute(

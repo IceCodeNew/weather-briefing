@@ -30,7 +30,9 @@ def _stored_surfaces(value: object) -> tuple[ServiceSurface, ...] | None:
     """Decode one optional list of application-owned service surfaces."""
     if value is None:
         return None
-    decoded: object = json.loads(str(value))
+    if not isinstance(value, str):
+        raise ValueError("Stored service-status surfaces must be JSON text")
+    decoded: object = json.loads(value)
     if not isinstance(decoded, list):
         raise ValueError("Stored service-status surfaces must be a list")
     surfaces: list[ServiceSurface] = []
