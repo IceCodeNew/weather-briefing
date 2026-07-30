@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import pendulum
 
+from ..models import ServiceSurface
 from .serialization import _storage_time as storage_time
 
 
@@ -22,21 +23,24 @@ class ServiceStatusMessageState:
     handled_title: str | None
     handled_status: str | None
     handled_body: str | None
-    handled_surfaces: tuple[str, ...] | None
+    handled_surfaces: tuple[ServiceSurface, ...] | None
 
 
-def _stored_surfaces(value: object) -> tuple[str, ...] | None:
+def _stored_surfaces(value: object) -> tuple[ServiceSurface, ...] | None:
     """Decode one optional list of application-owned service surfaces."""
     if value is None:
         return None
     decoded: object = json.loads(str(value))
     if not isinstance(decoded, list):
         raise ValueError("Stored service-status surfaces must be a list")
-    surfaces: list[str] = []
+    surfaces: list[ServiceSurface] = []
     for surface in decoded:
         if not isinstance(surface, str):
             raise ValueError("Stored service-status surfaces must contain strings")
-        surfaces.append(surface)
+        try:
+            surfaces.append(ServiceSurface(surface))
+        except ValueError as exc:
+            raise ValueError(f"Stored service-status surface is unsupported: {surface}") from exc
     return tuple(surfaces)
 
 
@@ -157,7 +161,7 @@ class SQLiteServiceStatusStore:
         title: str,
         status: str,
         body: str,
-        surfaces: tuple[str, ...],
+        surfaces: tuple[ServiceSurface, ...],
         handled_at: pendulum.DateTime,
     ) -> None:
         """Mark one observed message as delivered or intentionally skipped."""
@@ -175,7 +179,7 @@ class SQLiteServiceStatusStore:
                 title,
                 status,
                 body,
-                json.dumps(surfaces, ensure_ascii=False, separators=(",", ":")),
+                json.dumps([surface.value for surface in surfaces], ensure_ascii=False, separators=(",", ":")),
                 storage_time(handled_at),
                 source_id,
                 incident_id,

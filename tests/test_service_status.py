@@ -646,7 +646,7 @@ def test_state_rejects_handling_a_changed_observation(tmp_path: Path) -> None:
                 "Title",
                 "monitoring",
                 "Body",
-                ("api",),
+                (ServiceSurface.API,),
                 now,
             )
 
@@ -671,10 +671,14 @@ def test_state_rejects_invalid_stored_service_status_surfaces(tmp_path: Path) ->
             "Title",
             "monitoring",
             "Body",
-            ("api",),
+            (ServiceSurface.API,),
             now,
         )
-        for stored_value, message in (("{}", "must be a list"), ("[1]", "must contain strings")):
+        for stored_value, message in (
+            ("{}", "must be a list"),
+            ("[1]", "must contain strings"),
+            ('["bogus"]', "is unsupported"),
+        ):
             with closing(sqlite3.connect(state_path)) as connection:
                 connection.execute(
                     "UPDATE service_status_message_state SET handled_surfaces = ?",

@@ -12,7 +12,7 @@ from ..llm import LLMError
 from ..notification_decision import NotificationDecisionProvider
 from ..persistence.service_status import ServiceStatusMessageState
 from .collection import collect_service_status
-from .models import ServiceStatusMessage, ServiceStatusSnapshot
+from .models import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
 from .notification import service_status_notification_assessment
 from .statuspage import ServiceStatusProvider
 
@@ -55,7 +55,7 @@ class ServiceStatusStateStore(Protocol):
         title: str,
         status: str,
         body: str,
-        surfaces: tuple[str, ...],
+        surfaces: tuple[ServiceSurface, ...],
         handled_at: pendulum.DateTime,
     ) -> None:
         """Record successful delivery or an intentional skip."""
@@ -225,7 +225,7 @@ class ServiceStatusMonitor:
             message.title,
             message.status,
             message.body,
-            tuple(surface.value for surface in message.surfaces),
+            message.surfaces,
             now,
         )
 
