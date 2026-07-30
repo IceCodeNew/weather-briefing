@@ -503,6 +503,35 @@ def test_history_boundaries_reject_naive_times(tmp_path: Path) -> None:
             state.record_success(naive, history_hours=1, warning_retention_hours=1)
 
 
+def test_empty_persistence_writes_reject_naive_times(tmp_path: Path) -> None:
+    naive = pendulum.naive(2026, 7, 13, 9)
+
+    with SQLiteStateStore(tmp_path / "state.db") as state:
+        with pytest.raises(ValueError, match="Article processing time"):
+            state.save_articles((), naive)
+        with pytest.raises(ValueError, match="Pending article observation time"):
+            state.save_pending_articles((), naive)
+        with pytest.raises(ValueError, match="Article processing time"):
+            state.mark_articles_processed((), naive)
+        with pytest.raises(ValueError, match="Warning update time"):
+            state.update_warnings((), (), naive)
+        with pytest.raises(ValueError, match="Result recording time"):
+            state.commit_result(
+                kind="briefing",
+                body=None,
+                articles=(),
+                context_documents=(),
+                active_warnings=(),
+                resolved_warning_ids=(),
+                recorded_at=naive,
+                verbatim_silent=False,
+            )
+        with pytest.raises(ValueError, match="Stale source alert time"):
+            state.mark_stale_sources_alerted((), naive)
+        with pytest.raises(ValueError, match="RSS failure alert time"):
+            state.mark_rss_failure_alerted((), naive)
+
+
 def test_context_snapshot_language_is_persisted(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
     document = SourceDocument(

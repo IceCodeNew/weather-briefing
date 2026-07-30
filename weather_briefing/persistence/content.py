@@ -40,6 +40,7 @@ class ContentStateOperations:
 
     def save_articles(self, articles: tuple[Article, ...], processed_at: pendulum.DateTime) -> None:
         """Persist processed articles at an aware timestamp."""
+        processed_at = require_aware_datetime(processed_at, context="Article processing time")
         with self._connection:
             self._insert_articles(articles, processed_at)
 
@@ -66,6 +67,7 @@ class ContentStateOperations:
 
     def save_pending_articles(self, articles: tuple[Article, ...], first_seen_at: pendulum.DateTime) -> None:
         """Persist articles awaiting successful briefing delivery."""
+        first_seen_at = require_aware_datetime(first_seen_at, context="Pending article observation time")
         with self._connection:
             self._insert_pending_articles(articles, first_seen_at)
 
@@ -101,6 +103,7 @@ class ContentStateOperations:
         processed_at: pendulum.DateTime,
     ) -> None:
         """Move delivered articles from pending to processed state."""
+        processed_at = require_aware_datetime(processed_at, context="Article processing time")
         with self._connection:
             self._insert_articles(articles, processed_at)
             self._delete_pending_articles(articles)

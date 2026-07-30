@@ -61,6 +61,7 @@ class SQLiteStateStore(
         verbatim_silent: bool,
     ) -> None:
         """Atomically persist one summarized result and its delivery queue."""
+        recorded_at = require_aware_datetime(recorded_at, context="Result recording time")
         confirmed_source_ids = {article.id for article in articles} | {document.id for document in context_documents}
         with self._connection:
             if body is None:

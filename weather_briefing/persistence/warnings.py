@@ -49,6 +49,7 @@ class WarningStateOperations:
         confirmed_source_ids: set[str] | None = None,
     ) -> None:
         """Apply active and resolved warning updates atomically."""
+        now = require_aware_datetime(now, context="Warning update time")
         with self._connection:
             self._update_warnings(warnings, resolved_warning_ids, now, confirmed_source_ids)
 
