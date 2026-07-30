@@ -21,6 +21,8 @@ from weather_briefing.delivery import (
 )
 from weather_briefing.models import Article, RenderedMessage
 
+DUMMY_TELEGRAM_TOKEN = "123456:TEST_DUMMY_TELEGRAM_TOKEN"
+
 
 class NoopPublisher:
     async def publish(
@@ -222,13 +224,13 @@ def test_delivery_error_rejects_non_boolean_channel_availability(value) -> None:
 
 def test_telegram_notifier_configures_apprise_service_variants() -> None:
     normal = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456",
         silent=False,
         timeout_seconds=12.5,
     )
     silent = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456",
         silent=True,
         timeout_seconds=12.5,
@@ -244,7 +246,7 @@ def test_telegram_notifier_configures_apprise_service_variants() -> None:
     assert "silent=yes" in silent.urls(privacy=False)[0]
     assert "rto=12.5" in normal.urls(privacy=False)[0]
     assert "cto=12.5" in normal.urls(privacy=False)[0]
-    assert "abcdefghijklmnopqrstuvwxyzABCDE" not in normal.urls(privacy=True)[0]
+    assert "TEST_DUMMY_TELEGRAM_TOKEN" not in normal.urls(privacy=True)[0]
 
 
 def test_apprise_transport_includes_socks_proxy_support() -> None:
@@ -264,7 +266,7 @@ def test_telegram_notifier_rejects_invalid_apprise_configuration() -> None:
 def test_telegram_notifier_rejects_invalid_target() -> None:
     with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
         telegram_notifier(
-            "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+            DUMMY_TELEGRAM_TOKEN,
             "!",
             silent=False,
             timeout_seconds=12.5,
@@ -276,7 +278,7 @@ def test_telegram_notifier_rejects_failed_registration(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
         telegram_notifier(
-            "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+            DUMMY_TELEGRAM_TOKEN,
             "-100123456",
             silent=False,
             timeout_seconds=12.5,
@@ -301,7 +303,10 @@ async def test_apprise_publisher_uses_text_and_selects_silent_notifier(caplog) -
     assert "Telegram delivery through Apprise accepted" in caplog.text
 
 
-async def test_apprise_telegram_integration_splits_text_and_delivers_silently(monkeypatch) -> None:
+async def test_apprise_telegram_integration_splits_text_and_delivers_silently(
+    monkeypatch,
+    caplog,
+) -> None:
     requests: list[tuple[str, dict[str, object]]] = []
     first_request_started = threading.Event()
     second_request_started = threading.Event()
@@ -323,13 +328,13 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(mo
 
     monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
     normal = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456",
         silent=False,
         timeout_seconds=12.5,
     )
     silent = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456",
         silent=True,
         timeout_seconds=12.5,
@@ -338,13 +343,14 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(mo
     prefix = "<b>tag</b>&<unknown>"
     body = prefix + ("x" * (4095 - len(prefix))) + "&tail"
 
-    await publisher.publish(RenderedMessage(body, len(body)), silent=True)
+    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
+        await publisher.publish(RenderedMessage(body, len(body)), silent=True)
 
     assert len(requests) == 2
     assert requests_overlapped is False
     payloads = []
     for url, kwargs in requests:
-        assert url == "https://api.telegram.org/bot123456:abcdefghijklmnopqrstuvwxyzABCDE/sendMessage"
+        assert url == f"https://api.telegram.org/bot{DUMMY_TELEGRAM_TOKEN}/sendMessage"
         data = kwargs["data"]
         assert isinstance(data, str)
         payloads.append(json.loads(data))
@@ -357,10 +363,24 @@ async def test_apprise_telegram_integration_splits_text_and_delivers_silently(mo
     assert payloads[0]["text"].endswith("&amp;")
     delivered_body = "".join(html.unescape(payload["text"]) for payload in payloads)
     assert delivered_body == body
+    assert caplog.text.count("API call succeeded provider=telegram operation=send-message method=POST") == 2
 
 
-@pytest.mark.parametrize("content", (b"not-json", b'{"ok":false}', b'{"ok":1}', b"[]"))
-async def test_apprise_telegram_requires_strict_success_response(monkeypatch, content: bytes) -> None:
+@pytest.mark.parametrize(
+    ("content", "phase"),
+    (
+        (b"not-json", "invalid-json"),
+        (b'{"ok":false}', "telegram-not-ok"),
+        (b'{"ok":1}', "telegram-not-ok"),
+        (b"[]", "invalid-response"),
+    ),
+)
+async def test_apprise_telegram_requires_strict_success_response(
+    monkeypatch,
+    caplog,
+    content: bytes,
+    phase: str,
+) -> None:
     class InvalidSuccessResponse:
         status_code = 200
 
@@ -372,19 +392,29 @@ async def test_apprise_telegram_requires_strict_success_response(monkeypatch, co
         lambda *args, **kwargs: InvalidSuccessResponse(),
     )
     notifier = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456",
         silent=False,
         timeout_seconds=12.5,
     )
     publisher = TelegramPublisher(notifier, notifier)
 
-    with pytest.raises(DeliveryError, match="Telegram delivery failed"):
-        await publisher.publish(RenderedMessage("Body", 4))
+    with (
+        caplog.at_level("INFO", logger="weather_briefing.publishers"),
+        pytest.raises(DeliveryError, match="Telegram delivery failed"),
+    ):
+        await publisher.publish(RenderedMessage("Private body", 12))
+
+    assert f"status_code=200 phase={phase}" in caplog.text
+    assert "Private body" not in caplog.text
 
 
 @pytest.mark.parametrize("failure", ("request", "status"))
-async def test_apprise_telegram_rejects_transport_failure(monkeypatch, failure: str) -> None:
+async def test_apprise_telegram_rejects_transport_failure(
+    monkeypatch,
+    caplog,
+    failure: str,
+) -> None:
     class FailedResponse:
         status_code = 500
         content = b'{"ok":true}'
@@ -396,14 +426,23 @@ async def test_apprise_telegram_rejects_transport_failure(monkeypatch, failure: 
 
     monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
     notifier = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456",
         silent=False,
         timeout_seconds=12.5,
     )
 
-    with pytest.raises(DeliveryError, match="Telegram delivery failed"):
+    with (
+        caplog.at_level("INFO", logger="weather_briefing.publishers"),
+        pytest.raises(DeliveryError, match="Telegram delivery failed"),
+    ):
         await TelegramPublisher(notifier, notifier).publish(RenderedMessage("Body", 4))
+
+    if failure == "request":
+        assert "reason=ConnectionError phase=request-error" in caplog.text
+    else:
+        assert "status_code=500 phase=http-error" in caplog.text
+    assert "private transport detail" not in caplog.text
 
 
 async def test_apprise_telegram_preserves_topic_target(monkeypatch) -> None:
@@ -421,7 +460,7 @@ async def test_apprise_telegram_preserves_topic_target(monkeypatch) -> None:
 
     monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
     notifier = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456:42",
         silent=False,
         timeout_seconds=12.5,
@@ -434,7 +473,7 @@ async def test_apprise_telegram_preserves_topic_target(monkeypatch) -> None:
 
 def test_apprise_telegram_compatibility_sender_rejects_unsupported_calls() -> None:
     notifier = telegram_notifier(
-        "123456:abcdefghijklmnopqrstuvwxyzABCDE",
+        DUMMY_TELEGRAM_TOKEN,
         "-100123456",
         silent=False,
         timeout_seconds=12.5,

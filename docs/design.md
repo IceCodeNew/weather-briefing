@@ -205,9 +205,9 @@ CLI 负责关闭自己创建的模型服务对象及其网络资源。测试或�
 
 模型返回平台无关的 `BriefingResult`。Telegram 与 stdout 共用带完整来源 URL 的纯文本 renderer。Bark 使用紧凑纯文本 renderer，将带来源编号的 headline 放入通知标题，正文不再重复标题，并以短编号关联末尾的来源名称表；来源 URL 省略，但仍保留逐项引用校验。
 
-Telegram 的目标配置、原始纯文本分块和静默选项由 Apprise 承担。composition root 用运行时 Bot Token 和 Chat ID 分别构造普通与静默 Apprise 目标，固定输入纯文本、关闭链接预览并启用 Apprise 分块；静默目标把最终时段的无声标志映射到 Telegram `disable_notification`。Apprise 的同步通知路径在单独的 worker 中执行，使同一消息的分片保持顺序且不阻塞事件循环；运行依赖显式启用 Requests SOCKS 支持，使标准 HTTP(S)/SOCKS 代理环境对 Telegram 仍然有效。应用只保留一个 SDK 兼容 sender，对每个独立分片执行 Telegram HTML 安全转义，补充 Apprise 1.12 尚未提供的 Telegram `ok=true` 严格成功确认，并把失败收敛为安全的 `DeliveryError`；项目不再维护 Telegram 专用 renderer、HTML 分块器或错误正文分类表。
+Telegram 的目标配置、原始纯文本分块和静默选项由 Apprise 承担。composition root 用运行时 Bot Token 和 Chat ID 分别构造普通与静默 Apprise 目标，固定输入纯文本、关闭链接预览并启用 Apprise 分块；静默目标把最终时段的无声标志映射到 Telegram `disable_notification`。Apprise 的同步通知路径在单独的 worker 中执行，使同一消息的分片保持顺序且不阻塞事件循环；运行依赖显式启用 Requests SOCKS 支持，使标准 HTTP(S)/SOCKS 代理环境对 Telegram 仍然有效。应用只保留一个 SDK 兼容 sender，对每个独立分片执行 Telegram HTML 安全转义，补充 Apprise 1.12 尚未提供的 Telegram `ok=true` 严格成功确认，并以安全的阶段标签、HTTP 状态或异常类型记录请求结果，再把失败收敛为统一的 `DeliveryError`；日志不包含 URL、Bot Token、Chat ID、消息或第三方响应正文。项目不再维护 Telegram 专用 renderer、HTML 分块器或错误正文分类表。
 
-Apprise logger 在应用进程中完全关闭，因为插件 DEBUG 和 WARNING 可能包含消息、目标或第三方响应。应用自己的 INFO/WARNING 只记录消息长度、单条消息模式、静默标志和通用失败原因，不记录正文、Bot Token、Chat ID 或第三方异常文本。
+Apprise logger 在应用进程中完全关闭，因为插件 DEBUG 和 WARNING 可能包含消息、目标或第三方响应。应用自己的 INFO/WARNING 只记录消息长度、单条消息模式、静默标志、安全的 API 调用阶段、HTTP 状态、异常类型和通用投递结果，不记录 URL、正文、Bot Token、Chat ID 或第三方异常文本。
 
 Bark publisher 支持明文推送和可选的 AES-GCM 加密推送。只配置 device key 时，请求体始终包含 `body`，并在 rendered message 提供标题时包含 `title`；配置边界要求加密 key 和初始 IV 同时存在或同时缺失，并允许用不含凭据、query 或 fragment 的绝对 HTTP(S) `BARK_BASE_URL` 覆盖官方端点。加密 key 接受 16、24 或 32 个 ASCII 字符，对应 Bark 的 AES128、AES192 和 AES256；初始 IV 是与 Bark App 设置一致的 12 字符值，App 端模式必须设为 GCM 和 noPadding。publisher 每次加密生成新的 12 字符随机 IV，并在请求中与 ciphertext 一起发送；Bark App 优先使用请求携带的 IV 解密。`cryptography` 的 `AESGCM` 直接生成 Bark 所需的 ciphertext 与 16 字节 tag 组合，再以 Base64 编码；正文始终加密，标题存在时随正文一起加密。两种模式都使用 `/push` JSON 请求体，避免 device key 进入 HTTP URL 日志。`BARK_GROUP` 原样映射到 `group`；普通投递的内部 level 固定为 `timeSensitive`，无声投递固定为 `passive`。
 

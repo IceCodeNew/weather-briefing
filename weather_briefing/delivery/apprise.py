@@ -6,6 +6,7 @@ import asyncio
 import html
 import json
 import logging
+import time
 from typing import Protocol
 
 from apprise import Apprise, AppriseAsset, NotifyFormat
@@ -16,6 +17,32 @@ from ..models import RenderedMessage
 from .base import DeliveryError
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
+
+
+def _log_telegram_call_failure(
+    started_at: float,
+    phase: str,
+    *,
+    status_code: int | None = None,
+    reason: str | None = None,
+) -> None:
+    """Log only bounded diagnostics for a failed Telegram API call."""
+    duration_ms = round((time.monotonic() - started_at) * 1000)
+    if status_code is not None:
+        _LOGGER.warning(
+            "API call failed provider=telegram operation=send-message method=POST "
+            "duration_ms=%d status_code=%d phase=%s",
+            duration_ms,
+            status_code,
+            phase,
+        )
+    else:
+        _LOGGER.warning(
+            "API call failed provider=telegram operation=send-message method=POST duration_ms=%d reason=%s phase=%s",
+            duration_ms,
+            reason or "unknown",
+            phase,
+        )
 
 
 class _StrictNotifyTelegram(NotifyTelegram):
@@ -51,6 +78,7 @@ class _StrictNotifyTelegram(NotifyTelegram):
             if topic:
                 payload["message_thread_id"] = topic
             self.throttle()
+            started_at = time.monotonic()
             try:
                 response = apprise_telegram.requests.post(
                     url,
@@ -60,16 +88,48 @@ class _StrictNotifyTelegram(NotifyTelegram):
                     timeout=self.request_timeout,
                     allow_redirects=self.redirects,
                 )
-            except apprise_telegram.requests.RequestException:
+            except apprise_telegram.requests.RequestException as exc:
+                _log_telegram_call_failure(
+                    started_at,
+                    "request-error",
+                    reason=type(exc).__name__,
+                )
                 return False
             if response.status_code != apprise_telegram.requests.codes.ok:
+                _log_telegram_call_failure(
+                    started_at,
+                    "http-error",
+                    status_code=response.status_code,
+                )
                 return False
             try:
                 response_payload = json.loads(response.content)
             except (TypeError, ValueError):
+                _log_telegram_call_failure(
+                    started_at,
+                    "invalid-json",
+                    status_code=response.status_code,
+                )
                 return False
-            if not isinstance(response_payload, dict) or response_payload.get("ok") is not True:
+            if not isinstance(response_payload, dict):
+                _log_telegram_call_failure(
+                    started_at,
+                    "invalid-response",
+                    status_code=response.status_code,
+                )
                 return False
+            if response_payload.get("ok") is not True:
+                _log_telegram_call_failure(
+                    started_at,
+                    "telegram-not-ok",
+                    status_code=response.status_code,
+                )
+                return False
+            _LOGGER.info(
+                "API call succeeded provider=telegram operation=send-message method=POST duration_ms=%d status_code=%d",
+                round((time.monotonic() - started_at) * 1000),
+                response.status_code,
+            )
         return True
 
 

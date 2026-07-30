@@ -1348,7 +1348,7 @@ class TestDeliveryProvider:
     async def test_telegram_with_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             publisher="telegram",
-            telegram_bot_token="123456:abcdefghijklmnopqrstuvwxyzABCDE",
+            telegram_bot_token="123456:TEST_DUMMY_TELEGRAM_TOKEN",
             telegram_chat_id="test-chat",
         )
         provider = _delivery_provider(settings, async_client)
@@ -1388,7 +1388,7 @@ class TestDeliveryProvider:
     ) -> None:
         settings = _make_fake_settings(
             publisher="stdout",
-            telegram_bot_token="123456:abcdefghijklmnopqrstuvwxyzABCDE",
+            telegram_bot_token="123456:TEST_DUMMY_TELEGRAM_TOKEN",
             telegram_chat_id="test-chat",
         )
 
