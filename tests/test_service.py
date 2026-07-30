@@ -30,6 +30,7 @@ from weather_briefing.models import (
     AirQualitySnapshot,
     AirQualityTimeKind,
     Article,
+    BriefingResult,
     FeedConfig,
     RenderedMessage,
     ResolvedLocation,
@@ -84,6 +85,21 @@ class StaticRSSSource:
 
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
         return self._articles
+
+
+class CountingPlainTextRenderer(PlainTextRenderer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.briefing_calls = 0
+
+    def render_briefing(
+        self,
+        result: BriefingResult,
+        reference_articles: tuple[Article, ...],
+        context: tuple[SourceDocument, ...],
+    ) -> RenderedMessage:
+        self.briefing_calls += 1
+        return super().render_briefing(result, reference_articles, context)
 
 
 class FailingRSSSource:
@@ -1179,7 +1195,8 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
     )
     llm = RecordingLLM(should_notify=False)
     publisher = RecordingPublisher()
-    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+    renderer = CountingPlainTextRenderer()
+    delivery = DeliveryProvider(renderer, publisher)
     weather_context = StaticWeatherContextProvider()
     now = pendulum.datetime(2026, 7, 13, 9, tz=timezone)
 
@@ -1203,6 +1220,7 @@ async def test_briefing_api_only_update_can_be_remembered_without_delivery(
         remembered = state.recent_context_documents(now, 1)
 
     assert result is None
+    assert renderer.briefing_calls == 1
     assert llm.payload is not None
     assert llm.payload["mode"] == "briefing"
     assert publisher.messages == []

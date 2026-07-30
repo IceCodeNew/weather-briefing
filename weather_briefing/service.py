@@ -321,11 +321,6 @@ class BriefingService:
                 weather_notification_assessment(payload, result)
             )
         )
-        message = self._delivery.render_briefing(
-            result,
-            source_articles,
-            reference_context,
-        )
         if kind == "briefing" and not notification.should_notify and not force_publish:
             _LOGGER.info("Briefing skipped: notification policy returned should_notify=False")
             self._save_result_state(
@@ -339,6 +334,11 @@ class BriefingService:
             )
             return None
 
+        message = self._delivery.render_briefing(
+            result,
+            source_articles,
+            reference_context,
+        )
         publish_silently = silent and kind == "briefing" and not notification.should_notify
         await self._delivery.publish_briefing(message, silent=publish_silently)
         self._save_result_state(
