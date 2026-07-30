@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 
 import pendulum
@@ -59,6 +60,7 @@ class SQLiteStateStore(
         resolved_warning_ids: tuple[str, ...],
         recorded_at: pendulum.DateTime,
         verbatim_silent: bool,
+        notification_payload: Mapping[str, object] | None = None,
     ) -> None:
         """Atomically persist one summarized result and its delivery queue."""
         recorded_at = require_aware_datetime(recorded_at, context="Result recording time")
@@ -71,7 +73,7 @@ class SQLiteStateStore(
                 self._delete_pending_articles(articles)
             self._insert_context_documents(context_documents, recorded_at)
             if body is not None:
-                self._insert_briefing(kind, body, recorded_at)
+                self._insert_briefing(kind, body, recorded_at, notification_payload)
                 self._enqueue_verbatim_deliveries(articles, verbatim_silent, recorded_at)
             self._update_warnings(
                 active_warnings,

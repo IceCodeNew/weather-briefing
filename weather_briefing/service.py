@@ -314,13 +314,24 @@ class BriefingService:
                     "resolved_warning_ids": list(resolved_warning_ids),
                 },
             )
-        notification = (
-            NotificationDecision(should_notify=True)
-            if kind == "forecast" or (force_publish and not silent)
-            else await self._notification_decisions.assess_notification(
-                weather_notification_assessment(payload, result)
+        if kind == "forecast" or (force_publish and not silent):
+            notification = NotificationDecision(should_notify=True)
+        else:
+            previous_briefing = next(
+                (
+                    briefing
+                    for briefing in reversed(self._state.recent_briefings(now, self._settings.history_hours))
+                    if briefing.kind == "briefing"
+                ),
+                None,
             )
-        )
+            notification = await self._notification_decisions.assess_notification(
+                weather_notification_assessment(
+                    payload,
+                    result,
+                    previous_briefing.notification_payload if previous_briefing is not None else None,
+                )
+            )
         if kind == "briefing" and not notification.should_notify and not force_publish:
             _LOGGER.info("Briefing skipped: notification policy returned should_notify=False")
             self._save_result_state(
@@ -445,6 +456,7 @@ class BriefingService:
             resolved_warning_ids=result.resolved_warning_ids,
             recorded_at=now,
             verbatim_silent=verbatim_silent,
+            notification_payload=result.raw_payload if body is not None else None,
         )
 
     def _is_forecast_article(self, article: Article) -> bool:

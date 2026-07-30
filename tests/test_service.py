@@ -24,7 +24,7 @@ from weather_briefing.application.context_history import context_history_candida
 from weather_briefing.application.context_history import serialize_context_document as _serialize_context_document
 from weather_briefing.application.payloads import build_briefing_payload
 from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
-from weather_briefing.delivery import DeliveryError, DeliveryProvider, PlainTextRenderer
+from weather_briefing.delivery import BarkTextRenderer, DeliveryError, DeliveryProvider, PlainTextRenderer
 from weather_briefing.llm import LLMError, LLMProvider, LLMRequestError
 from weather_briefing.models import (
     AirQualitySnapshot,
@@ -1558,6 +1558,35 @@ async def test_forced_audible_briefing_does_not_depend_on_notification_decision(
 
     assert body is not None
     assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
+
+
+async def test_bark_notification_baseline_preserves_previous_headline(tmp_path: Path) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    llm = RecordingLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(BarkTextRenderer(), publisher)
+    now = pendulum.datetime(2026, 7, 13, 15, tz=timezone)
+
+    with SQLiteStateStore(tmp_path / "bark-baseline.sqlite3") as state:
+        service = _briefing_service(
+            _TestSettings(timezone=timezone),
+            _location(),
+            state,
+            EmptyRSSSource(),
+            llm,
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        first_body = await service.run("briefing", now, force_publish=True)
+        await service.run("briefing", now.add(hours=1))
+
+    assert first_body is not None
+    assert "Daily briefing" not in first_body
+    assert len(llm.notification_decisions.assessments) == 1
+    previous = llm.notification_decisions.assessments[0].payload["previous_briefing"]
+    assert _is_string_object_dict(previous)
+    assert previous["headline"] == "Daily briefing"
 
 
 async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path: Path) -> None:

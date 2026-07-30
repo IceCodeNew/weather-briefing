@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TypeGuard
 
 import pendulum
 
@@ -20,6 +23,19 @@ class VerbatimDelivery:
 
     article: Article
     silent: bool
+
+
+def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
+    return isinstance(value, dict) and all(isinstance(key, str) for key in value)
+
+
+def _stored_notification_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    decoded: object = json.loads(str(value))
+    if not _is_string_object_dict(decoded):
+        raise ValueError("Stored notification payload must be an object with string keys")
+    return decoded
 
 
 class ContentStateOperations:
@@ -132,7 +148,8 @@ class ContentStateOperations:
         now = require_aware_datetime(now, context="Briefing history time")
         threshold = storage_time(now.subtract(hours=history_hours))
         rows = self._connection.execute(
-            "SELECT kind, body, published_at FROM briefings WHERE published_at >= ? ORDER BY published_at",
+            """SELECT kind, body, published_at, notification_payload
+            FROM briefings WHERE published_at >= ? ORDER BY published_at""",
             (threshold,),
         )
         return tuple(
@@ -140,6 +157,7 @@ class ContentStateOperations:
                 kind=str(row["kind"]),
                 body=str(row["body"]),
                 published_at=parse_time(str(row["published_at"])),
+                notification_payload=_stored_notification_payload(row["notification_payload"]),
             )
             for row in rows
         )
@@ -157,15 +175,38 @@ class ContentStateOperations:
         ).fetchone()
         return row is not None
 
-    def save_briefing(self, kind: str, body: str, published_at: pendulum.DateTime) -> None:
+    def save_briefing(
+        self,
+        kind: str,
+        body: str,
+        published_at: pendulum.DateTime,
+        *,
+        notification_payload: Mapping[str, object] | None = None,
+    ) -> None:
         """Persist a successfully published briefing."""
-        self._insert_briefing(kind, body, published_at)
+        self._insert_briefing(kind, body, published_at, notification_payload)
         self._connection.commit()
 
-    def _insert_briefing(self, kind: str, body: str, published_at: pendulum.DateTime) -> None:
+    def _insert_briefing(
+        self,
+        kind: str,
+        body: str,
+        published_at: pendulum.DateTime,
+        notification_payload: Mapping[str, object] | None,
+    ) -> None:
         self._connection.execute(
-            "INSERT INTO briefings(kind, body, published_at) VALUES (?, ?, ?)",
-            (kind, body, storage_time(published_at)),
+            """INSERT INTO briefings(kind, body, published_at, notification_payload)
+            VALUES (?, ?, ?, ?)""",
+            (
+                kind,
+                body,
+                storage_time(published_at),
+                (
+                    json.dumps(dict(notification_payload), ensure_ascii=False, separators=(",", ":"))
+                    if notification_payload is not None
+                    else None
+                ),
+            ),
         )
 
     def _enqueue_verbatim_deliveries(

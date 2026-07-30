@@ -60,12 +60,17 @@ def _latest_briefing(value: object) -> object | None:
 def weather_notification_assessment(
     briefing_payload: Mapping[str, object],
     result: BriefingResult,
+    previous_candidate_message: Mapping[str, object] | None = None,
 ) -> NotificationAssessment:
     """Build a bounded weather-policy input without duplicating source bodies."""
     policy_input = {key: briefing_payload[key] for key in _WEATHER_DECISION_SCALAR_KEYS}
     policy_input["new_articles"] = _compact_articles(briefing_payload.get("new_articles"))
     policy_input["deferred_articles"] = _compact_articles(briefing_payload.get("deferred_articles"))
-    policy_input["previous_briefing"] = _latest_briefing(briefing_payload.get("recent_briefings"))
+    policy_input["previous_briefing"] = (
+        previous_candidate_message
+        if previous_candidate_message is not None
+        else _latest_briefing(briefing_payload.get("recent_briefings"))
+    )
     policy_input["previous_active_warnings"] = _compact_warnings(briefing_payload.get("currently_active_warnings"))
     policy_input["candidate_message"] = result.raw_payload
     return NotificationAssessment(

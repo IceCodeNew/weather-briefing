@@ -21,7 +21,8 @@ def initialize_state(connection: sqlite3.Connection) -> None:
                 );
                 CREATE TABLE IF NOT EXISTS briefings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
-                    body TEXT NOT NULL, published_at TEXT NOT NULL
+                    body TEXT NOT NULL, published_at TEXT NOT NULL,
+                    notification_payload TEXT
                 );
                 CREATE TABLE IF NOT EXISTS verbatim_delivery_queue (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,6 +94,9 @@ def initialize_state(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE context_snapshots ADD COLUMN history_value TEXT")
     if "language" not in context_columns:
         connection.execute("ALTER TABLE context_snapshots ADD COLUMN language TEXT NOT NULL DEFAULT 'zh-CN'")
+    briefing_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(briefings)")}
+    if "notification_payload" not in briefing_columns:
+        connection.execute("ALTER TABLE briefings ADD COLUMN notification_payload TEXT")
     service_status_columns = {
         str(row[1]) for row in connection.execute("PRAGMA table_info(service_status_message_state)")
     }

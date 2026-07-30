@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -123,6 +124,7 @@ class BriefingRecord:
     kind: str
     body: str
     published_at: pendulum.DateTime
+    notification_payload: Mapping[str, object] | None = None
 
 
 class AirQualityTimeKind(StrEnum):

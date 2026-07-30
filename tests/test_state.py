@@ -40,6 +40,24 @@ def test_existing_service_status_schema_adds_handled_surfaces(tmp_path: Path) ->
     assert "handled_surfaces" in columns
 
 
+def test_existing_briefing_schema_adds_notification_payload(tmp_path: Path) -> None:
+    state_path = tmp_path / "legacy-briefings.db"
+    with closing(sqlite3.connect(state_path)) as connection:
+        connection.execute(
+            """CREATE TABLE briefings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                body TEXT NOT NULL,
+                published_at TEXT NOT NULL
+            )"""
+        )
+        initialize_state(connection)
+
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(briefings)")}
+
+    assert "notification_payload" in columns
+
+
 def test_rendered_text_diagnostics_can_be_enabled_and_disabled(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 14, 7, tz="UTC")
     expires_at = now.add(minutes=15)
@@ -198,11 +216,14 @@ def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> No
             resolved_warning_ids=(),
             recorded_at=now,
             verbatim_silent=True,
+            notification_payload={"headline": "Platform-neutral headline"},
         )
 
         assert state.pending_articles() == ()
         assert state.known_article_ids((regular.id, verbatim.id)) == {regular.id, verbatim.id}
-        assert tuple(record.body for record in state.recent_briefings(now, 1)) == ("Published briefing",)
+        recent_briefings = state.recent_briefings(now, 1)
+        assert tuple(record.body for record in recent_briefings) == ("Published briefing",)
+        assert recent_briefings[0].notification_payload == {"headline": "Platform-neutral headline"}
         assert state.recent_context_documents(now, 1) == (document,)
         assert state.active_warnings(now, 1) == (warning,)
         queued = state.pending_verbatim_deliveries()

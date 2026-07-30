@@ -291,3 +291,29 @@ def test_weather_assessment_ignores_invalid_optional_collections() -> None:
     assessment_without_warnings = weather_notification_assessment(payload, result)
 
     assert assessment_without_warnings.payload["previous_active_warnings"] == []
+
+
+def test_weather_assessment_prefers_platform_neutral_previous_candidate() -> None:
+    payload: dict[str, object] = {
+        "mode": "briefing",
+        "now": "2026-07-29T09:00:00+08:00",
+        "forecast_date": "2026-07-29",
+        "location_scope": {"full_name": "Example"},
+        "new_articles": [],
+        "deferred_articles": [],
+        "recent_briefings": [
+            {"mode": "briefing", "published_at": "2026-07-29T08:30:00+08:00", "body": "Platform body"}
+        ],
+        "currently_active_warnings": [],
+    }
+    result = BriefingResult(
+        headline="Current headline",
+        headline_source_ids=(),
+        conclusions=(),
+        raw_payload={"headline": "Current headline"},
+    )
+    previous_candidate = {"headline": "Previous headline", "conclusions": []}
+
+    assessment = weather_notification_assessment(payload, result, previous_candidate)
+
+    assert assessment.payload["previous_briefing"] == previous_candidate
