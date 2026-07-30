@@ -113,6 +113,19 @@ def test_decision_service_rejects_empty_and_duplicate_registries() -> None:
         NotificationDecisionService((policy, policy))
 
 
+@pytest.mark.parametrize("kind", (None, 1, "", " weather"))
+def test_decision_service_rejects_invalid_custom_policy_kind(kind: object) -> None:
+    @dataclass(frozen=True, slots=True)
+    class CustomPolicy:
+        kind: object
+
+        async def assess_notification(self, payload: Mapping[str, object]) -> NotificationDecision:
+            return NotificationDecision(True)
+
+    with pytest.raises(ValueError, match="Notification policy kind"):
+        NotificationDecisionService((CustomPolicy(kind),))
+
+
 async def test_decision_service_rejects_unknown_kind() -> None:
     service = NotificationDecisionService(
         (

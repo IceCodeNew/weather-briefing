@@ -60,8 +60,8 @@ class NotificationPolicy(Protocol):
     """Own the decision behavior for one message type."""
 
     @property
-    def kind(self) -> str:
-        """Return the message type handled by this policy."""
+    def kind(self) -> object:
+        """Return the untrusted message type identifier declared by this policy."""
         ...
 
     async def assess_notification(
@@ -119,9 +119,10 @@ class NotificationDecisionService:
         """Build an immutable policy registry and reject duplicate kinds."""
         registered: dict[str, NotificationPolicy] = {}
         for policy in policies:
-            if policy.kind in registered:
-                raise ValueError(f"Duplicate notification policy: {policy.kind}")
-            registered[policy.kind] = policy
+            kind = _validated_kind(policy.kind, context="Notification policy kind")
+            if kind in registered:
+                raise ValueError(f"Duplicate notification policy: {kind}")
+            registered[kind] = policy
         if not registered:
             raise ValueError("At least one notification policy is required")
         self._policies = registered
