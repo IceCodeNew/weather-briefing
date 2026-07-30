@@ -118,9 +118,13 @@ At minimum, configure the following in `.env`:
 - `LLM_PROVIDER` and `LLM_MODEL`;
 - the credentials required by your chosen model service;
 - for Telegram delivery: `PUBLISHER=telegram`, `TELEGRAM_BOT_TOKEN`, and `TELEGRAM_CHAT_ID`; or
+- for Server酱 Turbo delivery: `PUBLISHER=serverchan-turbo` and `SERVERCHAN_TURBO_SENDKEY`; or
+- for Server酱³ delivery: `PUBLISHER=serverchan-3` and `SERVERCHAN_3_SENDKEY`; or
 - for Bark delivery: `PUBLISHER=bark` and `BARK_DEVICE_KEY`, plus both `BARK_ENCRYPTION_KEY` and `BARK_ENCRYPTION_IV` when encryption is enabled.
 
 For private-chat delivery, open the bot in Telegram and send `/start` before the first briefing. A bot can send messages to a private Chat ID only after the user has initiated the conversation. For group delivery, add the bot to the group and grant it permission to send messages.
+
+Server酱 Turbo and Server酱³ are separate publishers because their accounts, SendKeys, endpoints, and receiving products are not interchangeable. Turbo SendKeys start with `SCT`; Server酱³ SendKeys use the `sctp{uid}t{token}` form. Follow the official [SendKey guide](https://sct.ftqq.com/docs/getting-started/sendkey/) to choose and configure one product. SendKeys are credentials and must not be committed or printed.
 
 Bark sends plaintext when the encryption variables are absent. Encryption is recommended.
 
@@ -165,7 +169,7 @@ docker exec "${CONTAINER_NAME}" \
   run briefing --run-now
 ```
 
-Once verified with stdout, select `PUBLISHER=telegram` or `PUBLISHER=bark`, fill in that publisher's credentials, and recreate the container.
+Once verified with stdout, select `PUBLISHER=telegram`, `PUBLISHER=serverchan-turbo`, `PUBLISHER=serverchan-3`, or `PUBLISHER=bark`, fill in that publisher's credentials, and recreate the container.
 
 The application writes operational logs to standard error. Normal logs do not contain credentials, coordinates, message bodies, or private URLs.
 
