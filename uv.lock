@@ -1067,7 +1067,7 @@ wheels = [
 
 [[package]]
 name = "weather-briefing"
-version = "4.4.1.dev0"
+version = "5.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "any-llm-sdk" },

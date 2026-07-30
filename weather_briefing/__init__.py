@@ -1,3 +1,3 @@
 """Stateful weather briefing generator."""
 
-__version__ = "4.4.1-dev"
+__version__ = "5.0.0"
