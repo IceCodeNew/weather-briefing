@@ -1521,6 +1521,45 @@ async def test_forced_briefing_publishes_deferred_information_and_clears_pending
     assert publisher.messages[1][1:] == (False, True)
 
 
+async def test_forced_audible_briefing_does_not_depend_on_notification_decision(
+    tmp_path: Path,
+) -> None:
+    timezone = pendulum.timezone("Asia/Shanghai")
+    settings = _TestSettings(timezone=timezone)
+    llm = RecordingLLM()
+    publisher = RecordingPublisher()
+    delivery = DeliveryProvider(PlainTextRenderer(), publisher)
+
+    class FailingNotificationDecisions:
+        async def assess_notification(
+            self,
+            assessment: NotificationAssessment,
+        ) -> NotificationDecision:
+            raise RuntimeError(f"unexpected notification assessment: {assessment.kind}")
+
+    with SQLiteStateStore(tmp_path / "forced-audible.sqlite3") as state:
+        service = _BriefingService(
+            settings,
+            _location(),
+            state,
+            EmptyRSSSource(),
+            llm,
+            FailingNotificationDecisions(),
+            delivery,
+            delivery,
+            StaticWeatherContextProvider(),
+        )
+        body = await service.run(
+            "briefing",
+            pendulum.datetime(2026, 7, 13, 15, tz=timezone),
+            force_publish=True,
+            silent=False,
+        )
+
+    assert body is not None
+    assert publisher.messages == [(RenderedMessage(body, len(body)), True, False)]
+
+
 async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path: Path) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
     now = pendulum.datetime(2026, 7, 13, 23, tz=timezone)

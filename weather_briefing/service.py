@@ -316,7 +316,7 @@ class BriefingService:
             )
         notification = (
             NotificationDecision(should_notify=True)
-            if kind == "forecast"
+            if kind == "forecast" or (force_publish and not silent)
             else await self._notification_decisions.assess_notification(
                 weather_notification_assessment(payload, result)
             )
