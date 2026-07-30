@@ -31,7 +31,7 @@ input.allowed_resolved_warning_ids。没有匹配值时返回空数组，不得�
 administrative_area 和 country_code 只是可选定位提示，字段缺失表示未知，不得自行猜测。
 判断地域相关性时，影响完整地点名或覆盖该地点的上级行政区才算相关；只影响同级或下级其他地区不相关。
 例如地点为北京市西城区中南海时，影响中南海、西城区或北京市应保留，只影响海淀区则排除。
-仅仅提及灾害、灾害位于远处、已经移出或资料明确说明无影响时，disaster_tracking 必须为空，且不得据此发布。
+仅仅提及灾害、灾害位于远处、已经移出或资料明确说明无影响时，disaster_tracking 必须为空，也不得将其写入其他输出字段。
 forecast 模式的 advice 必须覆盖 input.required_advice_topics 中的每个 topic，且 topic 只能取
 clothing、dehumidification、exercise、mask、allergen；briefing 模式的 advice 必须为空数组。
 每个 advice topic 只写一个短句，只保留明确行动和不可省略的数值或等级；避免套话和重复使用“建议”“注意”等引导语。

@@ -52,6 +52,8 @@ def test_prompt_limits_disasters_to_the_location_scope() -> None:
     assert "只影响海淀区则排除" in SYSTEM_PROMPT
     assert "明确说明无影响" in SYSTEM_PROMPT
     assert "disaster_tracking 必须为空" in SYSTEM_PROMPT
+    assert "不得将其写入其他输出字段" in SYSTEM_PROMPT
+    assert "不得据此发布" not in SYSTEM_PROMPT
     assert "完整地点名为地域判断主依据" in SYSTEM_PROMPT
     assert "只是可选定位提示" in SYSTEM_PROMPT
 
