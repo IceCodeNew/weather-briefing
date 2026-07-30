@@ -120,7 +120,7 @@ def test_decision_service_rejects_invalid_custom_policy_kind(kind: object) -> No
         kind: object
 
         async def assess_notification(self, payload: Mapping[str, object]) -> NotificationDecision:
-            return NotificationDecision(True)
+            return NotificationDecision(True)  # pragma: no cover - invalid registration cannot dispatch
 
     with pytest.raises(ValueError, match="Notification policy kind"):
         NotificationDecisionService((CustomPolicy(kind),))
