@@ -6,7 +6,6 @@ import pytest
 
 from weather_briefing import __version__
 from weather_briefing.air_quality import health_guidance
-from weather_briefing.data import resources as data_resources
 from weather_briefing.data.resources import (
     ReferenceDataError,
     load_reference_data,
@@ -15,7 +14,6 @@ from weather_briefing.data.resources import (
     reference_value,
 )
 from weather_briefing.data.service_endpoints import NOMINATIM_USER_AGENT
-from weather_briefing.delivery.telegram_reference import telegram_error_classification
 from weather_briefing.localization import localization_table
 from weather_briefing.weather.open_meteo_reference import open_meteo_weather_code_descriptions
 
@@ -39,15 +37,6 @@ def _localization_language(tables: dict[str, object], table_name: str, language:
     labels = table[language]
     assert _is_string_object_dict(labels)
     return labels
-
-
-def _telegram_classification_data() -> dict[str, object]:
-    return {
-        "description_markers": {"chat not found": "chat-not-found"},
-        "parameter_reasons": {"migrate_to_chat_id": "chat-migrated"},
-        "status_reasons": {"401": "bot-token-rejected"},
-        "channel_unavailable_reasons": ["chat-not-found", "chat-migrated", "bot-token-rejected"],
-    }
 
 
 def test_packaged_reference_data_is_available() -> None:
@@ -93,11 +82,6 @@ def test_packaged_reference_data_is_available() -> None:
     assert weather_codes[53] == "Moderate drizzle"
     assert localization_table("weather_document")["ja"]["forecast"] == "天気予報"
     assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
-    classification = telegram_error_classification()
-    assert ("chat not found", "chat-not-found") in classification.description_markers
-    assert classification.parameter_reasons["migrate_to_chat_id"] == "chat-migrated"
-    assert classification.status_reasons[401] == "bot-token-rejected"
-    assert "chat-not-found" in classification.channel_unavailable_reasons
 
 
 def test_nominatim_user_agent_identifies_current_version() -> None:
@@ -162,62 +146,6 @@ def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
 
     with pytest.raises(ReferenceDataError, match="non-empty string"):
         reference_string("provider_defaults.json", "qweather_allergen_index_type")
-
-
-@pytest.mark.parametrize(
-    ("value", "message"),
-    (
-        ({}, "supported fields"),
-        (_telegram_classification_data() | {"description_markers": {}}, "description markers"),
-        (_telegram_classification_data() | {"status_reasons": {}}, "statuses"),
-        (
-            _telegram_classification_data() | {"description_markers": {"CHAT NOT FOUND": "chat-not-found"}},
-            "description markers",
-        ),
-        (
-            _telegram_classification_data() | {"description_markers": {"chat not found": "unsafe\nreason"}},
-            "description markers",
-        ),
-        (
-            _telegram_classification_data() | {"parameter_reasons": {}},
-            "parameters",
-        ),
-        (
-            _telegram_classification_data() | {"parameter_reasons": {"migrate_to_chat_id": "unsafe\nreason"}},
-            "parameters",
-        ),
-        (
-            _telegram_classification_data() | {"status_reasons": {"invalid": "api-error"}},
-            "statuses",
-        ),
-        (
-            _telegram_classification_data() | {"channel_unavailable_reasons": []},
-            "channel availability",
-        ),
-        (
-            _telegram_classification_data() | {"channel_unavailable_reasons": ["chat-not-found", "chat-not-found"]},
-            "channel availability",
-        ),
-        (
-            _telegram_classification_data() | {"channel_unavailable_reasons": ["unknown-reason"]},
-            "channel availability",
-        ),
-        (
-            _telegram_classification_data() | {"channel_unavailable_reasons": [7]},
-            "channel availability",
-        ),
-        (
-            _telegram_classification_data() | {"channel_unavailable_reasons": ["unsafe\nreason"]},
-            "channel availability",
-        ),
-    ),
-)
-def test_telegram_error_classification_rejects_invalid_data(monkeypatch, value, message) -> None:
-    monkeypatch.setattr(data_resources, "load_reference_data", lambda filename: value)
-    telegram_error_classification.cache_clear()
-
-    with pytest.raises(ReferenceDataError, match=message):
-        telegram_error_classification()
 
 
 def test_load_reference_data_rejects_non_dict_root(monkeypatch) -> None:

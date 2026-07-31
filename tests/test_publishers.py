@@ -1,13 +1,14 @@
 import json
+import threading
 from typing import Any
 
-import httpx
 import pendulum
 import pytest
+from apprise import Apprise, AppriseAsset, NotifyFormat
+from apprise.plugins import telegram as apprise_telegram
+from apprise.plugins.telegram import NotifyTelegram
+from requests.adapters import SOCKSProxyManager
 
-from weather_briefing.api_client import LoggedAsyncClient
-from weather_briefing.data import resources as data_resources
-from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.delivery import (
     BarkTextRenderer,
     DeliveryError,
@@ -15,10 +16,11 @@ from weather_briefing.delivery import (
     PlainTextRenderer,
     StdoutPublisher,
     TelegramPublisher,
+    telegram_notifier,
 )
-from weather_briefing.delivery.telegram import split_message
-from weather_briefing.delivery.telegram_reference import telegram_error_classification
 from weather_briefing.models import Article, RenderedMessage
+
+DUMMY_TELEGRAM_TOKEN = "123456:TEST_DUMMY_TELEGRAM_TOKEN"
 
 
 class NoopPublisher:
@@ -65,6 +67,25 @@ class RecordingPublisher:
     ) -> None:
         self.messages.append(message)
         self.hints.append((single_message, silent))
+
+
+class RecordingNotifier:
+    def __init__(self, result: bool | None = True, error: Exception | None = None) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[str, str, NotifyFormat]] = []
+
+    def notify(
+        self,
+        body: str,
+        title: str,
+        *,
+        body_format: NotifyFormat,
+    ) -> bool | None:
+        self.calls.append((body, title, body_format))
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
 def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config() -> None:
@@ -188,15 +209,6 @@ def test_delivery_provider_applies_configured_limit_to_titled_briefing() -> None
     assert not delivery.briefing_fits(RenderedMessage("b" * 961, 981, "t" * 20), 500)
 
 
-async def test_telegram_publisher_validates_error_metadata_on_construction(monkeypatch) -> None:
-    monkeypatch.setattr(data_resources, "load_reference_data", lambda filename: {})
-    telegram_error_classification.cache_clear()
-
-    async with httpx.AsyncClient() as client:
-        with pytest.raises(ReferenceDataError, match="supported fields"):
-            TelegramPublisher(client, "runtime-token", "runtime-chat")
-
-
 @pytest.mark.parametrize("reason", (None, 7, "private detail\nforged-log-line"))
 def test_delivery_error_rejects_unsafe_structured_reason(reason) -> None:
     with pytest.raises(ValueError, match="lowercase kebab-case"):
@@ -209,106 +221,266 @@ def test_delivery_error_rejects_non_boolean_channel_availability(value) -> None:
         DeliveryError("Delivery failed", reason="request-error", channel_unavailable=value)
 
 
-def test_split_message_prefers_line_boundary() -> None:
-    assert split_message("first line\nsecond line", 12) == ("first line", "\nsecond line")
+def test_telegram_notifier_configures_apprise_service_variants() -> None:
+    normal = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+    silent = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456",
+        silent=True,
+        timeout_seconds=12.5,
+    )
+
+    assert len(normal) == 1
+    assert isinstance(normal.asset, AppriseAsset)
+    assert normal.asset.async_mode is False
+    assert "format=text" in normal.urls(privacy=False)[0]
+    assert "overflow=split" in normal.urls(privacy=False)[0]
+    assert "preview=no" in normal.urls(privacy=False)[0]
+    assert "silent=no" in normal.urls(privacy=False)[0]
+    assert "silent=yes" in silent.urls(privacy=False)[0]
+    assert "rto=12.5" in normal.urls(privacy=False)[0]
+    assert "cto=12.5" in normal.urls(privacy=False)[0]
+    assert "TEST_DUMMY_TELEGRAM_TOKEN" not in normal.urls(privacy=True)[0]
 
 
-def test_split_message_preserves_markup_without_visible_text() -> None:
-    assert split_message("<b></b>", 3) == ("<b></b>",)
+def test_socks_proxy_extra_is_installed() -> None:
+    assert SOCKSProxyManager("socks5h://127.0.0.1:1080") is not None
 
 
-@pytest.mark.parametrize(("body", "limit"), (("", 0), ("body", 0), ("body", -1)))
-def test_split_message_rejects_non_positive_limit(body: str, limit: int) -> None:
-    with pytest.raises(ValueError, match="must be positive"):
-        split_message(body, limit)
+def test_telegram_notifier_rejects_invalid_apprise_configuration() -> None:
+    with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
+        telegram_notifier(
+            "invalid-token",
+            "-100123456",
+            silent=False,
+            timeout_seconds=12.5,
+        )
+
+
+def test_telegram_notifier_rejects_invalid_target() -> None:
+    with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
+        telegram_notifier(
+            DUMMY_TELEGRAM_TOKEN,
+            "!",
+            silent=False,
+            timeout_seconds=12.5,
+        )
+
+
+def test_telegram_notifier_rejects_failed_registration(monkeypatch) -> None:
+    monkeypatch.setattr(Apprise, "add", lambda *args, **kwargs: False)
+
+    with pytest.raises(ValueError, match="Invalid Telegram publisher configuration"):
+        telegram_notifier(
+            DUMMY_TELEGRAM_TOKEN,
+            "-100123456",
+            silent=False,
+            timeout_seconds=12.5,
+        )
+
+
+async def test_apprise_publisher_uses_text_and_selects_silent_notifier(caplog) -> None:
+    normal = RecordingNotifier()
+    silent = RecordingNotifier()
+    publisher = TelegramPublisher(normal, silent)
+    message = RenderedMessage("<b>Title</b>\n\nBody", 11)
+
+    with caplog.at_level("DEBUG", logger="weather_briefing.publishers"):
+        await publisher.publish(message, silent=True)
+
+    assert normal.calls == []
+    assert silent.calls == [("<b>Title</b>\n\nBody", "", NotifyFormat.TEXT)]
+    assert (
+        "Telegram delivery through Apprise prepared: visible_characters=11 payload_characters=18 "
+        "single_message=False silent=True"
+    ) in caplog.text
+    assert "Telegram delivery through Apprise accepted" in caplog.text
+
+
+async def test_apprise_telegram_integration_splits_text_and_delivers_silently(
+    monkeypatch,
+    caplog,
+) -> None:
+    requests: list[tuple[str, dict[str, object]]] = []
+    first_request_started = threading.Event()
+    second_request_started = threading.Event()
+    requests_overlapped = False
+
+    class SuccessfulResponse:
+        status_code = 200
+        content = b'{"ok":true}'
+
+    def post(url: str, **kwargs: object) -> SuccessfulResponse:
+        nonlocal requests_overlapped
+        if not first_request_started.is_set():
+            first_request_started.set()
+            requests_overlapped = second_request_started.wait(timeout=0.1)
+        else:
+            second_request_started.set()
+        requests.append((url, kwargs))
+        return SuccessfulResponse()
+
+    monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
+    normal = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+    silent = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456",
+        silent=True,
+        timeout_seconds=12.5,
+    )
+    publisher = TelegramPublisher(normal, silent)
+    prefix = "<b>tag</b>&<unknown>"
+    body = prefix + ("x" * (4095 - len(prefix))) + "&tail"
+
+    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
+        await publisher.publish(RenderedMessage(body, len(body)), silent=True)
+
+    assert len(requests) == 2
+    assert requests_overlapped is False
+    payloads = []
+    for url, kwargs in requests:
+        assert url == f"https://api.telegram.org/bot{DUMMY_TELEGRAM_TOKEN}/sendMessage"
+        data = kwargs["data"]
+        assert isinstance(data, str)
+        payloads.append(json.loads(data))
+    assert all(payload["chat_id"] == -100123456 for payload in payloads)
+    assert all(payload["disable_notification"] is True for payload in payloads)
+    assert all(payload["disable_web_page_preview"] is True for payload in payloads)
+    assert all("parse_mode" not in payload for payload in payloads)
+    assert all(len(payload["text"]) <= 4096 for payload in payloads)
+    assert payloads[0]["text"].startswith(prefix)
+    delivered_body = "".join(payload["text"] for payload in payloads)
+    assert delivered_body == body
+    assert caplog.text.count("API call succeeded provider=telegram operation=send-message method=POST") == 2
 
 
 @pytest.mark.parametrize(
-    ("body", "limit", "expected"),
+    ("content", "phase"),
     (
-        ("<b>abcdefgh</b>", 5, ("<b>abcde</b>", "<b>fgh</b>")),
-        (
-            "<b><i>abcdef</i></b>",
-            3,
-            ("<b><i>abc</i></b>", "<b><i>def</i></b>"),
-        ),
-        ("<b>ab&amp;cd</b>", 3, ("<b>ab&amp;</b>", "<b>cd</b>")),
-        ("<b>ab&#38;cd</b>", 3, ("<b>ab&#38;</b>", "<b>cd</b>")),
-        ("<b>abc&amp;d</b>", 3, ("<b>abc</b>", "<b>&amp;d</b>")),
-        ("<b>abc</b><i>def</i>", 3, ("<b>abc</b>", "<i>def</i>")),
-        ("<b>abc</b><i></i>", 3, ("<b>abc</b>",)),
-        (
-            "<b>first line\nsecond line</b>",
-            12,
-            ("<b>first line</b>", "<b>\nsecond line</b>"),
-        ),
+        (b"not-json", "invalid-json"),
+        (b'{"ok":false}', "telegram-not-ok"),
+        (b'{"ok":1}', "telegram-not-ok"),
+        (b"[]", "invalid-response"),
     ),
 )
-def test_split_message_balances_html_tags(
-    body: str,
-    limit: int,
-    expected: tuple[str, ...],
+async def test_apprise_telegram_requires_strict_success_response(
+    monkeypatch,
+    caplog,
+    content: bytes,
+    phase: str,
 ) -> None:
-    assert split_message(body, limit) == expected
+    class InvalidSuccessResponse:
+        status_code = 200
+
+        def __init__(self) -> None:
+            self.content = content
+
+    monkeypatch.setattr(
+        "apprise.plugins.telegram.requests.post",
+        lambda *args, **kwargs: InvalidSuccessResponse(),
+    )
+    notifier = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+    publisher = TelegramPublisher(notifier, notifier)
+
+    with (
+        caplog.at_level("INFO", logger="weather_briefing.publishers"),
+        pytest.raises(DeliveryError, match="Telegram delivery failed"),
+    ):
+        await publisher.publish(RenderedMessage("Private body", 12))
+
+    assert f"status_code=200 phase={phase}" in caplog.text
+    assert "Private body" not in caplog.text
 
 
-async def test_telegram_publisher_uses_runtime_values(caplog) -> None:
-    requests: list[httpx.Request] = []
+@pytest.mark.parametrize("failure", ("request", "status"))
+async def test_apprise_telegram_rejects_transport_failure(
+    monkeypatch,
+    caplog,
+    failure: str,
+) -> None:
+    class FailedResponse:
+        status_code = 500
+        content = b'{"ok":true}'
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200, json={"ok": True})
+    def post(*args: object, **kwargs: object) -> FailedResponse:
+        if failure == "request":
+            raise apprise_telegram.requests.ConnectionError("private transport detail")
+        return FailedResponse()
 
-    with caplog.at_level("DEBUG", logger="weather_briefing.publishers"):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            publisher = TelegramPublisher(client, "runtime-token", "runtime-chat", EnabledDiagnostics())
-            await publisher.publish(RenderedMessage("<b>Title</b>\n\nBody", 11))
+    monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
+    notifier = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
 
-    assert requests[0].url.path == "/botruntime-token/sendMessage"
-    payload = json.loads(requests[0].content)
-    assert payload["chat_id"] == "runtime-chat"
-    assert payload["parse_mode"] == "HTML"
-    assert payload["disable_notification"] is False
-    assert (
-        "Telegram delivery prepared: visible_characters=11 payload_characters=18 chunks=1 "
-        "single_message=False silent=False"
-    ) in caplog.text
-    assert "Telegram chunk accepted: index=1/1 payload_characters=18" in caplog.text
-    assert (
-        "Sensitive rendered text diagnostic: stage=telegram-chunk-1-of-1 body='<b>Title</b>\\n\\nBody'"
-    ) in caplog.text
-    assert "runtime-token" not in caplog.text
-    assert "runtime-chat" not in caplog.text
+    with (
+        caplog.at_level("INFO", logger="weather_briefing.publishers"),
+        pytest.raises(DeliveryError, match="Telegram delivery failed"),
+    ):
+        await TelegramPublisher(notifier, notifier).publish(RenderedMessage("Body", 4))
 
-
-async def test_telegram_publisher_uses_bot_api_silent_delivery(caplog) -> None:
-    requests: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200, json={"ok": True})
-
-    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-            await publisher.publish(RenderedMessage("Final briefing", 14), silent=True)
-
-    payload = json.loads(requests[0].content)
-    assert payload["disable_notification"] is True
-    assert "single_message=False silent=True" in caplog.text
+    if failure == "request":
+        assert "reason=ConnectionError phase=request-error" in caplog.text
+    else:
+        assert "status_code=500 phase=http-error" in caplog.text
+    assert "private transport detail" not in caplog.text
 
 
-async def test_telegram_checks_runtime_diagnostics_once_for_multiple_chunks(caplog) -> None:
-    diagnostics = CountingDiagnostics()
-    body = "x" * (TelegramPublisher.MAX_MESSAGE_LENGTH + 1)
+async def test_apprise_telegram_preserves_topic_target(monkeypatch) -> None:
+    payloads: list[dict[str, object]] = []
 
-    with caplog.at_level("DEBUG", logger="weather_briefing.publishers"):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
-            publisher = TelegramPublisher(client, "runtime-token", "runtime-chat", diagnostics)
-            await publisher.publish(RenderedMessage(body, len(body)))
+    class SuccessfulResponse:
+        status_code = 200
+        content = b'{"ok":true}'
 
-    assert diagnostics.checks == 1
-    assert caplog.text.count("Sensitive rendered text diagnostic: stage=telegram-chunk-") == 2
+    def post(*args: object, **kwargs: object) -> SuccessfulResponse:
+        data = kwargs["data"]
+        assert isinstance(data, str)
+        payloads.append(json.loads(data))
+        return SuccessfulResponse()
+
+    monkeypatch.setattr("apprise.plugins.telegram.requests.post", post)
+    notifier = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456:42",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+
+    await TelegramPublisher(notifier, notifier).publish(RenderedMessage("Body", 4))
+
+    assert payloads[0]["message_thread_id"] == 42
+
+
+def test_apprise_telegram_compatibility_sender_rejects_unsupported_calls() -> None:
+    notifier = telegram_notifier(
+        DUMMY_TELEGRAM_TOKEN,
+        "-100123456",
+        silent=False,
+        timeout_seconds=12.5,
+    )
+    service = notifier[0]
+    assert isinstance(service, NotifyTelegram)
+    assert service.send("Body", attach=object()) is False
+    service.targets.clear()
+    assert service.send("Body") is False
 
 
 async def test_rendered_text_is_not_logged_without_runtime_diagnostics(caplog) -> None:
@@ -351,115 +523,41 @@ async def test_runtime_diagnostic_failure_does_not_block_delivery(caplog) -> Non
     assert "Rendered text diagnostic state check failed" in caplog.text
 
 
-async def test_telegram_error_logs_safe_api_reason_without_private_response(caplog) -> None:
-    def handler(_: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            400,
-            json={
-                "ok": False,
-                "error_code": 400,
-                "description": "Bad Request: chat not found; private response detail",
-            },
-        )
-
-    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            publisher = TelegramPublisher(client, "private-token", "runtime-chat")
-            with pytest.raises(DeliveryError, match="chat-not-found") as caught:  # pragma: no branch
-                await publisher.publish(RenderedMessage("Body", 4))
-
-    assert "private-token" not in str(caught.value)
-    assert "runtime-chat" not in caplog.text
-    assert "private response detail" not in caplog.text
-    assert "Telegram delivery prepared: visible_characters=4 payload_characters=4 chunks=1" in caplog.text
-    assert "status_code=400 reason=chat-not-found" in caplog.text
-    assert caught.value.__cause__ is None
-    assert caught.value.reason == "chat-not-found"
-    assert caught.value.channel_unavailable is True
-
-
-async def test_telegram_failure_emits_one_warning_with_classification(caplog) -> None:
-    transport = httpx.MockTransport(lambda _: httpx.Response(400, json={"description": "chat not found"}))
-
-    with caplog.at_level("INFO"):
-        async with LoggedAsyncClient(transport=transport) as client:
-            publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-            with pytest.raises(DeliveryError, match="chat-not-found"):  # pragma: no branch
-                await publisher.publish(RenderedMessage("Body", 4))
-
-    warnings = [record for record in caplog.records if record.levelno == 30]
-    assert len(warnings) == 1
-    assert warnings[0].name == "weather_briefing.publishers"
-    assert warnings[0].getMessage().endswith("status_code=400 reason=chat-not-found")
-
-
 @pytest.mark.parametrize(
-    ("status_code", "payload", "expected_reason", "expected_channel_unavailable"),
+    "notifier",
     (
-        (400, {"description": "Bad Request: can't parse entities at byte offset 12"}, "invalid-html", False),
-        (400, {"description": "Bad Request: message is too long"}, "message-too-long", False),
-        (
-            400,
-            {"description": "Bad Request: not enough rights to send text messages"},
-            "insufficient-rights",
-            True,
-        ),
-        (400, {"parameters": {"migrate_to_chat_id": -100123}}, "chat-migrated", True),
-        (401, {"description": "Unauthorized"}, "bot-token-rejected", True),
-        (404, {"description": "Not Found"}, "bot-endpoint-not-found", True),
-        (429, {"description": "Too Many Requests: retry later"}, "rate-limited", False),
-        (400, {"description": 123}, "api-error", False),
-        (500, {"description": "private provider detail"}, "api-error", False),
+        RecordingNotifier(result=False),
+        RecordingNotifier(result=None),
+        RecordingNotifier(error=RuntimeError("private provider detail")),
     ),
 )
-async def test_telegram_error_classification(
-    status_code: int,
-    payload: dict[str, object],
-    expected_reason: str,
-    expected_channel_unavailable: bool,
+async def test_apprise_failure_is_safe_and_structured(
+    notifier: RecordingNotifier,
+    caplog,
 ) -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _: httpx.Response(status_code, json=payload))
-    ) as client:
-        publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-        with pytest.raises(DeliveryError, match=expected_reason) as caught:
-            await publisher.publish(RenderedMessage("Body", 4))
+    publisher = TelegramPublisher(notifier, RecordingNotifier())
 
-    assert caught.value.channel_unavailable is expected_channel_unavailable
+    with (
+        caplog.at_level("DEBUG", logger="weather_briefing.publishers"),
+        pytest.raises(DeliveryError, match="Telegram delivery failed") as caught,
+    ):
+        await publisher.publish(RenderedMessage("Private body", 12))
 
-
-async def test_telegram_malformed_error_response_uses_status_classification() -> None:
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda _: httpx.Response(403, text="private provider response"))
-    ) as client:
-        publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-        with pytest.raises(DeliveryError, match="forbidden"):
-            await publisher.publish(RenderedMessage("Body", 4))
+    assert caught.value.reason == "delivery-failed"
+    assert caught.value.__cause__ is None
+    assert "private provider detail" not in caplog.text
+    assert "Telegram delivery through Apprise rejected" in caplog.text
 
 
-async def test_telegram_request_error_logs_chunk_context_without_private_detail(caplog) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("private network detail", request=request)
+async def test_apprise_rejects_oversized_single_message_before_delivery() -> None:
+    notifier = RecordingNotifier()
+    publisher = TelegramPublisher(notifier, RecordingNotifier())
 
-    with caplog.at_level("INFO", logger="weather_briefing.publishers"):
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-            with pytest.raises(DeliveryError, match="request-error"):  # pragma: no branch
-                await publisher.publish(RenderedMessage("Body", 4))
-
-    assert "Telegram delivery request failed index=1/1 message_visible_characters=4 payload_characters=4" in caplog.text
-    assert "reason=ConnectError" in caplog.text
-    assert "private network detail" not in caplog.text
-
-
-async def test_telegram_rejects_oversized_single_message_before_delivery() -> None:
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
-        publisher = TelegramPublisher(client, "runtime-token", "runtime-chat")
-        with pytest.raises(DeliveryError, match="exceeds") as caught:
-            await publisher.publish(RenderedMessage("<b>short markup</b>", 4097), single_message=True)
+    with pytest.raises(DeliveryError, match="exceeds") as caught:
+        await publisher.publish(RenderedMessage("<b>short markup</b>", 4097), single_message=True)
 
     assert caught.value.reason == "message-too-long"
-    assert caught.value.channel_unavailable is False
+    assert notifier.calls == []
 
 
 async def test_stdout_publisher_outputs_message_body(capsys) -> None:
