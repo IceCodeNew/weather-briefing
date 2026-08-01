@@ -1,11 +1,12 @@
 """Delivery contracts, renderers, and platform adapters."""
 
-from .apprise import TelegramPublisher, telegram_notifier
 from .bark import BarkPublisher
 from .bark_renderer import BarkTextRenderer
 from .base import DeliveryError, DeliveryProvider, RenderedTextDiagnostics
 from .plain_renderer import PlainTextRenderer
 from .stdout import StdoutPublisher
+from .telegram import TelegramPublisher
+from .telegram_renderer import TelegramHTMLRenderer
 
 __all__ = [
     "BarkPublisher",
@@ -15,6 +16,6 @@ __all__ = [
     "PlainTextRenderer",
     "RenderedTextDiagnostics",
     "StdoutPublisher",
+    "TelegramHTMLRenderer",
     "TelegramPublisher",
-    "telegram_notifier",
 ]

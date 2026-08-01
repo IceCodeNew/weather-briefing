@@ -17,7 +17,6 @@ from .persistence import diagnostics as diagnostics_store
 
 _LOGGER = logging.getLogger("weather_briefing")
 SENSITIVE_SDK_LOGGERS = ("any_llm", "openai", "httpx", "httpcore")
-SILENCED_SDK_LOGGERS = ("apprise",)
 
 
 class _UTCISOFormatter(logging.Formatter):
@@ -66,8 +65,6 @@ def configure_logging(*, debug: bool) -> None:
         handler.setLevel(logging.WARNING)
     for logger_name in SENSITIVE_SDK_LOGGERS:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
-    for logger_name in SILENCED_SDK_LOGGERS:
-        logging.getLogger(logger_name).setLevel(logging.CRITICAL + 1)
 
 
 def manage_rendered_text_diagnostics(action: object, duration_seconds: object = None) -> None:
