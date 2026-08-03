@@ -150,7 +150,8 @@ async def test_rss_source_does_not_retry_other_http_errors(monkeypatch) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
-        raise httpx.HTTPError("invalid request")
+        msg = "invalid request"
+        raise httpx.HTTPError(msg)
 
     monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -171,7 +172,8 @@ async def test_rss_source_retries_transport_errors(monkeypatch) -> None:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            raise httpx.ConnectError("connection failed", request=request)
+            msg = "connection failed"
+            raise httpx.ConnectError(msg, request=request)
         return httpx.Response(200, text="<?xml version='1.0'?><rss version='2.0'><channel /></rss>")
 
     monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
@@ -192,7 +194,8 @@ async def test_rss_source_reports_exhausted_transport_attempts(monkeypatch) -> N
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
-        raise httpx.ConnectError("connection failed", request=request)
+        msg = "connection failed"
+        raise httpx.ConnectError(msg, request=request)
 
     monkeypatch.setattr("weather_briefing.sources.asyncio.sleep", sleep)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable
 from email.utils import parsedate_to_datetime
+from typing import TYPE_CHECKING
 
 import feedparser
 import httpx
 import pendulum
 from bs4 import BeautifulSoup, Tag
 
-from ..api_client import api_call_extensions
+from weather_briefing.api_client import api_call_extensions
+
 from .models import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
 from .statuspage import ServiceStatusError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _STATUS_PREFIX = re.compile(r"^status\s*:\s*", re.IGNORECASE)
 
@@ -22,7 +26,7 @@ _STATUS_PREFIX = re.compile(r"^status\s*:\s*", re.IGNORECASE)
 class StatusFeedProvider:
     """Convert an official status-page feed into revision-aware messages."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         client: httpx.AsyncClient,
         *,
@@ -49,13 +53,16 @@ class StatusFeedProvider:
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ServiceStatusError(f"{self._provider_name} status feed request failed") from exc
+            msg = f"{self._provider_name} status feed request failed"
+            raise ServiceStatusError(msg) from exc
         parsed = feedparser.parse(response.content)
         if parsed.bozo and not parsed.entries:
-            raise ServiceStatusError(f"{self._provider_name} status feed is invalid")
+            msg = f"{self._provider_name} status feed is invalid"
+            raise ServiceStatusError(msg)
         messages = tuple(self._parse_entry(entry) for entry in parsed.entries)
         if not messages:
-            raise ServiceStatusError(f"{self._provider_name} status feed has no incident messages")
+            msg = f"{self._provider_name} status feed has no incident messages"
+            raise ServiceStatusError(msg)
         observed_at = max(message.published_at for message in messages)
         return ServiceStatusSnapshot(
             source_id=f"service-status:{self._provider_id}",
@@ -92,24 +99,28 @@ class StatusFeedProvider:
 def _entry_time(entry: feedparser.FeedParserDict, provider_name: str) -> pendulum.DateTime:
     value = entry.get("published") or entry.get("updated")
     if not isinstance(value, str) or not value.strip():
-        raise ServiceStatusError(f"{provider_name} status message has no publication time")
+        msg = f"{provider_name} status message has no publication time"
+        raise ServiceStatusError(msg)
     try:
         parsed = parsedate_to_datetime(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ServiceStatusError(f"{provider_name} status message has an invalid publication time") from exc
+        msg = f"{provider_name} status message has an invalid publication time"
+        raise ServiceStatusError(msg) from exc
     if parsed.tzinfo is None:
-        raise ServiceStatusError(f"{provider_name} status message publication time has no UTC offset")
+        msg = f"{provider_name} status message publication time has no UTC offset"
+        raise ServiceStatusError(msg)
     return pendulum.instance(parsed)
 
 
-def _parse_official_summary(
+def _parse_official_summary(  # noqa: C901, PLR0912
     summary: str,
     provider_name: str,
 ) -> tuple[str, str, tuple[str, ...]]:
     soup = BeautifulSoup(summary, "html.parser")
     status_node = soup.find(["b", "strong"])
     if not isinstance(status_node, Tag):
-        raise ServiceStatusError(f"{provider_name} status message has no status")
+        msg = f"{provider_name} status message has no status"
+        raise ServiceStatusError(msg)
     status_text = status_node.get_text(" ", strip=True)
     inline_status = _STATUS_PREFIX.sub("", status_text).strip()
     status = inline_status.casefold()
@@ -117,7 +128,8 @@ def _parse_official_summary(
     if not status and isinstance(status_container, Tag):
         status = status_container.get_text(" ", strip=True).removeprefix(status_text).strip().casefold()
     if not status:
-        raise ServiceStatusError(f"{provider_name} status message has an empty status")
+        msg = f"{provider_name} status message has an empty status"
+        raise ServiceStatusError(msg)
     affected_components = [
         item.get_text(" ", strip=True).rsplit(" (", maxsplit=1)[0]
         for item in soup.find_all("li")
@@ -155,13 +167,15 @@ def _parse_official_summary(
     else:
         paragraph = status_node.find_parent("p")
         if not isinstance(paragraph, Tag):
-            raise ServiceStatusError(f"{provider_name} status message has no update paragraph")
+            msg = f"{provider_name} status message has no update paragraph"
+            raise ServiceStatusError(msg)
         paragraph_text = paragraph.get_text(" ", strip=True)
         _, separator, body = paragraph_text.partition(" - ")
         if not separator:
             body = paragraph_text.removeprefix(status_text).strip(" -")
     if not body:
-        raise ServiceStatusError(f"{provider_name} status message has an empty body")
+        msg = f"{provider_name} status message has an empty body"
+        raise ServiceStatusError(msg)
     return status, body, tuple(affected_components)
 
 
@@ -172,5 +186,6 @@ def _required_entry_text(
 ) -> str:
     value = entry.get(field)
     if not isinstance(value, str) or not value.strip():
-        raise ServiceStatusError(f"{provider_name} status message field {field} must be non-empty")
+        msg = f"{provider_name} status message field {field} must be non-empty"
+        raise ServiceStatusError(msg)
     return value.strip()

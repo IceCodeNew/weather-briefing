@@ -16,11 +16,13 @@ _ALLERGEN_FORMATS = localization_table("allergen")
 def allergen_guidance(concentration: float) -> tuple[str, str]:
     """Return (category, guidance) for a pollen concentration in grains/m³."""
     if not isfinite(concentration) or concentration < 0:
-        raise ValueError("Pollen concentration must be finite and non-negative")
+        msg = "Pollen concentration must be finite and non-negative"
+        raise ValueError(msg)
     for maximum, category, guidance in _allergen_bands():
         if maximum is None or concentration <= maximum:
             return category, guidance
-    raise ReferenceDataError("Allergen guidance must end with an unbounded band")
+    msg = "Allergen guidance must end with an unbounded band"
+    raise ReferenceDataError(msg)
 
 
 def allergen_to_document(snapshot: AllergenSnapshot) -> SourceDocument:
@@ -72,7 +74,8 @@ def pollen_type_names() -> tuple[tuple[str, str], ...]:
     """Return ((api_key, display_name), ...) for supported pollen types."""
     types = reference_value("allergen_guidance.json", "pollen_types")
     if not isinstance(types, dict) or not types:
-        raise ReferenceDataError("Allergen pollen types must be a non-empty object")
+        msg = "Allergen pollen types must be a non-empty object"
+        raise ReferenceDataError(msg)
     return tuple((str(key), str(value)) for key, value in types.items())
 
 
@@ -80,7 +83,8 @@ def pollen_type_names() -> tuple[tuple[str, str], ...]:
 def _allergen_bands() -> tuple[tuple[float | None, str, str], ...]:
     values = reference_value("allergen_guidance.json", "bands")
     if not isinstance(values, list) or not values:
-        raise ReferenceDataError("Allergen guidance bands must be a non-empty list")
+        msg = "Allergen guidance bands must be a non-empty list"
+        raise ReferenceDataError(msg)
     bands: list[tuple[float | None, str, str]] = []
     try:
         for value in values:
@@ -89,11 +93,14 @@ def _allergen_bands() -> tuple[tuple[float | None, str, str], ...]:
                 maximum = float(maximum)
             bands.append((maximum, str(value["category"]), str(value["guidance"])))
     except (KeyError, TypeError, ValueError) as exc:
-        raise ReferenceDataError("Invalid allergen guidance band") from exc
+        msg = "Invalid allergen guidance band"
+        raise ReferenceDataError(msg) from exc
     bounded_maxima = [maximum for maximum, _, _ in bands[:-1]]
     if bands[-1][0] is not None or any(maximum is None for maximum in bounded_maxima):
-        raise ReferenceDataError("Allergen guidance must end with an unbounded band")
+        msg = "Allergen guidance must end with an unbounded band"
+        raise ReferenceDataError(msg)
     numeric_maxima = [maximum for maximum in bounded_maxima if maximum is not None]
     if numeric_maxima != sorted(set(numeric_maxima)) or any(maximum < 0 for maximum in numeric_maxima):
-        raise ReferenceDataError("Allergen guidance bounds must be unique, increasing, and non-negative")
+        msg = "Allergen guidance bounds must be unique, increasing, and non-negative"
+        raise ReferenceDataError(msg)
     return tuple(bands)

@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-import httpx
-
-from ..air_quality import AirQualityProvider, AQICNProvider
-from ..capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
-from ..config import Settings
-from ..config import environment as config_environment
-from ..models import ResolvedLocation
-from ..registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, WeatherProviderName
-from ..weather import (
+from weather_briefing.air_quality import AirQualityProvider, AQICNProvider
+from weather_briefing.capabilities import CapabilityName, CapabilityProviderSet, ProviderCapabilities
+from weather_briefing.config import Settings
+from weather_briefing.config import environment as config_environment
+from weather_briefing.registries import LOCAL_WEATHER_CAPABILITY_PROVIDERS, WeatherProviderName
+from weather_briefing.weather import (
     JMA_LANGUAGE_SUPPORT,
     NEA_LANGUAGE_SUPPORT,
     OPEN_METEO_LANGUAGE_SUPPORT,
@@ -27,6 +24,13 @@ from ..weather import (
     QWeatherProvider,
     WeatherContextProvider,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import httpx
+
+    from weather_briefing.models import ResolvedLocation
 
 _LOGGER = logging.getLogger("weather_briefing")
 
@@ -61,12 +65,14 @@ _WEATHER_PROVIDER_METADATA: dict[str, ProviderCapabilities] = {
 def weather_provider_metadata(names: Sequence[str]) -> ProviderCapabilities:
     """Describe capabilities common to every active fallback provider."""
     if not names:
-        raise ValueError("At least one weather provider name is required")
+        msg = "At least one weather provider name is required"
+        raise ValueError(msg)
     metadata: list[ProviderCapabilities] = []
     for name in names:
         item = _WEATHER_PROVIDER_METADATA.get(name)
         if item is None:
-            raise ValueError(f"Weather provider {name!r} has no capability metadata")
+            msg = f"Weather provider {name!r} has no capability metadata"
+            raise ValueError(msg)
         metadata.append(item)
     if len(metadata) == 1:
         return metadata[0]
@@ -111,7 +117,8 @@ def weather_context_provider(
     for name in main_names:
         if name == WeatherProviderName.QWEATHER and not qweather_is_configured(settings):
             if settings.weather_providers is not None:
-                raise ValueError("Explicit QWeather provider is missing JWT configuration")
+                msg = "Explicit QWeather provider is missing JWT configuration"
+                raise ValueError(msg)
             continue
         providers.append(
             LoggedWeatherContextProvider(
@@ -127,7 +134,8 @@ def weather_context_provider(
         )
         active_names.append(name)
     if not providers:
-        raise ValueError("No configured weather provider is available")
+        msg = "No configured weather provider is available"
+        raise ValueError(msg)
     supplements = tuple(
         LoggedWeatherContextProvider(
             name,
@@ -200,7 +208,8 @@ def build_weather_provider(
         return _build_nea(settings, client)
     if name == WeatherProviderName.JMA_JAPAN:
         return _build_jma(settings, client, office_code=jma_office_code)
-    raise ValueError(f"Unsupported weather provider: {name}")
+    msg = f"Unsupported weather provider: {name}"
+    raise ValueError(msg)
 
 
 def _build_qweather(
@@ -214,7 +223,8 @@ def _build_qweather(
     private_key = settings.qweather_private_key
     base_url = settings.qweather_base_url
     if not project_id or not credential_id or not private_key or not base_url:
-        raise ValueError("QWeather provider requires project, credential, private key, and API host settings")
+        msg = "QWeather provider requires project, credential, private key, and API host settings"
+        raise ValueError(msg)
     return QWeatherProvider(
         client,
         authenticator=QWeatherJWTAuthenticator(
@@ -233,13 +243,14 @@ def _build_nea(settings: Settings, client: httpx.AsyncClient) -> WeatherContextP
 
 
 def _build_jma(
-    settings: Settings,
+    settings: Settings,  # noqa: ARG001
     client: httpx.AsyncClient,
     *,
     office_code: str | None = None,
 ) -> WeatherContextProvider:
     if office_code is None:
-        raise ValueError("JMA provider requires locations.json jma_office_code")
+        msg = "JMA provider requires locations.json jma_office_code"
+        raise ValueError(msg)
     return JMAJapanForecastProvider(client, office_code=office_code)
 
 

@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
-import pendulum
+from weather_briefing.data.prompts import SYSTEM_PROMPT
+from weather_briefing.llm import LLMError, LLMProvider, LLMRequestError, parse_result
 
-from ..data.prompts import SYSTEM_PROMPT
-from ..llm import LLMError, LLMProvider, LLMRequestError, parse_result
-from ..models import BriefingResult
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pendulum
+
+    from weather_briefing.models import BriefingResult
 
 _LOGGER = logging.getLogger("weather_briefing.service")
 
 
-async def summarize_validated(
+async def summarize_validated(  # noqa: PLR0913
     provider: LLMProvider,
     payload: dict[str, object],
     now: pendulum.DateTime,
@@ -42,14 +46,13 @@ async def summarize_validated(
             )
             validator(result)
             _LOGGER.debug("LLM summarization successful on attempt %d/%d", attempt + 1, max_attempts)
-            return result
         except LLMRequestError:
             raise
         except LLMError as exc:
             last_error = exc
             _LOGGER.debug("LLM validation failure (attempt %d/%d): %s", attempt + 1, max_attempts, exc)
             if attempt + 1 < max_attempts:
-                instructions = f"{SYSTEM_PROMPT}\n上一版 JSON 未通过验证。请只修复契约错误：{exc}"
+                instructions = f"{SYSTEM_PROMPT}\n上一版 JSON 未通过验证。请只修复契约错误：{exc}"  # noqa: RUF001
                 repair_payload: dict[str, object] = {
                     "original_input": payload,
                     "allowed_source_ids": sorted(valid_source_ids),
@@ -58,4 +61,7 @@ async def summarize_validated(
                 if raw_result is not None:
                     repair_payload["previous_invalid_response"] = raw_result
                 current_payload = repair_payload
-    raise LLMError("LLM output validation failed after configured attempts") from last_error
+        else:
+            return result
+    msg = "LLM output validation failed after configured attempts"
+    raise LLMError(msg) from last_error

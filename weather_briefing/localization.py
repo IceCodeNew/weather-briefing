@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from functools import cache
 from types import MappingProxyType
-from typing import TypeGuard
+from typing import TYPE_CHECKING, TypeGuard
 
 from .data.resources import ReferenceDataError, reference_value
 from .languages import normalize_language_tag
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _LOCALIZATION_FIELDS = {
     "air_quality": frozenset(
@@ -91,21 +93,26 @@ def localization_table(name: str) -> Mapping[str, Mapping[str, str]]:
         or not isinstance(aliases, dict)
         or not set(aliases).issubset(_LOCALIZATION_FIELDS)
     ):
-        raise ReferenceDataError("Localization data must contain every supported table")
+        msg = "Localization data must contain every supported table"
+        raise ReferenceDataError(msg)
     table = tables.get(name)
     if name not in _LOCALIZATION_FIELDS or not isinstance(table, dict):
-        raise ReferenceDataError(f"Unknown localization table: {name}")
+        msg = f"Unknown localization table: {name}"
+        raise ReferenceDataError(msg)
     if set(table) != _LOCALIZATION_LANGUAGES:
-        raise ReferenceDataError(f"Localization table must contain every supported language: {name}")
+        msg = f"Localization table must contain every supported language: {name}"
+        raise ReferenceDataError(msg)
     expected_fields = _LOCALIZATION_FIELDS[name]
     validated: dict[str, Mapping[str, str]] = {}
     for language, labels in table.items():
         if not _is_localization_labels(labels, expected_fields):
-            raise ReferenceDataError(f"Invalid localization fields: {name}:{language}")
+            msg = f"Invalid localization fields: {name}:{language}"
+            raise ReferenceDataError(msg)
         validated[language] = MappingProxyType(dict(labels))
     table_aliases = aliases.get(name, {})
     if not isinstance(table_aliases, dict):
-        raise ReferenceDataError(f"Localization aliases must be an object: {name}")
+        msg = f"Localization aliases must be an object: {name}"
+        raise ReferenceDataError(msg)
     for alias, target in table_aliases.items():
         if (
             not _is_normalized_language(alias)
@@ -113,6 +120,7 @@ def localization_table(name: str) -> Mapping[str, Mapping[str, str]]:
             or target not in validated
             or alias in validated
         ):
-            raise ReferenceDataError(f"Invalid localization alias: {name}:{alias}")
+            msg = f"Invalid localization alias: {name}:{alias}"
+            raise ReferenceDataError(msg)
         validated[alias] = validated[target]
     return MappingProxyType(validated)

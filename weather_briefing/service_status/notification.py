@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from ..notification_decision import NotificationAssessment
-from ..notification_decision.policies import SERVICE_STATUS_NOTIFICATION_KIND
-from ..persistence.service_status import ServiceStatusMessageState
-from .models import ServiceStatusMessage, ServiceStatusSnapshot
+from typing import TYPE_CHECKING
+
+from weather_briefing.notification_decision import NotificationAssessment
+from weather_briefing.notification_decision.policies import SERVICE_STATUS_NOTIFICATION_KIND
+
+if TYPE_CHECKING:
+    from weather_briefing.persistence.service_status import ServiceStatusMessageState
+
+    from .models import ServiceStatusMessage, ServiceStatusSnapshot
 
 
 def service_status_notification_assessment(

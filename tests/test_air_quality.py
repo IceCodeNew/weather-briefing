@@ -6,6 +6,8 @@ from weather_briefing.air_quality import AirQualityError, AQICNProvider, air_qua
 from weather_briefing.data.resources import ReferenceDataError
 from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind
 
+_FAKE_TOKEN = "runtime-token"  # noqa: S105
+
 
 async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -29,7 +31,7 @@ async def test_aqicn_provider_labels_aqi_standard_without_converting_pm25() -> N
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         snapshot = await AQICNProvider(
             client,
-            token="runtime-token",
+            token=_FAKE_TOKEN,
             base_url="https://api.example.invalid",
         ).fetch(39.911389, 116.380556, "Asia/Shanghai")
 
@@ -70,7 +72,7 @@ async def test_aqicn_keeps_valid_aqi_when_official_time_has_no_offset() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         snapshot = await AQICNProvider(
             client,
-            token="runtime-token",
+            token=_FAKE_TOKEN,
             base_url="https://api.example.invalid",
         ).fetch(39.911389, 116.380556, "Asia/Shanghai")
 
@@ -100,7 +102,7 @@ async def test_aqicn_response_timezone_overrides_queried_location_timezone() -> 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         snapshot = await AQICNProvider(
             client,
-            token="runtime-token",
+            token=_FAKE_TOKEN,
             base_url="https://api.example.invalid",
         ).fetch(35.0, 139.0, "Asia/Tokyo")
 
@@ -115,7 +117,7 @@ async def test_aqicn_rejects_non_ok_status() -> None:
         with pytest.raises(AirQualityError, match="non-success status"):
             await AQICNProvider(
                 client,
-                token="token",
+                token=_FAKE_TOKEN,
                 base_url="https://api.example.invalid",
             ).fetch(0, 0, "UTC")
 
@@ -125,7 +127,7 @@ async def test_aqicn_rejects_http_error() -> None:
         with pytest.raises(AirQualityError, match="AQICN request"):
             await AQICNProvider(
                 client,
-                token="token",
+                token=_FAKE_TOKEN,
                 base_url="https://api.example.invalid",
             ).fetch(0, 0, "UTC")
 
@@ -137,7 +139,7 @@ async def test_aqicn_rejects_missing_data_key() -> None:
         with pytest.raises(AirQualityError, match="AQICN request"):
             await AQICNProvider(
                 client,
-                token="token",
+                token=_FAKE_TOKEN,
                 base_url="https://api.example.invalid",
             ).fetch(0, 0, "UTC")
 
@@ -164,7 +166,7 @@ async def test_aqicn_observed_at_returns_none_for_non_dict_time() -> None:
     ) as client:
         snapshot = await AQICNProvider(
             client,
-            token="token",
+            token=_FAKE_TOKEN,
             base_url="https://api.example.invalid",
         ).fetch(0, 0, "UTC")
 
@@ -193,7 +195,7 @@ async def test_aqicn_observed_at_returns_none_for_empty_time_string() -> None:
     ) as client:
         snapshot = await AQICNProvider(
             client,
-            token="token",
+            token=_FAKE_TOKEN,
             base_url="https://api.example.invalid",
         ).fetch(0, 0, "UTC")
 

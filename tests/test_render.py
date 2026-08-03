@@ -9,7 +9,7 @@ from weather_briefing.models import (
     BriefingResult,
     Conclusion,
     SourceDocument,
-    Warning,
+    WeatherWarning,
 )
 
 
@@ -146,7 +146,7 @@ def test_bark_text_renderer_compacts_warning_disaster_and_advice_sections() -> N
         "Rain today",
         ("source",),
         (),
-        active_warnings=(Warning("warning", "Heavy rain", "active", "Avoid low areas", ("source",), now),),
+        active_warnings=(WeatherWarning("warning", "Heavy rain", "active", "Avoid low areas", ("source",), now),),
         disaster_tracking=(Conclusion("Storm approaching", ("source",)),),
         advice=(Advice(AdviceTopic.EXERCISE, "Exercise indoors", ("source",)),),
         output_language="en",
@@ -166,7 +166,7 @@ def test_bark_text_renderer_compacts_warning_disaster_and_advice_sections() -> N
     )
 
 
-@pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer()))
+@pytest.mark.parametrize("renderer", [TelegramHTMLRenderer(), PlainTextRenderer()])
 def test_renderers_fail_when_a_source_reference_is_missing(
     renderer: TelegramHTMLRenderer | PlainTextRenderer,
 ) -> None:
@@ -237,7 +237,7 @@ def test_plain_text_renderer_uses_context_source_name_as_attribution() -> None:
 def test_telegram_html_renders_active_warnings_section() -> None:
     now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
     article = Article("source", "feed", "Feed", "Title", "https://example.invalid/a", now, "Body")
-    warning = Warning("w1", "暴雨", "active", "暴雨预警", ("source",), now)
+    warning = WeatherWarning("w1", "暴雨", "active", "暴雨预警", ("source",), now)
     result = BriefingResult(
         "Daily",
         ("source",),
@@ -256,7 +256,7 @@ def test_telegram_html_renders_active_warnings_section() -> None:
 def test_plain_text_renders_active_warnings_section() -> None:
     now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
     article = Article("source", "feed", "Feed", "Title", "https://example.invalid/a", now, "Body")
-    warning = Warning("w1", "暴雨", "active", "暴雨预警", ("source",), now)
+    warning = WeatherWarning("w1", "暴雨", "active", "暴雨预警", ("source",), now)
     result = BriefingResult(
         "Daily",
         ("source",),
@@ -273,13 +273,13 @@ def test_plain_text_renders_active_warnings_section() -> None:
     assert "Feed: https://example.invalid/a" in rendered.body
 
 
-@pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer()))
+@pytest.mark.parametrize("renderer", [TelegramHTMLRenderer(), PlainTextRenderer()])
 def test_briefing_sections_follow_the_compact_order(
     renderer: TelegramHTMLRenderer | PlainTextRenderer,
 ) -> None:
     now = pendulum.datetime(2026, 7, 11, 8, tz="Asia/Shanghai")
     context = SourceDocument("source", "Source", "https://example.invalid/weather", "")
-    warning = Warning("w1", "暴雨", "生效", "注意防范", ("source",), now)
+    warning = WeatherWarning("w1", "暴雨", "生效", "注意防范", ("source",), now)
     result = BriefingResult(
         "今日闷热，午后有雨",
         ("source",),
@@ -297,10 +297,10 @@ def test_briefing_sections_follow_the_compact_order(
     assert body.index("自然灾害动态") < body.index("生活建议")
 
 
-@pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer()))
+@pytest.mark.parametrize("renderer", [TelegramHTMLRenderer(), PlainTextRenderer()])
 @pytest.mark.parametrize(
     ("language", "expected_labels"),
-    (
+    [
         (
             "en-US",
             ("Weather information", "Weather warnings", "Natural disaster updates", "Advice", "Sources:"),
@@ -309,7 +309,7 @@ def test_briefing_sections_follow_the_compact_order(
         ("zh-TW", ("天氣資訊", "氣象警報", "自然災害動態", "生活建議", "來源：")),
         ("zh-Hant-HK", ("天氣資訊", "氣象警報", "自然災害動態", "生活建議", "來源：")),
         ("fr", ("Weather information", "Weather warnings", "Natural disaster updates", "Advice", "Sources:")),
-    ),
+    ],
 )
 def test_briefing_scaffold_follows_output_language(
     renderer: TelegramHTMLRenderer | PlainTextRenderer,
@@ -322,7 +322,7 @@ def test_briefing_scaffold_follows_output_language(
         "Headline",
         ("source",),
         (Conclusion("Forecast", ("source",)),),
-        active_warnings=(Warning("w1", "Warning", "active", "Details", ("source",), now),),
+        active_warnings=(WeatherWarning("w1", "Warning", "active", "Details", ("source",), now),),
         advice=(Advice(AdviceTopic.EXERCISE, "Exercise advice", ("source",)),),
         disaster_tracking=(Conclusion("Storm update", ("source",)),),
         output_language=language,
@@ -333,7 +333,7 @@ def test_briefing_scaffold_follows_output_language(
     assert all(label in body for label in expected_labels)
 
 
-@pytest.mark.parametrize("renderer", (TelegramHTMLRenderer(), PlainTextRenderer()))
+@pytest.mark.parametrize("renderer", [TelegramHTMLRenderer(), PlainTextRenderer()])
 def test_attribution_deduplicates_only_identical_named_links(
     renderer: TelegramHTMLRenderer | PlainTextRenderer,
 ) -> None:

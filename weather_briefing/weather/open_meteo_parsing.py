@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from contextlib import suppress
 
-from .. import air_quality as air_quality_module
-from .. import allergen as allergen_module
-from ..data.resources import ReferenceDataError
-from ..models import AirQualitySnapshot, AirQualityTimeKind, AllergenLevel, AllergenSnapshot
-from ..time_utils import parse_datetime_with_default_timezone
+from weather_briefing import air_quality as air_quality_module
+from weather_briefing import allergen as allergen_module
+from weather_briefing.data.resources import ReferenceDataError
+from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind, AllergenLevel, AllergenSnapshot
+from weather_briefing.time_utils import parse_datetime_with_default_timezone
+
 from . import open_meteo_reference
 from .base import _float_value, _is_object_list
 
@@ -23,17 +24,20 @@ class OpenMeteoResponseError(ValueError):
 def daily_values(daily: dict[str, object], field: str) -> list[object]:
     """Return one required daily series."""
     if field not in daily:
-        raise OpenMeteoResponseError(f"daily forecast missing required field: {field}")
+        msg = f"daily forecast missing required field: {field}"
+        raise OpenMeteoResponseError(msg)
     values = daily[field]
     if not _is_object_list(values):
-        raise OpenMeteoResponseError(f"daily forecast field must be an array: {field}")
+        msg = f"daily forecast field must be an array: {field}"
+        raise OpenMeteoResponseError(msg)
     return values
 
 
 def _daily_value(daily: dict[str, object], field: str, index: int) -> object:
     values = daily_values(daily, field)
     if index >= len(values):
-        raise OpenMeteoResponseError(f"daily forecast field has no value at index {index}: {field}")
+        msg = f"daily forecast field has no value at index {index}: {field}"
+        raise OpenMeteoResponseError(msg)
     return values[index]
 
 

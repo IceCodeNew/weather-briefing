@@ -7,11 +7,12 @@ from typing import Any
 import httpx
 import pendulum
 
-from ..api_client import api_call_extensions
-from ..data.service_endpoints import JMA_FORECAST_BASE_URL
-from ..languages import LanguageSupport
-from ..models import WeatherContextSnapshot, normalize_jma_office_code
-from ..time_utils import parse_datetime_with_default_timezone
+from weather_briefing.api_client import api_call_extensions
+from weather_briefing.data.service_endpoints import JMA_FORECAST_BASE_URL
+from weather_briefing.languages import LanguageSupport
+from weather_briefing.models import WeatherContextSnapshot, normalize_jma_office_code
+from weather_briefing.time_utils import parse_datetime_with_default_timezone
+
 from .regional_errors import RegionalWeatherProviderError, safe_regional_error
 
 JMA_LANGUAGE_SUPPORT = LanguageSupport.fixed("ja")
@@ -33,28 +34,27 @@ class JMAJapanForecastProvider:
         """Configure JMA forecast data for one forecast office."""
         normalized_office_code = normalize_jma_office_code(office_code)
         if normalized_office_code is None:
-            raise ValueError("JMA office code must contain six digits")
+            msg = "JMA office code must contain six digits"
+            raise ValueError(msg)
         self._client = client
         self._base_url = base_url.rstrip("/")
         self._office_code = normalized_office_code
 
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:  # noqa: ARG002
         """Fetch and normalize JMA's daily and time-series forecast."""
-        return await self._fetch(latitude, longitude, forecast_date=None)
+        return await self._fetch(forecast_date=None)
 
     async def fetch_for_date(
         self,
-        latitude: float,
-        longitude: float,
+        latitude: float,  # noqa: ARG002
+        longitude: float,  # noqa: ARG002
         forecast_date: pendulum.Date,
     ) -> WeatherContextSnapshot:
         """Fetch JMA forecast entries for one target date."""
-        return await self._fetch(latitude, longitude, forecast_date=forecast_date)
+        return await self._fetch(forecast_date=forecast_date)
 
     async def _fetch(
         self,
-        latitude: float,
-        longitude: float,
         *,
         forecast_date: pendulum.Date | None,
     ) -> WeatherContextSnapshot:
@@ -66,20 +66,24 @@ class JMAJapanForecastProvider:
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
-                raise RegionalWeatherProviderError("JMA forecast must be a non-empty array")
+                msg = "JMA forecast must be a non-empty array"
+                raise RegionalWeatherProviderError(msg)  # noqa: TRY301
             report = payload[0]
             time_series = report.get("timeSeries")
             if not isinstance(time_series, list) or not time_series:
-                raise RegionalWeatherProviderError("JMA forecast contains no time series")
+                msg = "JMA forecast contains no time series"
+                raise RegionalWeatherProviderError(msg)  # noqa: TRY301
             forecast_lines = _jma_forecast_lines(time_series, forecast_date=forecast_date)
             if not forecast_lines:
                 target = f" for {forecast_date}" if forecast_date is not None else ""
-                raise RegionalWeatherProviderError(f"JMA forecast contains no usable entries{target}")
+                msg = f"JMA forecast contains no usable entries{target}"
+                raise RegionalWeatherProviderError(msg)  # noqa: TRY301
             observed_at = _parse_japan_time(report.get("reportDatetime"))
         except RegionalWeatherProviderError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise RegionalWeatherProviderError(f"JMA forecast failed: {safe_regional_error(exc)}") from None
+            msg = f"JMA forecast failed: {safe_regional_error(exc)}"
+            raise RegionalWeatherProviderError(msg) from None
         return WeatherContextSnapshot(
             source_id="weather:jma-jp",
             source_name="Japan Meteorological Agency",

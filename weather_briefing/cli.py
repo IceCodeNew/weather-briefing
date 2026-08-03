@@ -7,7 +7,7 @@ import logging
 import re
 from contextlib import AsyncExitStack
 from datetime import date
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pendulum
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -30,7 +30,6 @@ from .geocoding import (
     PrecisionReducingGeocodingProvider,
 )
 from .llm import LazyServiceStatusLLM
-from .models import ResolvedLocation
 from .notification_decision.policies import SERVICE_STATUS_NOTIFICATION_KIND, WEATHER_NOTIFICATION_KIND
 from .persistence import locking as persistence_locking
 from .runtime_diagnostics import configure_logging as _configure_logging
@@ -45,6 +44,11 @@ from .service_status import service_status_providers as _service_status_provider
 from .sources import RSSSource
 from .state import SQLiteStateStore
 from .time_utils import parse_aware_datetime
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .models import ResolvedLocation
 
 _LOGGER = logging.getLogger("weather_briefing")
 
@@ -65,9 +69,9 @@ def _save_resolved_location_fields(settings: Settings, locations: tuple[Resolved
 
 async def run(
     kind: str,
+    *,
     enforce_window: bool,
     at: str | None = None,
-    *,
     forecast_date: str | None = None,
     run_now: bool = False,
 ) -> None:
@@ -75,8 +79,8 @@ async def run(
     async with persistence_locking.serialized_state_run(state_path_from_env()):
         await _run_unlocked(
             kind,
-            enforce_window,
-            at,
+            enforce_window=enforce_window,
+            at=at,
             forecast_date=forecast_date,
             run_now=run_now,
         )
@@ -84,20 +88,22 @@ async def run(
 
 async def _run_unlocked(
     kind: str,
+    *,
     enforce_window: bool,
     at: str | None,
-    *,
     forecast_date: str | None,
     run_now: bool,
 ) -> None:
     settings = await asyncio.to_thread(Settings.from_env)
     _configure_logging(debug=settings.debug)
     if forecast_date is not None and kind != "forecast":
-        raise ValueError("--date is only supported for run forecast")
+        msg = "--date is only supported for run forecast"
+        raise ValueError(msg)
     now = _parse_run_time(at, settings.timezone)
     target_forecast_date = _parse_forecast_date(forecast_date) if forecast_date is not None else None
     if target_forecast_date is not None and target_forecast_date < now.in_timezone(settings.timezone).date():
-        raise ValueError("--date cannot be earlier than the current local date; use --at for historical tests")
+        msg = "--date cannot be earlier than the current local date; use --at for historical tests"
+        raise ValueError(msg)
     if enforce_window and not _in_schedule(kind, now, settings):
         _LOGGER.info("Skipping delayed %s run outside configured local-time window", kind)
         return
@@ -245,12 +251,14 @@ def _parse_run_time(value: str | None, timezone: pendulum.Timezone) -> pendulum.
 
 def _parse_forecast_date(value: str) -> pendulum.Date:
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
-        raise ValueError("Forecast date must use YYYY-MM-DD")
+        msg = "Forecast date must use YYYY-MM-DD"
+        raise ValueError(msg)
     try:
         target = date.fromisoformat(value)
         return pendulum.date(target.year, target.month, target.day)
     except ValueError:
-        raise ValueError("Forecast date must be a valid date") from None
+        msg = "Forecast date must be a valid date"
+        raise ValueError(msg) from None
 
 
 async def daemon() -> None:
@@ -319,8 +327,8 @@ def main() -> None:
             asyncio.run(
                 run(
                     args.kind,
-                    args.enforce_window,
-                    args.at,
+                    enforce_window=args.enforce_window,
+                    at=args.at,
                     forecast_date=args.date,
                     run_now=args.run_now,
                 )

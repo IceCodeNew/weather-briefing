@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-
-import pendulum
+from typing import TYPE_CHECKING
 
 from .languages import normalize_language_tag
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    import pendulum
 
 
 def normalize_jma_office_code(value: object) -> str | None:
@@ -16,10 +19,12 @@ def normalize_jma_office_code(value: object) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError("JMA office code must contain six digits (ASCII)")
+        msg = "JMA office code must contain six digits (ASCII)"
+        raise ValueError(msg)  # noqa: TRY004
     normalized = value.strip()
-    if len(normalized) != 6 or not normalized.isascii() or not normalized.isdigit():
-        raise ValueError("JMA office code must contain six digits (ASCII)")
+    if len(normalized) != 6 or not normalized.isascii() or not normalized.isdigit():  # noqa: PLR2004
+        msg = "JMA office code must contain six digits (ASCII)"
+        raise ValueError(msg)
     return normalized
 
 
@@ -202,7 +207,7 @@ class WeatherContextSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class Warning:
+class WeatherWarning:
     """Represent an active warning and the evidence that confirms it."""
 
     id: str
@@ -247,7 +252,7 @@ class BriefingResult:
     headline: str
     headline_source_ids: tuple[str, ...]
     conclusions: tuple[Conclusion, ...]
-    active_warnings: tuple[Warning, ...] = ()
+    active_warnings: tuple[WeatherWarning, ...] = ()
     resolved_warning_ids: tuple[str, ...] = ()
     advice: tuple[Advice, ...] = ()
     disaster_tracking: tuple[Conclusion, ...] = ()

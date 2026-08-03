@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, replace
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..models import LocationResolution, LocationSpec, ResolvedLocation
+from weather_briefing.models import LocationResolution, LocationSpec, ResolvedLocation
+
 from .base import GeocodingError, GeocodingProvider, ReverseGeocodingProvider, required_location_name
 from .matching import possibly_mainland_china
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class CachedLocationResolver:
@@ -67,12 +70,14 @@ class CachedLocationResolver:
                     from_cache=True,
                 )
             except (TypeError, ValueError) as exc:
+                msg = f"Invalid cached geocoding record for location: {location.id} ({type(exc).__name__})"
                 raise GeocodingError(
-                    f"Invalid cached geocoding record for location: {location.id} ({type(exc).__name__})",
+                    msg,
                     cause_type=type(exc),
                 ) from None
         if cached is not None:
-            raise GeocodingError(f"Invalid cached geocoding record for location: {location.id}")
+            msg = f"Invalid cached geocoding record for location: {location.id}"
+            raise GeocodingError(msg)
         resolved = replace(
             await self._provider.geocode(location),
             summary_language=location.summary_language,
@@ -89,7 +94,8 @@ class CachedLocationResolver:
         longitude: float,
     ) -> LocationResolution:
         if self._reverse_provider is None:
-            raise GeocodingError(f"No reverse geocoder configured for location: {location.id}")
+            msg = f"No reverse geocoder configured for location: {location.id}"
+            raise GeocodingError(msg)
         cache = self._read_cache()
         cache_key = f"{location.id}:coords:{latitude:.7f},{longitude:.7f}"
         cached = cache.get(cache_key)
@@ -104,12 +110,14 @@ class CachedLocationResolver:
                     from_cache=True,
                 )
             except (TypeError, ValueError) as exc:
+                msg = f"Invalid cached reverse geocoding record for location: {location.id} ({type(exc).__name__})"
                 raise GeocodingError(
-                    f"Invalid cached reverse geocoding record for location: {location.id} ({type(exc).__name__})",
+                    msg,
                     cause_type=type(exc),
                 ) from None
         if cached is not None:
-            raise GeocodingError(f"Invalid cached reverse geocoding record for location: {location.id}")
+            msg = f"Invalid cached reverse geocoding record for location: {location.id}"
+            raise GeocodingError(msg)
         resolved = replace(
             await self._reverse_provider.reverse_geocode(location),
             summary_language=location.summary_language,
@@ -125,9 +133,11 @@ class CachedLocationResolver:
         try:
             value = json.loads(self._cache_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise GeocodingError("Geocoding cache must contain readable JSON") from exc
+            msg = "Geocoding cache must contain readable JSON"
+            raise GeocodingError(msg) from exc
         if not isinstance(value, dict):
-            raise GeocodingError("Geocoding cache root must be an object")
+            msg = "Geocoding cache root must be an object"
+            raise GeocodingError(msg)
         return value
 
     def _write_cache(self, cache: dict[str, Any]) -> None:

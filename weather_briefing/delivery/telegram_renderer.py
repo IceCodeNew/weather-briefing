@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from html import escape, unescape
+from typing import TYPE_CHECKING
 
 from bs4 import BeautifulSoup
 
-from ..models import Advice, Article, BriefingResult, Conclusion, RenderedMessage, SourceDocument
+from weather_briefing.models import Advice, Article, BriefingResult, Conclusion, RenderedMessage, SourceDocument
+
 from .rendering import article_source_name, briefing_labels
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class TelegramHTMLRenderer:

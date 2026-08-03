@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import pendulum
+from typing import TYPE_CHECKING
 
-from ..languages import LanguageSupport, localized_labels
-from ..localization import localization_table
-from ..models import AirQualitySnapshot, AirQualityTimeKind
+from weather_briefing.languages import LanguageSupport, localized_labels
+from weather_briefing.localization import localization_table
+from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind
+
 from .base import _float_value, _is_string_keyed_dict
+
+if TYPE_CHECKING:
+    import pendulum
 
 QWEATHER_LANGUAGE_SUPPORT = LanguageSupport(
     default="zh-CN",
@@ -23,7 +27,7 @@ class QWeatherResponseError(ValueError):
 
 def safe_api_status(value: object) -> str:
     """Return only a safe three-digit application status."""
-    if isinstance(value, str) and len(value) == 3 and value.isascii() and value.isdigit():
+    if isinstance(value, str) and len(value) == 3 and value.isascii() and value.isdigit():  # noqa: PLR2004
         return value
     return "invalid"
 
@@ -31,7 +35,8 @@ def safe_api_status(value: object) -> str:
 def _first_mapping(payload: dict[str, object], key: str) -> dict[str, object]:
     values = payload[key]
     if not isinstance(values, list) or not values or not _is_string_keyed_dict(values[0]):
-        raise ValueError(f"{key} must contain at least one object")
+        msg = f"{key} must contain at least one object"
+        raise ValueError(msg)
     return values[0]
 
 
@@ -73,18 +78,21 @@ def air_quality_snapshot(
 def _mapping_or_empty(payload: dict[str, object], key: str) -> dict[str, object]:
     value = payload.get(key, {})
     if not _is_string_keyed_dict(value):
-        raise ValueError(f"{key} must be an object")
+        msg = f"{key} must be an object"
+        raise ValueError(msg)
     return value
 
 
 def _mapping_by_code(payload: dict[str, object], key: str, code: str) -> dict[str, object]:
     values = payload[key]
     if not isinstance(values, list):
-        raise ValueError(f"{key} must be a list")
+        msg = f"{key} must be a list"
+        raise ValueError(msg)  # noqa: TRY004
     for value in values:
         if _is_string_keyed_dict(value) and value.get("code") == code:
             return value
-    raise ValueError(f"{key} does not contain {code}")
+    msg = f"{key} does not contain {code}"
+    raise ValueError(msg)
 
 
 def _sub_index(pollutant: dict[str, object], standard: str) -> float | None:
@@ -120,7 +128,8 @@ def format_lifestyle(item: dict[str, object], language: str) -> str:
 def format_day(item: object, language: str) -> str:
     """Validate and format one localized daily forecast."""
     if not _is_string_keyed_dict(item):
-        raise TypeError("daily forecast entries must be objects")
+        msg = "daily forecast entries must be objects"
+        raise TypeError(msg)
     required_fields = (
         "fxDate",
         "textDay",
@@ -133,7 +142,8 @@ def format_day(item: object, language: str) -> str:
         "precip",
     )
     if missing_field := next((field for field in required_fields if field not in item), None):
-        raise QWeatherResponseError(f"daily forecast missing required field: {missing_field}")
+        msg = f"daily forecast missing required field: {missing_field}"
+        raise QWeatherResponseError(msg)
     return localized_labels(language, _QWEATHER_FORMATS)["day"].format(
         date=item["fxDate"],
         day=item["textDay"],

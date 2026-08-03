@@ -6,10 +6,12 @@ import logging
 import math
 import re
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from ..models import Article, BriefingResult, RenderedMessage, SourceDocument
-from .rendering import MessageRenderer
+if TYPE_CHECKING:
+    from weather_briefing.models import Article, BriefingResult, RenderedMessage, SourceDocument
+
+    from .rendering import MessageRenderer
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 _SAFE_DELIVERY_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -52,11 +54,14 @@ class DeliveryProvider:
         if self.single_message_limit is not None and (
             type(self.single_message_limit) is not int or self.single_message_limit <= 0
         ):
-            raise ValueError("single_message_limit must be positive")
+            msg = "single_message_limit must be positive"
+            raise ValueError(msg)
         if type(self.briefing_max_messages) is not int or self.briefing_max_messages <= 0:
-            raise ValueError("briefing_max_messages must be positive")
+            msg = "briefing_max_messages must be positive"
+            raise ValueError(msg)
         if self.briefing_max_messages > 1 and self.single_message_limit is None:
-            raise ValueError("split briefings require a single_message_limit")
+            msg = "split briefings require a single_message_limit"
+            raise ValueError(msg)
 
     def briefing_limit(self, configured_limit: int) -> int:
         """Clamp a configured briefing limit to the platform limit."""
@@ -106,7 +111,8 @@ class DeliveryProvider:
     async def publish_briefing(self, message: RenderedMessage, *, silent: bool = False) -> None:
         """Publish a briefing according to its platform chunk policy."""
         if not self.briefing_fits(message):
-            raise DeliveryError("Briefing exceeds the delivery limit", reason="message-too-long")
+            msg = "Briefing exceeds the delivery limit"
+            raise DeliveryError(msg, reason="message-too-long")
         await self.publish_rendered(
             message,
             single_message=self.briefing_max_messages == 1,
@@ -137,9 +143,11 @@ class DeliveryError(RuntimeError):
     def __init__(self, message: str, *, reason: str, channel_unavailable: bool = False) -> None:
         """Describe a delivery failure using a safe structured reason."""
         if not isinstance(reason, str) or _SAFE_DELIVERY_REASON.fullmatch(reason) is None:
-            raise ValueError("Delivery error reason must be a lowercase kebab-case label")
+            msg = "Delivery error reason must be a lowercase kebab-case label"
+            raise ValueError(msg)
         if not isinstance(channel_unavailable, bool):
-            raise TypeError("channel_unavailable must be a bool")
+            msg = "channel_unavailable must be a bool"
+            raise TypeError(msg)
         super().__init__(message)
         self.reason = reason
         self.channel_unavailable = channel_unavailable
@@ -148,7 +156,8 @@ class DeliveryError(RuntimeError):
 def split_plain_message(body: str, limit: int) -> tuple[str, ...]:
     """Split text into the fewest chunks, consuming newlines used as boundaries."""
     if limit <= 0:
-        raise ValueError("Message split limit must be positive")
+        msg = "Message split limit must be positive"
+        raise ValueError(msg)
     if not body or len(body) <= limit:
         return (body,)
     chunks: list[str] = []
@@ -180,7 +189,7 @@ def rendered_text_logging_enabled(diagnostics: RenderedTextDiagnostics | None) -
         return False
     try:
         enabled = diagnostics.rendered_text_logging_enabled()
-    except Exception:
+    except Exception:  # noqa: BLE001
         _LOGGER.warning("Rendered text diagnostic state check failed", exc_info=True)
         return False
     return enabled and _LOGGER.isEnabledFor(logging.DEBUG)

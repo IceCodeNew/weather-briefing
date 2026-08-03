@@ -252,7 +252,7 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
 
 @pytest.mark.parametrize(
     ("provider_name", "error_factory", "operation", "args", "message"),
-    (
+    [
         (
             "openai",
             _openai_bad_request,
@@ -295,9 +295,9 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
             ("Incident", "Elevated errors", "en"),
             "LLM translation request failed",
         ),
-    ),
+    ],
 )
-async def test_factory_normalizes_provider_native_request_errors(
+async def test_factory_normalizes_provider_native_request_errors(  # noqa: PLR0913
     monkeypatch,
     provider_name: str,
     error_factory: Callable[[httpx.Response], Exception],
@@ -449,7 +449,7 @@ def test_factory_classifies_every_loadable_provider(monkeypatch, provider: str) 
     assert created == [(provider, {"api_key": None, "api_base": None})]
 
 
-@pytest.mark.parametrize("provider", ("openai", "deepseek"))
+@pytest.mark.parametrize("provider", ["openai", "deepseek"])
 def test_factory_passes_configured_headers_through_client_args(monkeypatch, provider: str) -> None:
     created: list[tuple[str, dict[str, object]]] = []
 
@@ -546,7 +546,8 @@ async def test_owned_llm_client_cleanup_failure_continues_with_nested_resources(
             self.client = NestedClient()
 
         async def aclose(self) -> None:
-            raise RuntimeError("cleanup failed")
+            msg = "cleanup failed"
+            raise RuntimeError(msg)
 
     provider = AnyLLMStructuredProvider(
         FailingClient(),
@@ -627,7 +628,7 @@ async def test_borrowed_llm_client_is_not_closed() -> None:
     client.aclose.assert_not_awaited()
 
 
-@pytest.mark.parametrize("provider_name", ("deepseek", "openai", "openrouter"))
+@pytest.mark.parametrize("provider_name", ["deepseek", "openai", "openrouter"])
 async def test_openai_compatible_providers_send_configured_headers(
     monkeypatch,
     caplog,

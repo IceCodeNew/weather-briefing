@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-from ..models import Advice, Article, BriefingResult, Conclusion, RenderedMessage, SourceDocument
 from .plain_renderer import PlainTextRenderer
 from .rendering import article_source_name, briefing_labels, ordered_source_ids, plain_attribution, plain_message
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from weather_briefing.models import Advice, Article, BriefingResult, Conclusion, RenderedMessage, SourceDocument
 
 
 class BarkTextRenderer(PlainTextRenderer):

@@ -39,7 +39,7 @@ except StateDirectoryInUseError:
 """
 
     with daemon_state_owner(state_path):
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             (sys.executable, "-c", probe, str(state_path)),
             check=False,
             capture_output=True,
@@ -134,7 +134,8 @@ async def test_serialized_state_run_closes_file_when_locking_fails(monkeypatch, 
     lock_file = (tmp_path / "run.lock").open("a+", encoding="utf-8")
 
     def fail_lock(_file: object, _operation: int) -> None:
-        raise OSError("locking unavailable")
+        msg = "locking unavailable"
+        raise OSError(msg)
 
     monkeypatch.setattr(locking_module, "_open_lock_file", lambda _path, _purpose: lock_file)
     monkeypatch.setattr(locking_module.fcntl, "flock", fail_lock)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from functools import cache
 
-from ..data.resources import ReferenceDataError, reference_string_tuple, reference_value
+from weather_briefing.data.resources import ReferenceDataError, reference_string_tuple, reference_value
 
 
 @cache
@@ -23,13 +23,17 @@ def mainland_china_rules() -> tuple[float, float, float, float, frozenset[str]]:
             frozenset(area.casefold() for area in excluded_areas),
         )
         latitude_min, latitude_max, longitude_min, longitude_max, _ = rules
-        if not -90 <= latitude_min < latitude_max <= 90:
-            raise ReferenceDataError("Invalid mainland China latitude bounds")
-        if not -180 <= longitude_min < longitude_max <= 180:
-            raise ReferenceDataError("Invalid mainland China longitude bounds")
-        return rules
+        if not -90 <= latitude_min < latitude_max <= 90:  # noqa: PLR2004
+            msg = "Invalid mainland China latitude bounds"
+            raise ReferenceDataError(msg)
+        if not -180 <= longitude_min < longitude_max <= 180:  # noqa: PLR2004
+            msg = "Invalid mainland China longitude bounds"
+            raise ReferenceDataError(msg)
     except (KeyError, TypeError, ValueError) as exc:
-        raise ReferenceDataError("Invalid mainland China geography reference data") from exc
+        msg = "Invalid mainland China geography reference data"
+        raise ReferenceDataError(msg) from exc
+    else:
+        return rules
 
 
 def possibly_mainland_china(latitude: float, longitude: float) -> bool:
@@ -87,7 +91,9 @@ def location_name_components(name: str) -> tuple[str, ...]:
     """Return the specific place plus any comma-qualified geographic constraints."""
     normalized = normalized_location_name(name)
     components = tuple(
-        specific_location_name(component) for component in re.split(r"[,，]", normalized) if component.strip()
+        specific_location_name(component)
+        for component in re.split(r"[,，]", normalized)  # noqa: RUF001
+        if component.strip()
     )
     return components or (specific_location_name(normalized),)
 
@@ -101,7 +107,8 @@ def specific_location_name(name: str) -> str:
         "mainland_china_administrative_division_suffix_characters",
     )
     if not isinstance(suffix_characters, str) or not suffix_characters:
-        raise ReferenceDataError("Nominatim administrative division suffix characters must be a string")
+        msg = "Nominatim administrative division suffix characters must be a string"
+        raise ReferenceDataError(msg)
     return re.sub(rf"^.*[{re.escape(suffix_characters)}]", "", normalized).strip() or normalized
 
 
@@ -122,7 +129,7 @@ def lower_precision_location_names(name: str) -> tuple[str, ...]:
     candidates: list[str] = []
     current = name.strip()
     for pattern in patterns:
-        reduced = re.sub(pattern, "", current).strip(" ,，")
+        reduced = re.sub(pattern, "", current).strip(" ,，")  # noqa: RUF001
         if reduced and reduced != name and reduced not in candidates:
             candidates.append(reduced)
         current = reduced

@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-import httpx
+from weather_briefing.registries import ServiceStatusProviderName
 
-from ..registries import ServiceStatusProviderName
 from .providers import (
     AnthropicStatusProvider,
     DeepSeekStatusProvider,
     KimiStatusProvider,
     OpenAIStatusProvider,
 )
-from .statuspage import ServiceStatusProvider
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import httpx
+
+    from .statuspage import ServiceStatusProvider
 
 _BUILDERS: dict[str, Callable[[httpx.AsyncClient], ServiceStatusProvider]] = {
     ServiceStatusProviderName.DEEPSEEK: DeepSeekStatusProvider,
@@ -32,6 +37,7 @@ def service_status_providers(
     for name in names:
         builder = _BUILDERS.get(name)
         if builder is None:
-            raise ValueError(f"Unsupported service-status provider: {name}")
+            msg = f"Unsupported service-status provider: {name}"
+            raise ValueError(msg)
         providers.append(builder(client))
     return tuple(providers)

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-import httpx
-
-from ..config import Settings
-from ..delivery import (
+from weather_briefing.delivery import (
     BarkPublisher,
     BarkTextRenderer,
     DeliveryProvider,
@@ -17,7 +14,14 @@ from ..delivery import (
     TelegramHTMLRenderer,
     TelegramPublisher,
 )
-from ..registries import PublisherName
+from weather_briefing.registries import PublisherName
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import httpx
+
+    from weather_briefing.config import Settings
 
 
 def delivery_provider(
@@ -31,7 +35,8 @@ def delivery_provider(
     selected = publisher or settings.publisher
     builder = PUBLISHER_BUILDERS.get(selected)
     if builder is None:
-        raise ValueError(f"Unsupported publisher: {selected}")
+        msg = f"Unsupported publisher: {selected}"
+        raise ValueError(msg)
     return builder(settings, client, diagnostics)
 
 
@@ -43,13 +48,14 @@ def delivery_providers(
 ) -> tuple[DeliveryProvider, ...]:
     """Build an ordered group of delivery targets."""
     if not publishers:
-        raise ValueError("At least one publisher is required")
+        msg = "At least one publisher is required"
+        raise ValueError(msg)
     return tuple(delivery_provider(settings, client, diagnostics, publisher=publisher) for publisher in publishers)
 
 
 def _build_stdout_publisher(
-    settings: Settings,
-    client: httpx.AsyncClient,
+    settings: Settings,  # noqa: ARG001
+    client: httpx.AsyncClient,  # noqa: ARG001
     diagnostics: RenderedTextDiagnostics | None,
 ) -> DeliveryProvider:
     return DeliveryProvider(PlainTextRenderer(), StdoutPublisher(), diagnostics=diagnostics)
@@ -61,7 +67,8 @@ def _build_telegram_publisher(
     diagnostics: RenderedTextDiagnostics | None,
 ) -> DeliveryProvider:
     if not settings.telegram_bot_token or not settings.telegram_chat_id:
-        raise ValueError("Telegram publisher requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+        msg = "Telegram publisher requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
+        raise ValueError(msg)
     return DeliveryProvider(
         TelegramHTMLRenderer(),
         TelegramPublisher(client, settings.telegram_bot_token, settings.telegram_chat_id, diagnostics),
@@ -76,7 +83,8 @@ def _build_bark_publisher(
     diagnostics: RenderedTextDiagnostics | None,
 ) -> DeliveryProvider:
     if not settings.bark_device_key:
-        raise ValueError("Bark publisher requires BARK_DEVICE_KEY")
+        msg = "Bark publisher requires BARK_DEVICE_KEY"
+        raise ValueError(msg)
     return DeliveryProvider(
         BarkTextRenderer(),
         BarkPublisher(

@@ -5,19 +5,24 @@ from __future__ import annotations
 import json
 import math
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..languages import normalize_language_tag
-from ..models import LocationSpec, ResolvedLocation, normalize_jma_office_code
+from weather_briefing.languages import normalize_language_tag
+from weather_briefing.models import LocationSpec, ResolvedLocation, normalize_jma_office_code
+
 from .base import ConfigurationError
 from .files import json_array, json_file, optional_string_field, required_string_field
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-def load_locations(path: Path) -> tuple[LocationSpec, ...]:
+
+def load_locations(path: Path) -> tuple[LocationSpec, ...]:  # noqa: C901, PLR0912, PLR0915
     """Load and validate configured locations."""
     items = json_file(path)
     if not items:
-        raise ConfigurationError(f"Configure at least one location in {path}")
+        msg = f"Configure at least one location in {path}"
+        raise ConfigurationError(msg)
     locations: list[LocationSpec] = []
     seen_ids: set[str] = set()
     for index, item in enumerate(items):
@@ -25,38 +30,49 @@ def load_locations(path: Path) -> tuple[LocationSpec, ...]:
         location_id = required_string_field(item, "id", item_path)
         name = optional_string_field(item, "name", item_path)
         if not location_id.replace("-", "").replace("_", "").isalnum():
-            raise ConfigurationError("Location id must use letters, numbers, '-' or '_'")
+            msg = "Location id must use letters, numbers, '-' or '_'"
+            raise ConfigurationError(msg)
         if location_id in seen_ids:
-            raise ConfigurationError(f"Duplicate location id: {location_id}")
+            msg = f"Duplicate location id: {location_id}"
+            raise ConfigurationError(msg)
         latitude_value = item.get("latitude")
         longitude_value = item.get("longitude")
         if (latitude_value is None) != (longitude_value is None):
-            raise ConfigurationError(f"Location {location_id} must provide both latitude and longitude or neither")
+            msg = f"Location {location_id} must provide both latitude and longitude or neither"
+            raise ConfigurationError(msg)
         try:
             latitude = float(latitude_value) if latitude_value is not None else None
             longitude = float(longitude_value) if longitude_value is not None else None
         except (TypeError, ValueError) as exc:
-            raise ConfigurationError(f"Location {location_id} coordinates must be numbers") from exc
-        if latitude is not None and not -90 <= latitude <= 90:
-            raise ConfigurationError(f"Location {location_id} latitude is out of range")
-        if longitude is not None and not -180 <= longitude <= 180:
-            raise ConfigurationError(f"Location {location_id} longitude is out of range")
+            msg = f"Location {location_id} coordinates must be numbers"
+            raise ConfigurationError(msg) from exc
+        if latitude is not None and not -90 <= latitude <= 90:  # noqa: PLR2004
+            msg = f"Location {location_id} latitude is out of range"
+            raise ConfigurationError(msg)
+        if longitude is not None and not -180 <= longitude <= 180:  # noqa: PLR2004
+            msg = f"Location {location_id} longitude is out of range"
+            raise ConfigurationError(msg)
         if name is None and latitude is None:
-            raise ConfigurationError(f"Location {location_id} must provide a name or coordinates")
+            msg = f"Location {location_id} must provide a name or coordinates"
+            raise ConfigurationError(msg)
         language_value = item.get("language", "en")
         if not isinstance(language_value, str):
-            raise ConfigurationError(f"{item_path}.language must be a basic BCP 47-like language tag")
+            msg = f"{item_path}.language must be a basic BCP 47-like language tag"
+            raise ConfigurationError(msg)
         try:
             summary_language = normalize_language_tag(language_value)
         except ValueError as exc:
-            raise ConfigurationError(f"{item_path}.language must be a basic BCP 47-like language tag") from exc
+            msg = f"{item_path}.language must be a basic BCP 47-like language tag"
+            raise ConfigurationError(msg) from exc
         jma_office_code_value = item.get("jma_office_code")
         if jma_office_code_value is not None and not isinstance(jma_office_code_value, str):
-            raise ConfigurationError(f"{item_path}.jma_office_code must be a six-digit JMA office code")
+            msg = f"{item_path}.jma_office_code must be a six-digit JMA office code"
+            raise ConfigurationError(msg)
         try:
             jma_office_code = normalize_jma_office_code(jma_office_code_value)
         except ValueError as exc:
-            raise ConfigurationError(f"{item_path}.jma_office_code must be a six-digit JMA office code") from exc
+            msg = f"{item_path}.jma_office_code must be a six-digit JMA office code"
+            raise ConfigurationError(msg) from exc
         locations.append(
             LocationSpec(
                 location_id,
@@ -77,7 +93,7 @@ def _valid_coordinate(value: object, minimum: float, maximum: float) -> bool:
     return math.isfinite(value) and minimum <= value <= maximum
 
 
-def backfill_location_fields(
+def backfill_location_fields(  # noqa: C901, PLR0912, PLR0915
     path: Path,
     configured: tuple[LocationSpec, ...],
     resolved: tuple[ResolvedLocation, ...],
@@ -92,13 +108,16 @@ def backfill_location_fields(
         fields: dict[str, str | float] = {}
         if location.name is None:
             if not isinstance(resolved_location.name, str) or not resolved_location.name.strip():
-                raise ConfigurationError(f"Resolved name for location {location.id} is invalid")
+                msg = f"Resolved name for location {location.id} is invalid"
+                raise ConfigurationError(msg)
             fields["name"] = resolved_location.name.strip()
         if location.latitude is None and location.longitude is None:
             if not _valid_coordinate(resolved_location.latitude, -90, 90):
-                raise ConfigurationError(f"Resolved latitude for location {location.id} is invalid")
+                msg = f"Resolved latitude for location {location.id} is invalid"
+                raise ConfigurationError(msg)
             if not _valid_coordinate(resolved_location.longitude, -180, 180):
-                raise ConfigurationError(f"Resolved longitude for location {location.id} is invalid")
+                msg = f"Resolved longitude for location {location.id} is invalid"
+                raise ConfigurationError(msg)
             fields["latitude"] = resolved_location.latitude
             fields["longitude"] = resolved_location.longitude
         if fields:
@@ -132,7 +151,9 @@ def backfill_location_fields(
             locations_file.flush()
             os.fsync(locations_file.fileno())
     except PermissionError as exc:
-        raise ConfigurationError(f"{path} must be writable to save resolved location fields") from exc
+        msg = f"{path} must be writable to save resolved location fields"
+        raise ConfigurationError(msg) from exc
     except OSError as exc:
-        raise ConfigurationError(f"Failed to save resolved location fields to {path}: {exc}") from exc
+        msg = f"Failed to save resolved location fields to {path}: {exc}"
+        raise ConfigurationError(msg) from exc
     return True

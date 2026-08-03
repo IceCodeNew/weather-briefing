@@ -5,12 +5,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import pendulum
 
-from .application.briefing_settings import BriefingSettings
 from .application.briefing_validation import briefing_result_validator, required_advice_topics
 from .application.collection import collect_rss_articles, collect_weather_documents
 from .application.context_history import (
@@ -23,17 +22,22 @@ from .application.payloads import build_briefing_payload
 from .application.summarization import summarize_validated
 from .delivery import DeliveryError, DeliveryProvider
 from .llm import LLMProvider, serialize_llm_payload
-from .models import (
-    Article,
-    BriefingResult,
-    ResolvedLocation,
-    SourceDocument,
-)
 from .notification_decision import NotificationDecision, NotificationDecisionProvider
-from .sources import RSSFeedSource
-from .state import SQLiteStateStore
 from .time_utils import require_aware_datetime
-from .weather import WeatherContextProvider
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .application.briefing_settings import BriefingSettings
+    from .models import (
+        Article,
+        BriefingResult,
+        ResolvedLocation,
+        SourceDocument,
+    )
+    from .sources import RSSFeedSource
+    from .state import SQLiteStateStore
+    from .weather import WeatherContextProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service")
 
@@ -41,7 +45,7 @@ _LOGGER = logging.getLogger("weather_briefing.service")
 class BriefingService:
     """Orchestrate source collection, validation, state, and delivery."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         settings: BriefingSettings,
         location: ResolvedLocation,
@@ -76,7 +80,8 @@ class BriefingService:
         """Run one forecast or briefing task and persist its outcome."""
         current_time = require_aware_datetime(now or pendulum.now(self._settings.timezone), context="Briefing run time")
         if forecast_date is not None and kind != "forecast":
-            raise ValueError("Forecast date is only supported in forecast mode")
+            msg = "Forecast date is only supported in forecast mode"
+            raise ValueError(msg)
         try:
             body = await self._run(
                 kind,
@@ -89,9 +94,9 @@ class BriefingService:
             exc.add_note("Briefing run failed")
             try:
                 self._state.record_failure()
-            except Exception as record_error:
+            except Exception as record_error:  # noqa: BLE001
                 exc.add_note("Failure state could not be recorded")
-                _LOGGER.error("Failed to record briefing failure: %s", type(record_error).__name__)
+                _LOGGER.error("Failed to record briefing failure: %s", type(record_error).__name__)  # noqa: TRY400
             else:
                 try:
                     if self._state.task_failure_requires_alert():
@@ -121,7 +126,7 @@ class BriefingService:
         )
         return body
 
-    async def _run(
+    async def _run(  # noqa: PLR0915
         self,
         kind: str,
         now: pendulum.DateTime,
@@ -436,7 +441,7 @@ class BriefingService:
         except Exception:
             _LOGGER.exception("Failed to publish or record context budget alert")
 
-    def _save_result_state(
+    def _save_result_state(  # noqa: PLR0913
         self,
         kind: str,
         now: pendulum.DateTime,

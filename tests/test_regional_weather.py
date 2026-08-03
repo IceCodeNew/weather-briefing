@@ -72,7 +72,7 @@ async def test_nea_nowcast_sends_api_key_and_supports_legacy_timestamp() -> None
     assert "Singapore: Fair" in snapshot.weather_forecast[0]
 
 
-@pytest.mark.parametrize("area", (None, "", "  "))
+@pytest.mark.parametrize("area", [None, "", "  "])
 async def test_nea_nowcast_defaults_missing_or_blank_area(area: object) -> None:
     payload = {
         "items": [
@@ -90,14 +90,14 @@ async def test_nea_nowcast_defaults_missing_or_blank_area(area: object) -> None:
 
 @pytest.mark.parametrize(
     "payload",
-    (
+    [
         {"data": {"items": [{"forecasts": []}]}},
         {"data": {"items": [{"forecasts": [None]}]}},
-    ),
+    ],
 )
 async def test_nea_nowcast_rejects_empty_or_invalid_forecasts(payload: object) -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))) as client:
-        with pytest.raises(RegionalWeatherProviderError, match="no forecasts|no valid"):
+        with pytest.raises(RegionalWeatherProviderError, match="no forecasts|no valid"):  # noqa: RUF043
             await NEASingaporeNowcastProvider(client).fetch(1.3, 103.8)
 
 
@@ -109,7 +109,8 @@ async def test_nea_nowcast_wraps_transport_errors() -> None:
 
 async def test_nea_nowcast_sanitizes_non_status_transport_errors() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("private endpoint details", request=request)
+        msg = "private endpoint details"
+        raise httpx.ConnectError(msg, request=request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(RegionalWeatherProviderError, match="ConnectError") as exc_info:
@@ -118,7 +119,7 @@ async def test_nea_nowcast_sanitizes_non_status_transport_errors() -> None:
     assert "private endpoint details" not in str(exc_info.value)
 
 
-@pytest.mark.parametrize("payload", ([], {"data": []}, {"data": {"items": []}}))
+@pytest.mark.parametrize("payload", [[], {"data": []}, {"data": {"items": []}}])
 def test_nea_first_item_rejects_invalid_shapes(payload: object) -> None:
     with pytest.raises(RegionalWeatherProviderError):
         _first_item(payload)
@@ -133,7 +134,7 @@ def test_regional_time_parsers_fall_back_when_timestamp_is_missing(monkeypatch) 
     assert _parse_japan_time(None) == japan_now
 
 
-@pytest.mark.parametrize("office_code", ("13000", None))
+@pytest.mark.parametrize("office_code", ["13000", None])
 async def test_jma_provider_rejects_invalid_office_code(office_code: str | None) -> None:
     async with httpx.AsyncClient() as client:
         with pytest.raises(ValueError, match="six digits"):
@@ -142,7 +143,7 @@ async def test_jma_provider_rejects_invalid_office_code(office_code: str | None)
 
 @pytest.mark.parametrize(
     ("payload", "message"),
-    (([], "non-empty array"), ([{}], "no time series"), ([{"timeSeries": [None]}], "no usable")),
+    [([], "non-empty array"), ([{}], "no time series"), ([{"timeSeries": [None]}], "no usable")],
 )
 async def test_jma_provider_rejects_invalid_responses(payload: object, message: str) -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))) as client:
@@ -171,7 +172,7 @@ def test_jma_forecast_line_parser_skips_invalid_entries_and_defaults_area_name()
     assert _jma_forecast_lines([{"areas": [{"weathers": [], "winds": ["北の風"]}]}]) == ("日本の風: 北の風",)
 
 
-@pytest.mark.parametrize("name", (None, "", "  "))
+@pytest.mark.parametrize("name", [None, "", "  "])
 def test_jma_forecast_line_parser_defaults_missing_or_blank_area_name(name: object) -> None:
     area = {"area": {"name": name}, "weathers": ["晴れ"]}
 

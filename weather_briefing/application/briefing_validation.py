@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from ..delivery import DeliveryProvider
-from ..llm import LLMError
-from ..models import AdviceTopic, Article, BriefingResult, SourceDocument
+from weather_briefing.llm import LLMError
+from weather_briefing.models import AdviceTopic, Article, BriefingResult, SourceDocument
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from weather_briefing.delivery import DeliveryProvider
 
 
 def required_advice_topics(
@@ -27,7 +31,7 @@ def required_advice_topics(
     return tuple(topics)
 
 
-def briefing_result_validator(
+def briefing_result_validator(  # noqa: PLR0913
     *,
     kind: str,
     delivery: DeliveryProvider,
@@ -43,20 +47,24 @@ def briefing_result_validator(
     def validate(candidate: BriefingResult) -> None:
         candidate_message = delivery.render_briefing(candidate, source_articles, reference_context)
         if kind == "briefing" and candidate.advice:
-            raise LLMError("briefing must not repeat lifestyle advice")
+            msg = "briefing must not repeat lifestyle advice"
+            raise LLMError(msg)
         missing_advice_topics = set(required_topics) - {item.topic for item in candidate.advice}
         if missing_advice_topics:
             missing = ", ".join(sorted(topic.value for topic in missing_advice_topics))
-            raise LLMError(f"forecast advice is missing required topics: {missing}")
+            msg = f"forecast advice is missing required topics: {missing}"
+            raise LLMError(msg)
         if any(
             item.topic is AdviceTopic.ALLERGEN and allergen_source_ids.isdisjoint(item.source_ids)
             for item in candidate.advice
         ):
-            raise LLMError("allergen advice must cite a current allergen-capable source")
+            msg = "allergen advice must cite a current allergen-capable source"
+            raise LLMError(msg)
         if not delivery.briefing_fits(candidate_message, configured_max_characters):
-            raise LLMError(
+            msg = (
                 f"briefing has {candidate_message.visible_length} visible characters; "
                 f"limit is {delivery_limit}; rendered fields do not fit the delivery chunks"
             )
+            raise LLMError(msg)
 
     return validate

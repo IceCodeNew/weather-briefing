@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import sqlite3
+from typing import TYPE_CHECKING
 
-import pendulum
+from weather_briefing.time_utils import require_aware_datetime
 
-from ..time_utils import require_aware_datetime
 from .serialization import _parse_time as parse_time
 from .serialization import _storage_time as storage_time
+
+if TYPE_CHECKING:
+    import sqlite3
+
+    import pendulum
 
 
 class HealthStateOperations:
@@ -163,12 +167,12 @@ class HealthStateOperations:
             return []
         placeholders = ",".join("?" for _ in source_ids)
         rows = self._connection.execute(
-            f"""SELECT source_id
-            FROM rss_failure_tracker
-            WHERE source_id IN ({placeholders})
-            AND consecutive_failures >= ?
-            AND failure_alerted_at IS NULL
-            ORDER BY source_id""",  # noqa: S608
+            "SELECT source_id "  # noqa: S608
+            "FROM rss_failure_tracker "
+            f"WHERE source_id IN ({placeholders}) "
+            "AND consecutive_failures >= ? "
+            "AND failure_alerted_at IS NULL "
+            "ORDER BY source_id",
             (*source_ids, threshold),
         )
         return [str(row["source_id"]) for row in rows]

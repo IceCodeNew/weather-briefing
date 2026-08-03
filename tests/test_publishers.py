@@ -39,7 +39,8 @@ class EnabledDiagnostics:
 
 class FailingDiagnostics:
     def rendered_text_logging_enabled(self) -> bool:
-        raise RuntimeError("diagnostic state unavailable")
+        msg = "diagnostic state unavailable"
+        raise RuntimeError(msg)
 
 
 class CountingDiagnostics:
@@ -82,14 +83,14 @@ def test_delivery_provider_applies_platform_limit_without_leaking_it_into_config
 
 @pytest.mark.parametrize(
     ("single_message_limit", "briefing_max_messages", "message"),
-    (
+    [
         (None, 0, "must be positive"),
         (None, -1, "must be positive"),
         (None, False, "must be positive"),
         (None, True, "must be positive"),
         (None, 1.5, "must be positive"),
         (None, 2, "require a single_message_limit"),
-    ),
+    ],
 )
 def test_delivery_provider_rejects_invalid_briefing_chunk_policy(
     single_message_limit: int | None,
@@ -105,7 +106,7 @@ def test_delivery_provider_rejects_invalid_briefing_chunk_policy(
         )
 
 
-@pytest.mark.parametrize("single_message_limit", (0, -1, False, True, 1.5, "650"))
+@pytest.mark.parametrize("single_message_limit", [0, -1, False, True, 1.5, "650"])
 def test_delivery_provider_rejects_invalid_single_message_limit(single_message_limit: Any) -> None:
     with pytest.raises(ValueError, match="single_message_limit must be positive"):
         DeliveryProvider(
@@ -115,7 +116,7 @@ def test_delivery_provider_rejects_invalid_single_message_limit(single_message_l
         )
 
 
-@pytest.mark.parametrize(("single_message_limit", "briefing_max_messages"), ((None, 1), (650, 2)))
+@pytest.mark.parametrize(("single_message_limit", "briefing_max_messages"), [(None, 1), (650, 2)])
 def test_delivery_provider_accepts_positive_integer_briefing_chunk_policy(
     single_message_limit: int | None,
     briefing_max_messages: int,
@@ -197,13 +198,13 @@ async def test_telegram_publisher_validates_error_metadata_on_construction(monke
             TelegramPublisher(client, "runtime-token", "runtime-chat")
 
 
-@pytest.mark.parametrize("reason", (None, 7, "private detail\nforged-log-line"))
+@pytest.mark.parametrize("reason", [None, 7, "private detail\nforged-log-line"])
 def test_delivery_error_rejects_unsafe_structured_reason(reason) -> None:
     with pytest.raises(ValueError, match="lowercase kebab-case"):
         DeliveryError("Delivery failed", reason=reason)
 
 
-@pytest.mark.parametrize("value", (None, 0, 1, "true"))
+@pytest.mark.parametrize("value", [None, 0, 1, "true"])
 def test_delivery_error_rejects_non_boolean_channel_availability(value) -> None:
     with pytest.raises(TypeError, match="channel_unavailable must be a bool"):
         DeliveryError("Delivery failed", reason="request-error", channel_unavailable=value)
@@ -217,7 +218,7 @@ def test_split_message_preserves_markup_without_visible_text() -> None:
     assert split_message("<b></b>", 3) == ("<b></b>",)
 
 
-@pytest.mark.parametrize(("body", "limit"), (("", 0), ("body", 0), ("body", -1)))
+@pytest.mark.parametrize(("body", "limit"), [("", 0), ("body", 0), ("body", -1)])
 def test_split_message_rejects_non_positive_limit(body: str, limit: int) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         split_message(body, limit)
@@ -225,7 +226,7 @@ def test_split_message_rejects_non_positive_limit(body: str, limit: int) -> None
 
 @pytest.mark.parametrize(
     ("body", "limit", "expected"),
-    (
+    [
         ("<b>abcdefgh</b>", 5, ("<b>abcde</b>", "<b>fgh</b>")),
         (
             "<b><i>abcdef</i></b>",
@@ -242,7 +243,7 @@ def test_split_message_rejects_non_positive_limit(body: str, limit: int) -> None
             12,
             ("<b>first line</b>", "<b>\nsecond line</b>"),
         ),
-    ),
+    ],
 )
 def test_split_message_balances_html_tags(
     body: str,
@@ -395,7 +396,7 @@ async def test_telegram_failure_emits_one_warning_with_classification(caplog) ->
 
 @pytest.mark.parametrize(
     ("status_code", "payload", "expected_reason", "expected_channel_unavailable"),
-    (
+    [
         (400, {"description": "Bad Request: can't parse entities at byte offset 12"}, "invalid-html", False),
         (400, {"description": "Bad Request: message is too long"}, "message-too-long", False),
         (
@@ -410,7 +411,7 @@ async def test_telegram_failure_emits_one_warning_with_classification(caplog) ->
         (429, {"description": "Too Many Requests: retry later"}, "rate-limited", False),
         (400, {"description": 123}, "api-error", False),
         (500, {"description": "private provider detail"}, "api-error", False),
-    ),
+    ],
 )
 async def test_telegram_error_classification(
     status_code: int,
@@ -439,7 +440,8 @@ async def test_telegram_malformed_error_response_uses_status_classification() ->
 
 async def test_telegram_request_error_logs_chunk_context_without_private_detail(caplog) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("private network detail", request=request)
+        msg = "private network detail"
+        raise httpx.ConnectError(msg, request=request)
 
     with caplog.at_level("INFO", logger="weather_briefing.publishers"):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

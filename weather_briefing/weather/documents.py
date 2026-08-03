@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from ..air_quality import air_quality_to_document
-from ..allergen import allergen_to_document
-from ..languages import localized_labels
-from ..localization import localization_table
-from ..models import SourceDocument, WeatherContextSnapshot
+from weather_briefing.air_quality import air_quality_to_document
+from weather_briefing.allergen import allergen_to_document
+from weather_briefing.languages import localized_labels
+from weather_briefing.localization import localization_table
+from weather_briefing.models import SourceDocument, WeatherContextSnapshot
 
 _WEATHER_DOCUMENT_LABELS = localization_table("weather_document")
 

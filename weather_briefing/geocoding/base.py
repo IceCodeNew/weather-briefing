@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from ..models import LocationSpec, ResolvedLocation
+if TYPE_CHECKING:
+    from weather_briefing.models import LocationSpec, ResolvedLocation
 
 _LOGGER = logging.getLogger("weather_briefing.geocoding")
 
@@ -58,5 +59,6 @@ def required_location_name(location: LocationSpec) -> str:
     """Return a normalized required name for forward geocoding."""
     name = (location.name or "").strip()
     if not name:
-        raise GeocodingError(f"Forward geocoding requires a name for location: {location.id}")
+        msg = f"Forward geocoding requires a name for location: {location.id}"
+        raise GeocodingError(msg)
     return name

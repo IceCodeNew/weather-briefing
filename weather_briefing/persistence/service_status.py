@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import pendulum
+from weather_briefing.models import ServiceSurface
 
-from ..models import ServiceSurface
 from .serialization import _storage_time as storage_time
+
+if TYPE_CHECKING:
+    import sqlite3
+
+    import pendulum
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,18 +35,22 @@ def _stored_surfaces(value: object) -> tuple[ServiceSurface, ...] | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError("Stored service-status surfaces must be JSON text")
+        msg = "Stored service-status surfaces must be JSON text"
+        raise ValueError(msg)  # noqa: TRY004
     decoded: object = json.loads(value)
     if not isinstance(decoded, list):
-        raise ValueError("Stored service-status surfaces must be a list")
+        msg = "Stored service-status surfaces must be a list"
+        raise ValueError(msg)  # noqa: TRY004
     surfaces: list[ServiceSurface] = []
     for surface in decoded:
         if not isinstance(surface, str):
-            raise ValueError("Stored service-status surfaces must contain strings")
+            msg = "Stored service-status surfaces must contain strings"
+            raise ValueError(msg)  # noqa: TRY004
         try:
             surfaces.append(ServiceSurface(surface))
         except ValueError as exc:
-            raise ValueError(f"Stored service-status surface is unsupported: {surface}") from exc
+            msg = f"Stored service-status surface is unsupported: {surface}"
+            raise ValueError(msg) from exc
     return tuple(surfaces)
 
 
@@ -78,7 +86,7 @@ class SQLiteServiceStatusStore:
             handled_surfaces=_stored_surfaces(row["handled_surfaces"]),
         )
 
-    def observe_service_status_message(
+    def observe_service_status_message(  # noqa: PLR0913
         self,
         source_id: str,
         incident_id: str,
@@ -109,6 +117,7 @@ class SQLiteServiceStatusStore:
         source_id: str,
         incident_id: str,
         revision_id: str,
+        *,
         should_notify: bool,
     ) -> None:
         """Persist notification value so partial delivery retries remain deterministic."""
@@ -121,7 +130,8 @@ class SQLiteServiceStatusStore:
         )
         if cursor.rowcount != 1:
             self._connection.rollback()
-            raise RuntimeError("Service-status message changed before its decision was recorded")
+            msg = "Service-status message changed before its decision was recorded"
+            raise RuntimeError(msg)
         self._connection.commit()
 
     def service_status_delivered_publishers(
@@ -155,7 +165,7 @@ class SQLiteServiceStatusStore:
         )
         self._connection.commit()
 
-    def mark_service_status_message_handled(
+    def mark_service_status_message_handled(  # noqa: PLR0913
         self,
         source_id: str,
         incident_id: str,
@@ -190,5 +200,6 @@ class SQLiteServiceStatusStore:
         )
         if cursor.rowcount != 1:
             self._connection.rollback()
-            raise RuntimeError("Service-status message changed before handling was recorded")
+            msg = "Service-status message changed before handling was recorded"
+            raise RuntimeError(msg)
         self._connection.commit()

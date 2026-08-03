@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
-from ..notification_decision import NotificationDecision
 from .base import LLMRequestError
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from weather_briefing.notification_decision import NotificationDecision
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 _Result = TypeVar("_Result")
@@ -130,13 +133,13 @@ class FallbackLLMProvider:
                 await self._fallback.aclose()
             except asyncio.CancelledError:
                 _LOGGER.warning("Fallback LLM provider cleanup was cancelled while preserving primary cancellation")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning(
                     "Failed to close fallback LLM provider during cancellation error_type=%s",
                     type(exc).__name__,
                 )
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             errors.append(exc)
         try:
             await self._fallback.aclose()
@@ -150,9 +153,10 @@ class FallbackLLMProvider:
                     type(errors[0]).__name__,
                 )
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             errors.append(exc)
         if len(errors) == 1:
             raise errors[0]
         if errors:
-            raise ExceptionGroup("Failed to close fallback LLM providers", errors)
+            msg = "Failed to close fallback LLM providers"
+            raise ExceptionGroup(msg, errors)

@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping
-from pathlib import Path
+from typing import TYPE_CHECKING, Self
 
-import pendulum
+from weather_briefing.time_utils import require_aware_datetime
 
-from ..models import Article, SourceDocument, Warning
-from ..time_utils import require_aware_datetime
 from .content import ContentStateOperations
 from .context import ContextStateOperations
 from .health import HealthStateOperations
@@ -17,6 +14,14 @@ from .schema import initialize_state
 from .serialization import _storage_time as storage_time
 from .service_status import SQLiteServiceStatusStore
 from .warnings import WarningStateOperations
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
+
+    import pendulum
+
+    from weather_briefing.models import Article, SourceDocument, WeatherWarning
 
 
 class SQLiteStateStore(
@@ -41,7 +46,7 @@ class SQLiteStateStore(
         """Close the state database connection."""
         self._connection.close()
 
-    def __enter__(self) -> SQLiteStateStore:
+    def __enter__(self) -> Self:
         """Return this state store for context-managed use."""
         return self
 
@@ -49,14 +54,14 @@ class SQLiteStateStore(
         """Close the connection without suppressing context exceptions."""
         self.close()
 
-    def commit_result(
+    def commit_result(  # noqa: PLR0913
         self,
         *,
         kind: str,
         body: str | None,
         articles: tuple[Article, ...],
         context_documents: tuple[SourceDocument, ...],
-        active_warnings: tuple[Warning, ...],
+        active_warnings: tuple[WeatherWarning, ...],
         resolved_warning_ids: tuple[str, ...],
         recorded_at: pendulum.DateTime,
         verbatim_silent: bool,
@@ -74,7 +79,7 @@ class SQLiteStateStore(
             self._insert_context_documents(context_documents, recorded_at)
             if body is not None:
                 self._insert_briefing(kind, body, recorded_at, notification_payload)
-                self._enqueue_verbatim_deliveries(articles, verbatim_silent, recorded_at)
+                self._enqueue_verbatim_deliveries(articles, silent=verbatim_silent, queued_at=recorded_at)
             self._update_warnings(
                 active_warnings,
                 resolved_warning_ids,

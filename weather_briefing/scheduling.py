@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-import pendulum
 from apscheduler.triggers.cron import CronTrigger
 
-from .config import Settings
-from .state import SQLiteStateStore
+if TYPE_CHECKING:
+    import pendulum
+
+    from .config import Settings
+    from .state import SQLiteStateStore
 
 
 def in_schedule(kind: str, now: pendulum.DateTime, settings: Settings) -> bool:
@@ -20,7 +23,7 @@ def in_schedule(kind: str, now: pendulum.DateTime, settings: Settings) -> bool:
 
 def hour_in_cron(hour: int, cron_hour: str) -> bool:
     """Return whether an hour matches one APScheduler cron hour expression."""
-    if not 0 <= hour <= 23:
+    if not 0 <= hour <= 23:  # noqa: PLR2004
         return False
     current_hour = datetime(2000, 1, 1, hour, tzinfo=UTC)
     trigger = CronTrigger(hour=cron_hour, timezone=UTC)

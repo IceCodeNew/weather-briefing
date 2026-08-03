@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import Protocol
-
-import pendulum
+from typing import TYPE_CHECKING, Protocol
 
 from .air_quality import AirQualityError, AirQualityProvider
 from .languages import LanguageSupport
-from .models import WeatherContextSnapshot
 from .time_utils import datetime_timezone_specifier
+from .weather import WeatherContextError, fetch_weather_context
+
+if TYPE_CHECKING:
+    import pendulum
+
+    from .models import WeatherContextSnapshot
 
 
 class CapabilityName(StrEnum):
@@ -74,9 +77,8 @@ class CapabilityProviderSet:
         if snapshot.air_quality is not None or forecast_date is not None:
             return snapshot
         if self.air_quality is None:
-            from .weather import WeatherContextError
-
-            raise WeatherContextError("Weather source did not provide air quality; configure AQICN_API_TOKEN")
+            msg = "Weather source did not provide air quality; configure AQICN_API_TOKEN"
+            raise WeatherContextError(msg)
         try:
             air_quality = await self.air_quality.fetch(
                 latitude,
@@ -84,9 +86,8 @@ class CapabilityProviderSet:
                 datetime_timezone_specifier(snapshot.observed_at, context="Weather snapshot time"),
             )
         except AirQualityError:
-            from .weather import WeatherContextError
-
-            raise WeatherContextError("Weather source did not provide air quality and AQICN fallback failed") from None
+            msg = "Weather source did not provide air quality and AQICN fallback failed"
+            raise WeatherContextError(msg) from None
         return replace(snapshot, air_quality=air_quality)
 
     async def fetch_for_date(
@@ -107,7 +108,6 @@ class CapabilityProviderSet:
     ) -> tuple[WeatherContextSnapshot, ...]:
         """Fetch primary context and skip expected supplement failures."""
         snapshots = [await self.fetch(latitude, longitude, forecast_date=forecast_date)]
-        from .weather import WeatherContextError
 
         for provider in self.supplements:
             try:
@@ -124,6 +124,4 @@ async def _fetch_context(
     forecast_date: pendulum.Date | None,
 ) -> WeatherContextSnapshot:
     """Route current or dated context through the shared provider boundary."""
-    from .weather import fetch_weather_context
-
     return await fetch_weather_context(provider, latitude, longitude, forecast_date)

@@ -7,11 +7,12 @@ from typing import Any
 import httpx
 import pendulum
 
-from ..api_client import api_call_extensions
-from ..data.service_endpoints import NEA_BASE_URL
-from ..languages import LanguageSupport
-from ..models import WeatherContextSnapshot
-from ..time_utils import parse_datetime_with_default_timezone
+from weather_briefing.api_client import api_call_extensions
+from weather_briefing.data.service_endpoints import NEA_BASE_URL
+from weather_briefing.languages import LanguageSupport
+from weather_briefing.models import WeatherContextSnapshot
+from weather_briefing.time_utils import parse_datetime_with_default_timezone
+
 from .regional_errors import RegionalWeatherProviderError, safe_regional_error
 
 NEA_LANGUAGE_SUPPORT = LanguageSupport.fixed("en")
@@ -35,7 +36,7 @@ class NEASingaporeNowcastProvider:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
 
-    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
+    async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:  # noqa: ARG002
         """Fetch and normalize the current two-hour sector nowcast."""
         headers = {"x-api-key": self._api_key} if self._api_key else {}
         try:
@@ -49,20 +50,23 @@ class NEASingaporeNowcastProvider:
             item = _first_item(payload)
             forecasts = item.get("forecasts")
             if not isinstance(forecasts, list) or not forecasts:
-                raise RegionalWeatherProviderError("NEA nowcast contains no forecasts")
+                msg = "NEA nowcast contains no forecasts"
+                raise RegionalWeatherProviderError(msg)  # noqa: TRY301
             forecast_lines = tuple(
                 f"{_nea_area(entry.get('area'))}: {entry['forecast']}"
                 for entry in forecasts
                 if isinstance(entry, dict) and isinstance(entry.get("forecast"), str)
             )
             if not forecast_lines:
-                raise RegionalWeatherProviderError("NEA nowcast contains no valid forecast entries")
+                msg = "NEA nowcast contains no valid forecast entries"
+                raise RegionalWeatherProviderError(msg)  # noqa: TRY301
             timestamp = item.get("timestamp") or item.get("update_timestamp")
             observed_at = _parse_singapore_time(timestamp)
         except RegionalWeatherProviderError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise RegionalWeatherProviderError(f"NEA nowcast failed: {safe_regional_error(exc)}") from None
+            msg = f"NEA nowcast failed: {safe_regional_error(exc)}"
+            raise RegionalWeatherProviderError(msg) from None
         return WeatherContextSnapshot(
             source_id="weather:nea-sg-nowcast",
             source_name="Singapore NEA two-hour nowcast",
@@ -75,13 +79,16 @@ class NEASingaporeNowcastProvider:
 
 def _first_item(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        raise RegionalWeatherProviderError("NEA response must be an object")
+        msg = "NEA response must be an object"
+        raise RegionalWeatherProviderError(msg)
     data = payload.get("data", payload)
     if not isinstance(data, dict):
-        raise RegionalWeatherProviderError("NEA response data must be an object")
+        msg = "NEA response data must be an object"
+        raise RegionalWeatherProviderError(msg)
     items = data.get("items")
     if not isinstance(items, list) or not items or not isinstance(items[0], dict):
-        raise RegionalWeatherProviderError("NEA response contains no item")
+        msg = "NEA response contains no item"
+        raise RegionalWeatherProviderError(msg)
     return {str(key): value for key, value in items[0].items()}
 
 

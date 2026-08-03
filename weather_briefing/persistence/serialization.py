@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import re
-import sqlite3
+from typing import TYPE_CHECKING
 
 import pendulum
 
-from ..models import Article
-from ..time_utils import require_aware_datetime
+from weather_briefing.models import Article
+from weather_briefing.time_utils import require_aware_datetime
+
+if TYPE_CHECKING:
+    import sqlite3
 
 _STORAGE_TIME_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$")
 
@@ -28,7 +31,8 @@ def _article_from_row(row: sqlite3.Row) -> Article:
 
 def _parse_time(value: str) -> pendulum.DateTime:
     if not _STORAGE_TIME_PATTERN.fullmatch(value):
-        raise ValueError("State timestamp must use fixed-width UTC format")
+        msg = "State timestamp must use fixed-width UTC format"
+        raise ValueError(msg)
     return pendulum.from_format(value, "YYYY-MM-DD[T]HH:mm:ss.SSSSSS[Z]", tz="UTC")
 
 

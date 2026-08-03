@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
-import pendulum
+from weather_briefing.air_quality import AirQualityError, AirQualityProvider
+from weather_briefing.time_utils import datetime_timezone_specifier
 
-from ..air_quality import AirQualityError, AirQualityProvider
-from ..models import WeatherContextSnapshot
-from ..time_utils import datetime_timezone_specifier
 from .base import WeatherContextError, WeatherContextProvider, fetch_weather_context
+
+if TYPE_CHECKING:
+    import pendulum
+
+    from weather_briefing.models import WeatherContextSnapshot
 
 
 class AirQualitySupplementingWeatherProvider:
@@ -38,7 +42,8 @@ class AirQualitySupplementingWeatherProvider:
         if forecast_date is not None:
             return snapshot
         if self._air_quality_provider is None:
-            raise WeatherContextError("Weather source did not provide air quality; configure AQICN_API_TOKEN")
+            msg = "Weather source did not provide air quality; configure AQICN_API_TOKEN"
+            raise WeatherContextError(msg)
         try:
             air_quality = await self._air_quality_provider.fetch(
                 latitude,
@@ -49,7 +54,8 @@ class AirQualitySupplementingWeatherProvider:
                 ),
             )
         except AirQualityError:
-            raise WeatherContextError("Weather source did not provide air quality and AQICN fallback failed") from None
+            msg = "Weather source did not provide air quality and AQICN fallback failed"
+            raise WeatherContextError(msg) from None
         return replace(snapshot, air_quality=air_quality)
 
     async def fetch_for_date(

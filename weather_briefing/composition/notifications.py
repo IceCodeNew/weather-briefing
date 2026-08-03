@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from ..notification_decision import (
+from weather_briefing.notification_decision import (
     LLMPromptNotificationPolicy,
     NotificationDecisionModel,
     NotificationDecisionService,
     NotificationPolicy,
 )
-from ..notification_decision.policies import (
+from weather_briefing.notification_decision.policies import (
     SERVICE_STATUS_NOTIFICATION_KIND,
     SERVICE_STATUS_NOTIFICATION_PROMPT,
     WEATHER_NOTIFICATION_KIND,
@@ -57,6 +57,7 @@ def notification_decision_service(
     for kind in kinds:
         builder = NOTIFICATION_POLICY_BUILDERS.get(kind)
         if builder is None:
-            raise ValueError(f"Unsupported notification kind: {kind}")
+            msg = f"Unsupported notification kind: {kind}"
+            raise ValueError(msg)
         policies.append(builder(model))
     return NotificationDecisionService(policies)

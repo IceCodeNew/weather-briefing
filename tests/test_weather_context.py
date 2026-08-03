@@ -108,12 +108,12 @@ def _qweather_air_quality_values(*, aqi: float, forecast_start: str) -> dict[str
 
 @pytest.mark.parametrize(
     ("output_language", "expected"),
-    (
+    [
         ("zh-CN", "中国环境空气质量指数（cn-mee）"),
         ("zh-TW", "中国环境空气质量指数（cn-mee）"),
         ("en", "中国环境空气质量指数 (cn-mee)"),
         ("ja", "中国环境空气质量指数（cn-mee）"),
-    ),
+    ],
 )
 def test_qweather_air_quality_standard_uses_localized_punctuation(
     output_language: str,
@@ -696,10 +696,10 @@ async def test_open_meteo_future_enrichment_rejects_non_object_hourly_payload() 
 
 @pytest.mark.parametrize(
     ("payload", "reason"),
-    (
+    [
         ([], "air-quality response must be an object"),
         ({"current": []}, "current air quality must be an object"),
-    ),
+    ],
 )
 async def test_open_meteo_current_enrichment_rejects_non_object_payload(
     caplog,
@@ -823,7 +823,8 @@ async def test_weather_provider_falls_back_after_primary_weather_failure() -> No
 
     class FailingProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            raise WeatherContextError("expected failure")
+            msg = "expected failure"
+            raise WeatherContextError(msg)
 
     class SuccessfulProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
@@ -884,7 +885,8 @@ async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog)
 
     class FailingProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            raise WeatherContextError("QWeather weather forecast failed: HTTP 401")
+            msg = "QWeather weather forecast failed: HTTP 401"
+            raise WeatherContextError(msg)
 
         async def fetch_for_date(
             self,
@@ -925,7 +927,8 @@ async def test_weather_provider_logs_failed_fallback_and_successful_call(caplog)
 async def test_weather_provider_logs_unexpected_error_type_without_message(caplog) -> None:
     class UnexpectedFailureProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            raise RuntimeError("sensitive upstream detail")
+            msg = "sensitive upstream detail"
+            raise RuntimeError(msg)
 
     provider = LoggedWeatherContextProvider("test-provider", UnexpectedFailureProvider())
 
@@ -943,7 +946,7 @@ async def test_weather_provider_logs_unexpected_error_type_without_message(caplo
 async def test_logged_provider_logs_unsupported_forecast_date_as_skip(caplog) -> None:
     class UndatedProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            raise AssertionError("Dated requests must not call the current-weather method")  # pragma: no cover
+            raise AssertionError("Dated requests must not call the current-weather method")  # noqa: EM101, TRY003  # pragma: no cover
 
     provider = LoggedWeatherContextProvider("nea-sg", UndatedProvider())
 
@@ -959,19 +962,20 @@ async def test_logged_provider_logs_unsupported_forecast_date_as_skip(caplog) ->
     assert "Weather API call failed provider=nea-sg" not in caplog.text
 
 
-@pytest.mark.parametrize("secondary_failure", ("elapsed", "logger"))
+@pytest.mark.parametrize("secondary_failure", ["elapsed", "logger"])
 async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fails(
     monkeypatch,
     secondary_failure: str,
 ) -> None:
     class UndatedProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            raise AssertionError("Dated requests must not call the current-weather method")  # pragma: no cover
+            raise AssertionError("Dated requests must not call the current-weather method")  # noqa: EM101, TRY003  # pragma: no cover
 
     if secondary_failure == "elapsed":
 
         def fail_elapsed(started_at: float) -> int:
-            raise RuntimeError("secondary failure")
+            msg = "secondary failure"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr("weather_briefing.weather.base._elapsed_milliseconds", fail_elapsed)
     else:
@@ -979,7 +983,8 @@ async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fail
 
         def fail_skip_log(message: str, *args: object) -> None:
             if "skipped" in message:
-                raise RuntimeError("secondary failure")
+                msg = "secondary failure"
+                raise RuntimeError(msg)
             original_info(message, *args)
 
         monkeypatch.setattr("weather_briefing.weather.base._LOGGER.info", fail_skip_log)
@@ -1104,7 +1109,7 @@ async def test_qweather_rejects_non_success_weather_status() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
             return httpx.Response(200, json={"code": "400"})
-        raise AssertionError(f"Unexpected request: {request.url}")
+        raise AssertionError(f"Unexpected request: {request.url}")  # noqa: EM102, TRY003  # pragma: no cover
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(WeatherContextError, match="non-success weather status code=400"):
@@ -1117,10 +1122,10 @@ async def test_qweather_rejects_non_success_weather_status() -> None:
 
 @pytest.mark.parametrize(
     ("payload", "message"),
-    (
+    [
         ([], "weather response must be an object"),
         ({"code": "200", "daily": {}}, "daily forecast must be an array"),
-    ),
+    ],
 )
 async def test_qweather_rejects_invalid_weather_response_shape(payload: object, message: str) -> None:
     async with httpx.AsyncClient(
@@ -1166,7 +1171,7 @@ async def test_qweather_rejects_empty_daily_forecast() -> None:
                 200,
                 json={"code": "200", "updateTime": "2026-07-13T08:00", "daily": []},
             )
-        raise AssertionError(f"Unexpected request: {request.url}")
+        raise AssertionError(f"Unexpected request: {request.url}")  # noqa: EM102, TRY003  # pragma: no cover
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(WeatherContextError, match="no daily forecast"):
@@ -1216,7 +1221,7 @@ async def test_open_meteo_rejects_empty_forecast() -> None:
 
 @pytest.mark.parametrize(
     "missing_field",
-    (
+    [
         "time",
         "weather_code",
         "temperature_2m_max",
@@ -1229,7 +1234,7 @@ async def test_open_meteo_rejects_empty_forecast() -> None:
         "wind_gusts_10m_max",
         "wind_direction_10m_dominant",
         "uv_index_max",
-    ),
+    ],
 )
 async def test_open_meteo_forecast_identifies_missing_required_field(missing_field: str) -> None:
     response = _open_meteo_weather_response()
@@ -1247,11 +1252,11 @@ async def test_open_meteo_forecast_identifies_missing_required_field(missing_fie
 
 @pytest.mark.parametrize(
     ("field", "value", "message"),
-    (
+    [
         ("daily", [], "daily forecast must be an object"),
         ("weather_code", 1, "daily forecast field must be an array: weather_code"),
         ("weather_code", [], "daily forecast field has no value at index 0: weather_code"),
-    ),
+    ],
 )
 async def test_open_meteo_forecast_identifies_invalid_field_shape(field: str, value: object, message: str) -> None:
     response = _open_meteo_weather_response()
@@ -1339,7 +1344,7 @@ async def test_supplement_when_air_quality_present_skips_fallback() -> None:
 
     class FailingAirProvider:
         async def fetch(self, latitude: float, longitude: float, timezone: str) -> AirQualitySnapshot:
-            raise AssertionError("should not be called")
+            raise AssertionError("should not be called")  # noqa: EM101, TRY003  # pragma: no cover
 
     provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), FailingAirProvider())
 
@@ -1363,7 +1368,8 @@ async def test_aqicn_fallback_raises_weather_context_error_on_air_quality_error(
 
     class FailingAirProvider:
         async def fetch(self, latitude: float, longitude: float, timezone: str) -> AirQualitySnapshot:
-            raise AirQualityError("aqicn failed")
+            msg = "aqicn failed"
+            raise AirQualityError(msg)
 
     provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), FailingAirProvider())
 
@@ -1395,10 +1401,10 @@ async def test_qweather_non_success_indices_status_is_optional(caplog) -> None:
 
 @pytest.mark.parametrize(
     ("payload", "reason"),
-    (
+    [
         ([], "indices response must be an object"),
         ({"code": "200", "daily": {}}, "daily indices must be an array"),
-    ),
+    ],
 )
 async def test_qweather_invalid_indices_response_shape_is_optional(caplog, payload: object, reason: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1435,7 +1441,8 @@ async def test_qweather_rejects_http_error() -> None:
 async def test_qweather_rejects_jwt_error(monkeypatch) -> None:
     class FailingAuthenticator:
         def authorization_header(self) -> str:
-            raise jwt.PyJWTError("test jwt failure")
+            msg = "test jwt failure"
+            raise jwt.PyJWTError(msg)
 
     async with httpx.AsyncClient() as client:
         with pytest.raises(WeatherContextError, match="authentication failed: PyJWTError"):
@@ -1609,7 +1616,7 @@ def test_qweather_air_quality_rejects_non_object_nested_value() -> None:
 
 @pytest.mark.parametrize(
     ("aqi", "error"),
-    ((True, TypeError), ("nan", ValueError), (10**1000, ValueError)),
+    [(True, TypeError), ("nan", ValueError), (10**1000, ValueError)],
 )
 def test_qweather_air_quality_rejects_invalid_numeric_value(
     aqi: object,
@@ -1765,7 +1772,7 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
                     ],
                 },
             )
-        raise AssertionError(f"Unexpected request: {request.url}")
+        raise AssertionError(f"Unexpected request: {request.url}")  # noqa: EM102, TRY003  # pragma: no cover
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(WeatherContextError, match="weather forecast parsing failed: TypeError"):
@@ -1778,7 +1785,7 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
 
 @pytest.mark.parametrize(
     "missing_field",
-    (
+    [
         "fxDate",
         "textDay",
         "textNight",
@@ -1788,7 +1795,7 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
         "windScaleDay",
         "humidity",
         "precip",
-    ),
+    ],
 )
 async def test_qweather_forecast_identifies_missing_required_field(missing_field: str) -> None:
     incomplete_forecast = {key: value for key, value in _QWEATHER_DAILY_ITEM.items() if key != missing_field}
@@ -1889,11 +1896,11 @@ async def test_qweather_air_quality_handles_missing_pm2p5_pollutant() -> None:
 
 @pytest.mark.parametrize(
     ("concentration", "expected_value", "expected_unit"),
-    (
+    [
         (None, None, None),
         ({"value": 22.0}, 22.0, None),
         ({"unit": "μg/m3"}, None, "μg/m3"),
-    ),
+    ],
 )
 async def test_qweather_air_quality_keeps_aqi_when_concentration_is_incomplete(
     concentration: dict[str, object] | None,
@@ -2221,7 +2228,8 @@ def test_open_meteo_allergen_handles_invalid_time_gracefully() -> None:
 
 async def test_open_meteo_allergen_reference_failure_keeps_air_quality(monkeypatch) -> None:
     def fail_to_load_pollen_types() -> tuple[tuple[str, str], ...]:
-        raise ReferenceDataError("invalid allergen data")
+        msg = "invalid allergen data"
+        raise ReferenceDataError(msg)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/forecast":
@@ -2253,7 +2261,8 @@ async def test_open_meteo_allergen_reference_failure_keeps_air_quality(monkeypat
 
 async def test_open_meteo_allergen_guidance_failure_keeps_air_quality(monkeypatch) -> None:
     def fail_to_parse_allergen(*args) -> None:
-        raise ReferenceDataError("invalid allergen guidance")
+        msg = "invalid allergen guidance"
+        raise ReferenceDataError(msg)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/forecast":
@@ -2285,7 +2294,8 @@ async def test_open_meteo_allergen_guidance_failure_keeps_air_quality(monkeypatc
 
 async def test_open_meteo_air_quality_guidance_failure_keeps_allergen(monkeypatch) -> None:
     def fail_to_load_guidance(_: int) -> tuple[str, str]:
-        raise ReferenceDataError("invalid air-quality guidance")
+        msg = "invalid air-quality guidance"
+        raise ReferenceDataError(msg)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/forecast":

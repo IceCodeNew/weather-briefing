@@ -81,7 +81,8 @@ def test_location_backfill_failure_logs_warning_and_continues(monkeypatch, caplo
     location = ResolvedLocation("test", "Test City", 39.9, 116.3, "CN", "Beijing", "Asia/Shanghai", True)
 
     def fail_backfill(*_args: object) -> bool:
-        raise ConfigurationError("locations.json is locked")
+        msg = "locations.json is locked"
+        raise ConfigurationError(msg)
 
     monkeypatch.setattr("weather_briefing.cli.backfill_location_fields", fail_backfill)
 
@@ -173,7 +174,7 @@ def test_debug_logging_keeps_application_metadata_and_suppresses_sdk_payloads() 
 
 @pytest.mark.parametrize(
     "value",
-    ("2026-03-29T02:30:00", "2026-10-25T02:30:00"),
+    ["2026-03-29T02:30:00", "2026-10-25T02:30:00"],
 )
 def test_parse_run_time_rejects_timestamp_without_timezone(value: str) -> None:
     with pytest.raises(ValueError, match="explicit UTC offset"):
@@ -198,7 +199,7 @@ def test_parse_forecast_date_uses_configured_local_schedule_time() -> None:
     assert str(parsed) == "2026-07-11"
 
 
-@pytest.mark.parametrize("value", ("20260711", "2026-02-30"))
+@pytest.mark.parametrize("value", ["20260711", "2026-02-30"])
 def test_parse_forecast_date_rejects_invalid_date(value: str) -> None:
     with pytest.raises(ValueError, match="Forecast date"):
         _parse_forecast_date(value)
@@ -262,11 +263,11 @@ def test_precision_reduction_notice_uses_english_fallback_for_missing_match() ->
 
 
 class TestHourInCron:
-    @pytest.mark.parametrize("hour", (9, 15, 23))
+    @pytest.mark.parametrize("hour", [9, 15, 23])
     def test_range_includes_bounds(self, hour: int) -> None:
         assert _hour_in_cron(hour, "9-23")
 
-    @pytest.mark.parametrize("hour", (0, 8, 24))
+    @pytest.mark.parametrize("hour", [0, 8, 24])
     def test_range_excludes_outside(self, hour: int) -> None:
         assert not _hour_in_cron(hour, "9-23")
 
@@ -350,7 +351,7 @@ def test_development_version_does_not_probe_git_for_other_commands(monkeypatch) 
     assert args.command == "run"
 
 
-@pytest.mark.parametrize(("status", "expected"), (("", "1.1.1-g1234567"), (" M file.py\n", "1.1.1-dirty-g1234567")))
+@pytest.mark.parametrize(("status", "expected"), [("", "1.1.1-g1234567"), (" M file.py\n", "1.1.1-dirty-g1234567")])
 def test_development_version_includes_git_revision(monkeypatch, capsys, status: str, expected: str) -> None:
     repository_root = Path(cli_module.__file__).resolve().parents[1]
     results = iter(
@@ -391,7 +392,7 @@ def test_development_version_includes_git_revision(monkeypatch, capsys, status: 
     ]
 
 
-@pytest.mark.parametrize("metadata", ("/unrelated/repository\n1234567\n", "unexpected\n"))
+@pytest.mark.parametrize("metadata", ["/unrelated/repository\n1234567\n", "unexpected\n"])
 def test_development_version_rejects_unrelated_git_metadata(monkeypatch, capsys, metadata: str) -> None:
     monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
     git = Mock(return_value=subprocess.CompletedProcess((), 0, metadata, ""))
@@ -406,7 +407,7 @@ def test_development_version_rejects_unrelated_git_metadata(monkeypatch, capsys,
 
 @pytest.mark.parametrize(
     "error",
-    (FileNotFoundError(), subprocess.CalledProcessError(128, ("git", "rev-parse"))),
+    [FileNotFoundError(), subprocess.CalledProcessError(128, ("git", "rev-parse"))],
 )
 def test_development_version_falls_back_outside_git(monkeypatch, capsys, caplog, error: Exception) -> None:
     monkeypatch.setattr(cli_module, "__version__", "1.1.1-dev")
@@ -438,7 +439,7 @@ def test_rendered_text_diagnostics_parser_accepts_bounded_duration() -> None:
     assert args.duration_seconds == 900
 
 
-@pytest.mark.parametrize("kind", ("forecast", "briefing"))
+@pytest.mark.parametrize("kind", ["forecast", "briefing"])
 def test_run_now_is_a_one_shot_option_for_each_task(kind: str) -> None:
     args = build_parser().parse_args(["run", kind, "--run-now"])
 
@@ -447,7 +448,7 @@ def test_run_now_is_a_one_shot_option_for_each_task(kind: str) -> None:
     assert not args.enforce_window
 
 
-@pytest.mark.parametrize("kind", ("daily", "hourly"))
+@pytest.mark.parametrize("kind", ["daily", "hourly"])
 def test_removed_run_mode_names_are_rejected(kind: str) -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["run", kind])
@@ -588,11 +589,11 @@ def test_briefing_sent_today_reads_final_window_state(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("kind", "hour", "run_now"),
-    (
+    [
         ("forecast", 16, False),
         ("briefing", 16, True),
         ("briefing", 12, False),
-    ),
+    ],
 )
 def test_briefing_sent_today_skips_irrelevant_state_queries(
     tmp_path: Path,
@@ -608,7 +609,7 @@ def test_briefing_sent_today_skips_irrelevant_state_queries(
         assert not _briefing_sent_today(kind, now, settings, state, run_now=run_now)
 
 
-@pytest.mark.parametrize("duration", ("0m", "15", "25h"))
+@pytest.mark.parametrize("duration", ["0m", "15", "25h"])
 def test_rendered_text_diagnostics_parser_rejects_invalid_duration(duration: str) -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["diagnostics", "rendered-text", "enable", "--for", duration])
@@ -646,7 +647,7 @@ def test_main_manages_rendered_text_diagnostics_without_loading_service_settings
 
 @pytest.mark.parametrize(
     ("action", "duration", "message"),
-    (
+    [
         ("enable", None, "require a duration"),
         ("enable", True, "positive integer"),
         ("enable", 0, "positive integer"),
@@ -656,7 +657,7 @@ def test_main_manages_rendered_text_diagnostics_without_loading_service_settings
         ("status", 1, "only valid for enable"),
         ("unsupported", None, "Unsupported rendered text diagnostics action"),
         (1, None, "Unsupported rendered text diagnostics action"),
-    ),
+    ],
 )
 def test_rendered_text_diagnostics_reject_invalid_internal_requests(
     action: object,
@@ -702,7 +703,8 @@ def test_main_configures_info_logging_before_daemon_and_logs_failure_once(monkey
     async def fail_daemon() -> None:
         assert len(_LOGGER.handlers) == 1
         assert _LOGGER.level == logging.INFO
-        raise RuntimeError("daemon-boom")
+        msg = "daemon-boom"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
     monkeypatch.setattr("weather_briefing.cli.daemon", fail_daemon)
@@ -751,7 +753,8 @@ def test_main_configures_info_logging_before_run_and_logs_failure_once(monkeypat
         assert not run_now
         assert len(_LOGGER.handlers) == 1
         assert _LOGGER.level == logging.INFO
-        raise RuntimeError("boom")
+        msg = "boom"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr("weather_briefing.cli.load_dotenv", lambda *, override: True)
     monkeypatch.setattr("weather_briefing.cli.run", fail_run)
@@ -839,7 +842,7 @@ _DEFAULT_SETTINGS = Settings(
 )
 
 
-def _make_fake_settings(
+def _make_fake_settings(  # noqa: PLR0913
     *,
     debug: bool = False,
     llm_provider: str = "deepseek",
@@ -923,8 +926,8 @@ async def test_run_skips_and_logs_when_enforce_window_outside_schedule(monkeypat
         logging.root.setLevel(original_root_level)
 
 
-@pytest.mark.parametrize("debug", (False, True))
-async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatch, capsys, debug: bool) -> None:
+@pytest.mark.parametrize("debug", [False, True])
+async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatch, capsys, debug: bool) -> None:  # noqa: PLR0915
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -968,7 +971,7 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
     monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
 
     class FakeState:
-        def __enter__(self) -> "FakeState":
+        def __enter__(self) -> "FakeState":  # noqa: PYI034
             return self
 
         def __exit__(self, *args: object) -> None:
@@ -977,7 +980,8 @@ async def test_run_continues_when_runtime_diagnostics_are_unavailable(monkeypatc
     monkeypatch.setattr("weather_briefing.cli.SQLiteStateStore", lambda p: FakeState())
 
     def unavailable_diagnostics(path: Path) -> None:
-        raise sqlite3.OperationalError("database is locked")
+        msg = "database is locked"
+        raise sqlite3.OperationalError(msg)
 
     monkeypatch.setattr(
         "weather_briefing.persistence.diagnostics.SQLiteRuntimeDiagnostics",
@@ -1074,7 +1078,7 @@ async def test_run_sends_alert_for_precision_reduced_location(monkeypatch, capsy
     monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
 
     class FakeState:
-        def __enter__(self) -> "FakeState":
+        def __enter__(self) -> "FakeState":  # noqa: PYI034
             return self
 
         def __exit__(self, *args: object) -> None:
@@ -1148,7 +1152,7 @@ async def test_run_logs_skipped_when_no_content(monkeypatch, capsys) -> None:
     monkeypatch.setattr("weather_briefing.cli.CachedLocationResolver", lambda *a, **kw: FakeResolver())
 
     class FakeState:
-        def __enter__(self) -> "FakeState":
+        def __enter__(self) -> "FakeState":  # noqa: PYI034
             return self
 
         def __exit__(self, *args: object) -> None:
@@ -1338,7 +1342,7 @@ class TestDeliveryProvider:
     async def test_telegram_with_config(self, async_client: httpx.AsyncClient) -> None:
         settings = _make_fake_settings(
             publisher="telegram",
-            telegram_bot_token="test-token",
+            telegram_bot_token="test-token",  # noqa: S106
             telegram_chat_id="test-chat",
         )
         provider = _delivery_provider(settings, async_client)
@@ -1376,7 +1380,7 @@ class TestDeliveryProvider:
     ) -> None:
         settings = _make_fake_settings(
             publisher="stdout",
-            telegram_bot_token="test-token",
+            telegram_bot_token="test-token",  # noqa: S106
             telegram_chat_id="test-chat",
         )
 
@@ -1433,7 +1437,7 @@ class TestWeatherContextProvider:
 
     @pytest.mark.parametrize(
         ("country_code", "office_code", "reason"),
-        (("JP", None, "missing-jma-office-code"), ("US", "130000", "known-non-japan-country")),
+        [("JP", None, "missing-jma-office-code"), ("US", "130000", "known-non-japan-country")],
     )
     async def test_unavailable_jma_skips_explicit_supplement(
         self,
@@ -1473,7 +1477,7 @@ class TestWeatherContextProvider:
 
     @pytest.mark.parametrize(
         ("country_code", "reason"),
-        ((None, "missing-country-code"), ("JP", "known-non-singapore-country")),
+        [(None, "missing-country-code"), ("JP", "known-non-singapore-country")],
     )
     async def test_unavailable_nea_skips_explicit_supplement(
         self,
@@ -1700,7 +1704,7 @@ async def test_aqicn_provider_returns_none_when_no_token(async_client: httpx.Asy
 
 
 async def test_aqicn_provider_returns_instance_when_token_set(async_client: httpx.AsyncClient) -> None:
-    settings = _make_fake_settings(aqicn_api_token="test-token")
+    settings = _make_fake_settings(aqicn_api_token="test-token")  # noqa: S106
     provider = _aqicn_provider(settings, async_client)
     assert provider is not None
 
@@ -1734,11 +1738,11 @@ def test_publisher_builders_cover_declared_configuration_names() -> None:
 
 @pytest.mark.parametrize(
     ("weather_briefings_enabled", "service_status_providers", "expected_jobs"),
-    (
+    [
         (True, ("openai",), ((run, ("forecast", True)), (run, ("briefing", True)), (run_service_status, ()))),
         (True, (), ((run, ("forecast", True)), (run, ("briefing", True)))),
         (False, ("openai",), ((run_service_status, ()),)),
-    ),
+    ],
 )
 async def test_daemon_schedules_weather_and_optional_service_status_without_running_immediately(
     monkeypatch,
