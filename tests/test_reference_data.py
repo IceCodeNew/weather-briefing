@@ -255,10 +255,7 @@ def test_reference_value_copies_only_the_selected_value(monkeypatch) -> None:
 
     class UnselectedValue:
         def __deepcopy__(self, memo):
-            msg = "reference_value must not copy the cached root"
-            raise AssertionError(  # pragma: no cover - reached only if root copying regresses
-                msg
-            )
+            raise AssertionError("reference_value must not copy the cached root")  # noqa: EM101, TRY003  # pragma: no cover - reached only if root copying regresses
 
     selected = {"items": ["one"]}
     root = {"selected": selected, "unselected": UnselectedValue()}
@@ -282,10 +279,7 @@ def test_reference_string_tuple_does_not_copy_the_cached_list(monkeypatch) -> No
 
     class CachedStrings(list[str]):
         def __deepcopy__(self, memo):
-            msg = "reference_string_tuple must not copy the cached list"
-            raise AssertionError(  # pragma: no cover - reached only if list copying regresses
-                msg
-            )
+            raise AssertionError("reference_string_tuple must not copy the cached list")  # noqa: EM101, TRY003  # pragma: no cover - reached only if list copying regresses
 
     cached = CachedStrings(["one", "two"])
     monkeypatch.setattr(resources_module, "_load_reference_data", lambda filename: {"selected": cached})

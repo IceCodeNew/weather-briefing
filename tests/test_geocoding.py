@@ -535,8 +535,7 @@ async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, ca
 async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path, cached: str) -> None:
     class NeverCalledGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            msg = "Invalid cache data must not trigger geocoding"
-            raise AssertionError(msg)
+            raise AssertionError("Invalid cache data must not trigger geocoding")  # noqa: EM101, TRY003  # pragma: no cover
 
     cache_path = tmp_path / "geocoding.json"
     cache_path.write_text(
@@ -557,8 +556,7 @@ async def test_coordinates_skip_geocoding_and_use_extreme_bounds(
 ) -> None:
     class FailingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            msg = "Coordinates must not trigger a geocoding request"
-            raise AssertionError(msg)
+            raise AssertionError("Coordinates must not trigger a geocoding request")  # noqa: EM101, TRY003  # pragma: no cover
 
     resolver = CachedLocationResolver(FailingGeocoder(), tmp_path / "cache.json")
 
@@ -616,8 +614,7 @@ async def test_cached_resolver_handles_broken_cache_file(tmp_path: Path) -> None
 
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            msg = "test failure"
-            raise GeocodingError(msg)
+            raise GeocodingError("test failure")  # noqa: EM101, TRY003  # pragma: no cover
 
     resolver = CachedLocationResolver(
         FallbackGeocodingProvider(FailingProvider()),
@@ -634,8 +631,7 @@ async def test_cached_resolver_rejects_non_dict_cache_root(tmp_path: Path) -> No
 
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            msg = "test failure"
-            raise GeocodingError(msg)
+            raise GeocodingError("test failure")  # noqa: EM101, TRY003  # pragma: no cover
 
     resolver = CachedLocationResolver(
         FallbackGeocodingProvider(FailingProvider()),
@@ -987,8 +983,7 @@ async def test_cached_resolver_rejects_non_dict_cached_value(tmp_path: Path) -> 
 
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            msg = "test failure"
-            raise GeocodingError(msg)
+            raise GeocodingError("test failure")  # noqa: EM101, TRY003  # pragma: no cover
 
     resolver = CachedLocationResolver(
         FallbackGeocodingProvider(FailingProvider()),
@@ -1030,8 +1025,7 @@ def test_mainland_china_rules_rejects_invalid_latitude_bounds(monkeypatch) -> No
             return {"minimum": "100", "maximum": "50"}
         if "longitude" in path:
             return {"minimum": "73", "maximum": "136"}
-        msg = f"Unexpected call: {filename} {path}"
-        raise AssertionError(msg)
+        raise AssertionError(f"Unexpected call: {filename} {path}")  # noqa: EM102, TRY003  # pragma: no cover
 
     monkeypatch.setattr("weather_briefing.geocoding.matching.reference_value", fake_value)
     monkeypatch.setattr(
@@ -1050,8 +1044,7 @@ def test_mainland_china_rules_rejects_invalid_longitude_bounds(monkeypatch) -> N
             return {"minimum": "18", "maximum": "54"}
         if "longitude" in path:
             return {"minimum": "200", "maximum": "250"}
-        msg = f"Unexpected call: {filename} {path}"
-        raise AssertionError(msg)
+        raise AssertionError(f"Unexpected call: {filename} {path}")  # noqa: EM102, TRY003  # pragma: no cover
 
     monkeypatch.setattr("weather_briefing.geocoding.matching.reference_value", fake_value)
     monkeypatch.setattr(

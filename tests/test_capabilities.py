@@ -75,8 +75,7 @@ async def test_capability_set_supplements_missing_current_air_quality() -> None:
 async def test_capability_set_does_not_supplement_dated_context() -> None:
     class Weather:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            msg = "dated fetch must use fetch_for_date"
-            raise AssertionError(msg)  # pragma: no cover
+            raise AssertionError("dated fetch must use fetch_for_date")  # noqa: EM101, TRY003  # pragma: no cover
 
         async def fetch_for_date(
             self,
@@ -89,8 +88,7 @@ async def test_capability_set_does_not_supplement_dated_context() -> None:
 
     class FailingAir:
         async def fetch(self, latitude: float, longitude: float, timezone: str) -> AirQualitySnapshot:
-            msg = "dated contexts must not use current air quality"
-            raise AssertionError(msg)  # pragma: no cover
+            raise AssertionError("dated contexts must not use current air quality")  # noqa: EM101, TRY003  # pragma: no cover
 
     provider = CapabilityProviderSet(
         weather=Weather(),

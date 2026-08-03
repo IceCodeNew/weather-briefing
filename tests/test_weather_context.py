@@ -946,8 +946,7 @@ async def test_weather_provider_logs_unexpected_error_type_without_message(caplo
 async def test_logged_provider_logs_unsupported_forecast_date_as_skip(caplog) -> None:
     class UndatedProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            msg = "Dated requests must not call the current-weather method"
-            raise AssertionError(msg)  # pragma: no cover
+            raise AssertionError("Dated requests must not call the current-weather method")  # noqa: EM101, TRY003  # pragma: no cover
 
     provider = LoggedWeatherContextProvider("nea-sg", UndatedProvider())
 
@@ -970,8 +969,7 @@ async def test_logged_provider_preserves_unsupported_date_when_skip_logging_fail
 ) -> None:
     class UndatedProvider:
         async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-            msg = "Dated requests must not call the current-weather method"
-            raise AssertionError(msg)  # pragma: no cover
+            raise AssertionError("Dated requests must not call the current-weather method")  # noqa: EM101, TRY003  # pragma: no cover
 
     if secondary_failure == "elapsed":
 
@@ -1111,8 +1109,7 @@ async def test_qweather_rejects_non_success_weather_status() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v7/weather/3d":
             return httpx.Response(200, json={"code": "400"})
-        msg = f"Unexpected request: {request.url}"
-        raise AssertionError(msg)
+        raise AssertionError(f"Unexpected request: {request.url}")  # noqa: EM102, TRY003  # pragma: no cover
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(WeatherContextError, match="non-success weather status code=400"):
@@ -1174,8 +1171,7 @@ async def test_qweather_rejects_empty_daily_forecast() -> None:
                 200,
                 json={"code": "200", "updateTime": "2026-07-13T08:00", "daily": []},
             )
-        msg = f"Unexpected request: {request.url}"
-        raise AssertionError(msg)
+        raise AssertionError(f"Unexpected request: {request.url}")  # noqa: EM102, TRY003  # pragma: no cover
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(WeatherContextError, match="no daily forecast"):
@@ -1348,8 +1344,7 @@ async def test_supplement_when_air_quality_present_skips_fallback() -> None:
 
     class FailingAirProvider:
         async def fetch(self, latitude: float, longitude: float, timezone: str) -> AirQualitySnapshot:
-            msg = "should not be called"
-            raise AssertionError(msg)
+            raise AssertionError("should not be called")  # noqa: EM101, TRY003  # pragma: no cover
 
     provider = AirQualitySupplementingWeatherProvider(WeatherProvider(), FailingAirProvider())
 
@@ -1777,8 +1772,7 @@ async def test_qweather_forecast_handles_non_dict_items() -> None:
                     ],
                 },
             )
-        msg = f"Unexpected request: {request.url}"
-        raise AssertionError(msg)
+        raise AssertionError(f"Unexpected request: {request.url}")  # noqa: EM102, TRY003  # pragma: no cover
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(WeatherContextError, match="weather forecast parsing failed: TypeError"):

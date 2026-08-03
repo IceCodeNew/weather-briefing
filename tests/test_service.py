@@ -77,8 +77,7 @@ def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
 
 class EmptyRSSSource:
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
-        msg = "No RSS feed should be requested in this test"
-        raise AssertionError(msg)
+        raise AssertionError("No RSS feed should be requested in this test")  # noqa: EM101, TRY003  # pragma: no cover
 
 
 class StaticRSSSource:

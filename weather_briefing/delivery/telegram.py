@@ -182,7 +182,7 @@ class _TelegramHTMLChunker(HTMLParser):
         if self._visible_length == self._limit:
             self._finish_chunk()
         start_tag = self.get_starttag_text()
-        if start_tag is None:
+        if start_tag is None:  # pragma: no cover - html.parser contract
             msg = f"HTML parser returned no start tag text for <{tag}>"
             raise TypeError(msg)
         self._parts.append(start_tag)
