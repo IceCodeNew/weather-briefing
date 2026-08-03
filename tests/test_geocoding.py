@@ -35,7 +35,8 @@ class _NeverCalledGeocoder:
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
         self.calls += 1
-        raise AssertionError("Unexpected forward geocoding")
+        msg = "Unexpected forward geocoding"
+        raise AssertionError(msg)
 
 
 class _NeverCalledReverseGeocoder:
@@ -44,7 +45,8 @@ class _NeverCalledReverseGeocoder:
 
     async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation:
         self.calls += 1
-        raise AssertionError("Unexpected reverse geocoding")
+        msg = "Unexpected reverse geocoding"
+        raise AssertionError(msg)
 
 
 async def test_never_called_geocoders_fail_when_invoked() -> None:
@@ -150,7 +152,8 @@ async def test_nominatim_fallback_resolves_detailed_place_name() -> None:
 
     class EmptyGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise GeocodingError("no city match")
+            msg = "no city match"
+            raise GeocodingError(msg)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = FallbackGeocodingProvider(
@@ -273,11 +276,11 @@ async def test_nominatim_reverse_geocoder_requires_coordinates() -> None:
 
 @pytest.mark.parametrize(
     "payload",
-    (
+    [
         [],
         {"display_name": "Example", "address": []},
         {"display_name": "", "address": {}},
-    ),
+    ],
 )
 async def test_nominatim_reverse_geocoder_rejects_invalid_response(payload: object) -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))) as client:
@@ -325,7 +328,8 @@ async def test_geocoder_reduces_precision_after_full_address_fails() -> None:
             location_name = _required_test_location_name(location)
             queries.append(location_name)
             if location_name.endswith("1号"):
-                raise GeocodingError("no building match")
+                msg = "no building match"
+                raise GeocodingError(msg)
             return ResolvedLocation(
                 location.id,
                 location_name,
@@ -395,7 +399,7 @@ async def test_resolver_caches_name_lookup(tmp_path: Path) -> None:
     assert "jma_office_code" not in cache_text
 
 
-@pytest.mark.parametrize("name", (None, "  "))
+@pytest.mark.parametrize("name", [None, "  "])
 async def test_resolver_reverse_geocodes_coordinate_only_location_and_caches_result(
     tmp_path: Path,
     name: str | None,
@@ -462,7 +466,7 @@ async def test_resolver_requires_reverse_provider_for_coordinate_only_location(t
     assert forward_geocoder.calls == 0
 
 
-@pytest.mark.parametrize("name", (None, "  "))
+@pytest.mark.parametrize("name", [None, "  "])
 async def test_forward_geocoder_requires_location_name(name: str | None) -> None:
     async with httpx.AsyncClient() as client:
         with pytest.raises(GeocodingError, match="Forward geocoding requires a name"):
@@ -494,13 +498,13 @@ async def test_forward_geocoder_strips_programmatic_location_name() -> None:
 
 @pytest.mark.parametrize(
     "cached",
-    (
+    [
         '"invalid"',
         '{"id":"example","name":"Example"}',
         '{"id":"example","name":"Example","latitude":1,"longitude":2,'
         '"country_code":null,"administrative_area":null,"timezone":null,'
         '"is_mainland_china":false,"summary_language":"english"}',
-    ),
+    ],
 )
 async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, cached: str) -> None:
     cache_path = tmp_path / "geocoding.json"
@@ -521,17 +525,18 @@ async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, ca
 
 @pytest.mark.parametrize(
     "cached",
-    (
+    [
         '{"id":"example","name":"Example"}',
         '{"id":"example","name":"Example","latitude":1,"longitude":2,'
         '"country_code":null,"administrative_area":null,"timezone":null,'
         '"is_mainland_china":false,"summary_language":"english"}',
-    ),
+    ],
 )
 async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path, cached: str) -> None:
     class NeverCalledGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise AssertionError("Invalid cache data must not trigger geocoding")
+            msg = "Invalid cache data must not trigger geocoding"
+            raise AssertionError(msg)
 
     cache_path = tmp_path / "geocoding.json"
     cache_path.write_text(
@@ -552,7 +557,8 @@ async def test_coordinates_skip_geocoding_and_use_extreme_bounds(
 ) -> None:
     class FailingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise AssertionError("Coordinates must not trigger a geocoding request")
+            msg = "Coordinates must not trigger a geocoding request"
+            raise AssertionError(msg)
 
     resolver = CachedLocationResolver(FailingGeocoder(), tmp_path / "cache.json")
 
@@ -584,7 +590,8 @@ async def test_fallback_geocoding_requires_at_least_one_provider() -> None:
 async def test_fallback_geocoding_raises_when_all_providers_fail() -> None:
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise GeocodingError("first failure")
+            msg = "first failure"
+            raise GeocodingError(msg)
 
     with pytest.raises(GeocodingError, match="No geocoder could resolve"):
         await FallbackGeocodingProvider(FailingProvider()).geocode(LocationSpec("test", "Test"))
@@ -593,7 +600,8 @@ async def test_fallback_geocoding_raises_when_all_providers_fail() -> None:
 async def test_fallback_geocoding_preserves_only_safe_cause_type() -> None:
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise GeocodingError("failure for Private Home Address", cause_type=httpx.ConnectError)
+            msg = "failure for Private Home Address"
+            raise GeocodingError(msg, cause_type=httpx.ConnectError)
 
     with pytest.raises(GeocodingError) as caught:
         await FallbackGeocodingProvider(FailingProvider()).geocode(LocationSpec("home", "Private Home Address"))
@@ -608,7 +616,8 @@ async def test_cached_resolver_handles_broken_cache_file(tmp_path: Path) -> None
 
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise GeocodingError("test failure")
+            msg = "test failure"
+            raise GeocodingError(msg)
 
     resolver = CachedLocationResolver(
         FallbackGeocodingProvider(FailingProvider()),
@@ -625,7 +634,8 @@ async def test_cached_resolver_rejects_non_dict_cache_root(tmp_path: Path) -> No
 
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise GeocodingError("test failure")
+            msg = "test failure"
+            raise GeocodingError(msg)
 
     resolver = CachedLocationResolver(
         FallbackGeocodingProvider(FailingProvider()),
@@ -811,7 +821,8 @@ async def test_forward_geocoding_failure_traceback_omits_private_location_name()
     private_name = "Private Home Address"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError(f"connection failed for {private_name}", request=request)
+        msg = f"connection failed for {private_name}"
+        raise httpx.ConnectError(msg, request=request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(GeocodingError) as caught:
@@ -898,7 +909,8 @@ async def test_precision_reducing_provider_exhausts_all_candidates() -> None:
     class FailingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
             calls.append(_required_test_location_name(location))
-            raise GeocodingError("no match")
+            msg = "no match"
+            raise GeocodingError(msg)
 
     with pytest.raises(GeocodingError, match="No geocoder could resolve location at a safe precision"):
         await PrecisionReducingGeocodingProvider(FailingGeocoder()).geocode(
@@ -914,7 +926,8 @@ async def test_precision_reducing_provider_keeps_international_trailing_digits()
     class FailingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
             calls.append(_required_test_location_name(location))
-            raise GeocodingError("no match")
+            msg = "no match"
+            raise GeocodingError(msg)
 
     with pytest.raises(GeocodingError, match="No geocoder could resolve location at a safe precision"):
         await PrecisionReducingGeocodingProvider(FailingGeocoder()).geocode(
@@ -927,7 +940,8 @@ async def test_precision_reducing_provider_keeps_international_trailing_digits()
 async def test_precision_reducing_provider_preserves_only_safe_cause_type() -> None:
     class FailingGeocoder:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise GeocodingError("failure for Private Home Address", cause_type=httpx.ConnectError)
+            msg = "failure for Private Home Address"
+            raise GeocodingError(msg, cause_type=httpx.ConnectError)
 
     with pytest.raises(GeocodingError) as caught:
         await PrecisionReducingGeocodingProvider(FailingGeocoder()).geocode(
@@ -946,7 +960,8 @@ async def test_precision_reducing_provider_continues_after_geocoding_error() -> 
             location_name = _required_test_location_name(location)
             calls.append(location_name)
             if "1号" in location_name:
-                raise GeocodingError("no building match")
+                msg = "no building match"
+                raise GeocodingError(msg)
             return ResolvedLocation(
                 location.id,
                 location_name,
@@ -972,7 +987,8 @@ async def test_cached_resolver_rejects_non_dict_cached_value(tmp_path: Path) -> 
 
     class FailingProvider:
         async def geocode(self, location: LocationSpec) -> ResolvedLocation:
-            raise GeocodingError("test failure")
+            msg = "test failure"
+            raise GeocodingError(msg)
 
     resolver = CachedLocationResolver(
         FallbackGeocodingProvider(FailingProvider()),
@@ -1014,7 +1030,8 @@ def test_mainland_china_rules_rejects_invalid_latitude_bounds(monkeypatch) -> No
             return {"minimum": "100", "maximum": "50"}
         if "longitude" in path:
             return {"minimum": "73", "maximum": "136"}
-        raise AssertionError(f"Unexpected call: {filename} {path}")
+        msg = f"Unexpected call: {filename} {path}"
+        raise AssertionError(msg)
 
     monkeypatch.setattr("weather_briefing.geocoding.matching.reference_value", fake_value)
     monkeypatch.setattr(
@@ -1033,7 +1050,8 @@ def test_mainland_china_rules_rejects_invalid_longitude_bounds(monkeypatch) -> N
             return {"minimum": "18", "maximum": "54"}
         if "longitude" in path:
             return {"minimum": "200", "maximum": "250"}
-        raise AssertionError(f"Unexpected call: {filename} {path}")
+        msg = f"Unexpected call: {filename} {path}"
+        raise AssertionError(msg)
 
     monkeypatch.setattr("weather_briefing.geocoding.matching.reference_value", fake_value)
     monkeypatch.setattr(

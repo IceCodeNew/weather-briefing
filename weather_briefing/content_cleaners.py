@@ -47,11 +47,13 @@ class HTMLContentCleaner:
                 for element in soup.select(selector):
                     element.decompose()
         except SelectorSyntaxError as exc:
-            raise ContentCleaningError("Invalid content removal selector") from exc
+            msg = "Invalid content removal selector"
+            raise ContentCleaningError(msg) from exc
         try:
             patterns = tuple(re.compile(pattern) for pattern in (*default_patterns, *rules.remove_patterns))
         except re.error as exc:
-            raise ContentCleaningError("Invalid content removal pattern") from exc
+            msg = "Invalid content removal pattern"
+            raise ContentCleaningError(msg) from exc
         lines = (line.strip() for line in soup.get_text("\n").splitlines())
         return "\n".join(line for line in lines if line and not any(pattern.search(line) for pattern in patterns))
 

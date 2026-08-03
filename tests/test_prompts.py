@@ -19,7 +19,7 @@ from weather_briefing.notification_decision.policies import (
 def test_system_prompt_load_failure_is_actionable(error: Exception) -> None:
     with (
         patch("importlib.resources.files", side_effect=error),
-        pytest.raises(RuntimeError, match="Unable to load prompt: system_prompt.txt"),
+        pytest.raises(RuntimeError, match=r"Unable to load prompt: system_prompt\.txt"),
     ):
         _load_system_prompt()
 
@@ -32,7 +32,7 @@ def test_system_prompt_load_failure_is_actionable(error: Exception) -> None:
 def test_notification_prompt_load_failure_is_actionable(error: Exception) -> None:
     with (
         patch("importlib.resources.files", side_effect=error),
-        pytest.raises(RuntimeError, match="Unable to load notification policy: weather.txt"),
+        pytest.raises(RuntimeError, match=r"Unable to load notification policy: weather\.txt"),
     ):
         _load_notification_prompt("weather.txt")
 

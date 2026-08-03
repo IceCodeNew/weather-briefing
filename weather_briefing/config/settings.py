@@ -3,22 +3,21 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import pendulum
 from any_llm import AnyLLM
 
-from ..data.any_llm_compatibility import (
+from weather_briefing.data.any_llm_compatibility import (
     UNSUPPORTED_DEFAULT_HEADER_PROVIDERS,
     UNSUPPORTED_JSON_OBJECT_PROVIDERS,
 )
-from ..data.bark import BARK_DEFAULT_LLM_MAX_OUTPUT_TOKENS, BARK_MAX_MESSAGE_LENGTH
-from ..data.service_endpoints import BARK_BASE_URL
-from ..models import FeedConfig, LocationSpec
-from ..registries import PublisherName
+from weather_briefing.data.bark import BARK_DEFAULT_LLM_MAX_OUTPUT_TOKENS, BARK_MAX_MESSAGE_LENGTH
+from weather_briefing.data.service_endpoints import BARK_BASE_URL
+from weather_briefing.registries import PublisherName
+
 from .base import ConfigurationError
 from .environment import (
     boolean,
@@ -42,6 +41,12 @@ from .environment import (
 from .feeds import load_feeds
 from .http_headers import headers_from_env
 from .locations import load_locations
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
+
+    from weather_briefing.models import FeedConfig, LocationSpec
 
 _DEFAULT_LLM_MAX_OUTPUT_TOKENS = 8192
 
@@ -107,7 +112,7 @@ class Settings:
     debug: bool
 
     @classmethod
-    def from_env(cls) -> Settings:
+    def from_env(cls) -> Settings:  # noqa: C901, PLR0912, PLR0915
         """Load and validate application settings from the environment."""
         locations_path = path_from_env("BRIEFING_LOCATIONS_FILE", "locations.json")
         rss_sources_path = path_from_env("RSS_SOURCES_FILE", "rss-sources.json")
@@ -121,11 +126,13 @@ class Settings:
         try:
             timezone = pendulum.timezone(clean_env(os.getenv("BRIEFING_TIMEZONE", "Asia/Shanghai")))
         except (ValueError, KeyError) as exc:
-            raise ConfigurationError("Invalid timezone") from exc
+            msg = "Invalid timezone"
+            raise ConfigurationError(msg) from exc
         retry_min = number("RSS_RETRY_MIN_SECONDS", 3)
         retry_max = number("RSS_RETRY_MAX_SECONDS", 5)
         if retry_min < 0 or retry_max < retry_min:
-            raise ConfigurationError("RSS retry delay range is invalid")
+            msg = "RSS retry delay range is invalid"
+            raise ConfigurationError(msg)
         selected_publisher = publisher()
         service_status_publishers = configured_service_status_publishers(selected_publisher)
         bark_selected = selected_publisher == PublisherName.BARK
@@ -137,9 +144,11 @@ class Settings:
         telegram_chat_id = clean_env(os.getenv("TELEGRAM_CHAT_ID")) or None
         if telegram_configured:
             if telegram_bot_token is None:
-                raise ConfigurationError("Missing required environment variable: TELEGRAM_BOT_TOKEN")
+                msg = "Missing required environment variable: TELEGRAM_BOT_TOKEN"
+                raise ConfigurationError(msg)
             if telegram_chat_id is None:
-                raise ConfigurationError("Missing required environment variable: TELEGRAM_CHAT_ID")
+                msg = "Missing required environment variable: TELEGRAM_CHAT_ID"
+                raise ConfigurationError(msg)
         if bark_selected:
             briefing_max_characters = bounded_positive_integer(
                 "BRIEFING_MAX_CHARACTERS",
@@ -169,14 +178,17 @@ class Settings:
             api_key = None
             llm_base_url = None
         if not llm_model:
-            raise ConfigurationError("Missing required environment variable: LLM_MODEL")
+            msg = "Missing required environment variable: LLM_MODEL"
+            raise ConfigurationError(msg)
         llm_fallback_provider = clean_env(os.getenv("LLM_FALLBACK_PROVIDER")) or None
         llm_fallback_model = clean_env(os.getenv("LLM_FALLBACK_MODEL")) or None
         if (llm_fallback_provider is None) != (llm_fallback_model is None):
-            raise ConfigurationError("LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL must be configured together")
+            msg = "LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL must be configured together"
+            raise ConfigurationError(msg)
         llm_fallback_extra_headers = headers_from_env("LLM_FALLBACK_EXTRA_HEADERS")
         if llm_fallback_extra_headers and llm_fallback_provider is None:
-            raise ConfigurationError("LLM_FALLBACK_EXTRA_HEADERS requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL")
+            msg = "LLM_FALLBACK_EXTRA_HEADERS requires LLM_FALLBACK_PROVIDER and LLM_FALLBACK_MODEL"
+            raise ConfigurationError(msg)
         if llm_fallback_provider is not None:
             _validate_llm_headers_provider(
                 "LLM_FALLBACK_EXTRA_HEADERS",
@@ -202,32 +214,39 @@ class Settings:
         if bark_configured:
             bark_device_key = clean_env(os.getenv("BARK_DEVICE_KEY")) or None
             if bark_device_key is None:
-                raise ConfigurationError("Missing required environment variable: BARK_DEVICE_KEY")
+                msg = "Missing required environment variable: BARK_DEVICE_KEY"
+                raise ConfigurationError(msg)
             bark_encryption_key = clean_env(os.getenv("BARK_ENCRYPTION_KEY")) or None
             if bark_encryption_key is not None:
                 try:
                     encoded_bark_key = bark_encryption_key.encode("ascii")
                 except UnicodeEncodeError as exc:
-                    raise ConfigurationError("BARK_ENCRYPTION_KEY must contain only ASCII characters") from exc
+                    msg = "BARK_ENCRYPTION_KEY must contain only ASCII characters"
+                    raise ConfigurationError(msg) from exc
                 if len(encoded_bark_key) not in {16, 24, 32}:
-                    raise ConfigurationError("BARK_ENCRYPTION_KEY must contain 16, 24, or 32 ASCII characters")
+                    msg = "BARK_ENCRYPTION_KEY must contain 16, 24, or 32 ASCII characters"
+                    raise ConfigurationError(msg)
             bark_encryption_iv = clean_env(os.getenv("BARK_ENCRYPTION_IV")) or None
             if bark_encryption_iv is not None:
                 try:
                     encoded_bark_iv = bark_encryption_iv.encode("ascii")
                 except UnicodeEncodeError as exc:
-                    raise ConfigurationError("BARK_ENCRYPTION_IV must contain only ASCII characters") from exc
-                if len(encoded_bark_iv) != 12:
-                    raise ConfigurationError("BARK_ENCRYPTION_IV must contain exactly 12 ASCII characters")
+                    msg = "BARK_ENCRYPTION_IV must contain only ASCII characters"
+                    raise ConfigurationError(msg) from exc
+                if len(encoded_bark_iv) != 12:  # noqa: PLR2004
+                    msg = "BARK_ENCRYPTION_IV must contain exactly 12 ASCII characters"
+                    raise ConfigurationError(msg)
             if (bark_encryption_key is None) != (bark_encryption_iv is None):
-                raise ConfigurationError("BARK_ENCRYPTION_KEY and BARK_ENCRYPTION_IV must be configured together")
+                msg = "BARK_ENCRYPTION_KEY and BARK_ENCRYPTION_IV must be configured together"
+                raise ConfigurationError(msg)
             bark_base_url = clean_env(os.getenv("BARK_BASE_URL", BARK_BASE_URL)).rstrip("/")
             try:
                 parsed_bark_base_url = urlsplit(bark_base_url)
                 hostname = parsed_bark_base_url.hostname
                 port = parsed_bark_base_url.port
             except ValueError as exc:
-                raise ConfigurationError("BARK_BASE_URL must be a valid absolute HTTP(S) URL") from exc
+                msg = "BARK_BASE_URL must be a valid absolute HTTP(S) URL"
+                raise ConfigurationError(msg) from exc
             if (
                 parsed_bark_base_url.scheme not in {"http", "https"}
                 or hostname is None
@@ -237,12 +256,12 @@ class Settings:
                 or parsed_bark_base_url.query
                 or parsed_bark_base_url.fragment
             ):
-                raise ConfigurationError(
-                    "BARK_BASE_URL must be an absolute HTTP(S) URL without credentials or parameters"
-                )
+                msg = "BARK_BASE_URL must be an absolute HTTP(S) URL without credentials or parameters"
+                raise ConfigurationError(msg)
             bark_group = clean_env(os.getenv("BARK_GROUP", "weather-briefing"))
             if not bark_group:
-                raise ConfigurationError("BARK_GROUP must not be empty")
+                msg = "BARK_GROUP must not be empty"
+                raise ConfigurationError(msg)
         return cls(
             api_key=api_key,
             llm_provider=llm_provider,
@@ -298,18 +317,21 @@ class Settings:
             greeting_minute=daily_cron_minute,
             hourly_cron=hourly_cron,
             service_status_cron=service_status_cron,
-            debug=boolean("DEBUG", False),
+            debug=boolean("DEBUG", default=False),
         )
 
 
 def _validate_llm_provider(setting_name: str, provider: str) -> None:
     """Require a known any-llm provider with completion support."""
     if provider not in AnyLLM.get_supported_providers():
-        raise ConfigurationError(f"Unsupported {setting_name}: {provider}")
+        msg = f"Unsupported {setting_name}: {provider}"
+        raise ConfigurationError(msg)
     if not AnyLLM.get_provider_class(provider).SUPPORTS_COMPLETION:
-        raise ConfigurationError(f"{setting_name} does not support completion: {provider}")
+        msg = f"{setting_name} does not support completion: {provider}"
+        raise ConfigurationError(msg)
     if provider in UNSUPPORTED_JSON_OBJECT_PROVIDERS:
-        raise ConfigurationError(f"{setting_name} does not support required JSON Object output: {provider}")
+        msg = f"{setting_name} does not support required JSON Object output: {provider}"
+        raise ConfigurationError(msg)
 
 
 def _validate_llm_headers_provider(
@@ -320,4 +342,5 @@ def _validate_llm_headers_provider(
 ) -> None:
     """Reject custom headers for providers without the shared client option."""
     if headers and provider in UNSUPPORTED_DEFAULT_HEADER_PROVIDERS:
-        raise ConfigurationError(f"{headers_setting_name} does not support {provider_setting_name}={provider}")
+        msg = f"{headers_setting_name} does not support {provider_setting_name}={provider}"
+        raise ConfigurationError(msg)

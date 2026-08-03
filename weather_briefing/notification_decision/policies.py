@@ -17,7 +17,8 @@ def _load_notification_prompt(filename: str) -> str:
     try:
         return resources.files(_notification_prompt_package()).joinpath(filename).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise RuntimeError(f"Unable to load notification policy: {filename}") from exc
+        msg = f"Unable to load notification policy: {filename}"
+        raise RuntimeError(msg) from exc
 
 
 WEATHER_NOTIFICATION_PROMPT = _load_notification_prompt("weather.txt")

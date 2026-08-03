@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
 from contextlib import contextmanager
 from inspect import isawaitable
-from typing import Protocol, TypeAlias
+from typing import TYPE_CHECKING, Protocol, TypeAlias
 
 from any_llm import AnyLLM
 from any_llm.exceptions import AnyLLMError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
-from ..api_client import api_call_context
+from weather_briefing.api_client import api_call_context
+
 from .base import LLMRequestError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
@@ -56,7 +59,7 @@ def _normalize_request_errors(
         raise
 
 
-async def complete_structured(
+async def complete_structured(  # noqa: PLR0913
     client: AnyLLM | LLMCompletionClient,
     *,
     provider: str,
@@ -101,10 +104,12 @@ def structured_output_request(
 ) -> tuple[list[dict[str, str]], ResponseFormat]:
     """Prepare prompt-constrained JSON Object transport."""
     if not messages or messages[-1].get("role") != "user":
-        raise ValueError("JSON Object structured output requires a final user message")
+        msg = "JSON Object structured output requires a final user message"
+        raise ValueError(msg)
     content = messages[-1].get("content")
     if not isinstance(content, str):
-        raise ValueError("JSON Object structured output final user message must include string content")
+        msg = "JSON Object structured output final user message must include string content"
+        raise ValueError(msg)  # noqa: TRY004
     schema = json.dumps(response_format.model_json_schema(), ensure_ascii=False, separators=(",", ":"))
     final_message = {
         **messages[-1],
@@ -129,7 +134,7 @@ async def close_llm_resource(resource: object) -> bool:
         result = close()
         if isawaitable(result):
             await result
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _LOGGER.warning(
             "Failed to close LLM SDK resource type=%s error_type=%s",
             type(resource).__name__,

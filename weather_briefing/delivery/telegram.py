@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import logging
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING
 
 import httpx
 
-from ..api_client import api_call_extensions
-from ..models import RenderedMessage
+from weather_briefing.api_client import api_call_extensions
+
 from . import telegram_reference
 from .base import DeliveryError, RenderedTextDiagnostics, rendered_text_logging_enabled
+
+if TYPE_CHECKING:
+    from weather_briefing.models import RenderedMessage
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 
@@ -43,8 +47,9 @@ class TelegramPublisher:
     ) -> None:
         """Publish one message, splitting it only when allowed."""
         if single_message and message.visible_length > self.MAX_MESSAGE_LENGTH:
+            msg = "Telegram single message exceeds the platform limit"
             raise DeliveryError(
-                "Telegram single message exceeds the platform limit",
+                msg,
                 reason="message-too-long",
             )
         chunks = (message.body,) if single_message else split_message(message.body, self.MAX_MESSAGE_LENGTH)
@@ -95,8 +100,9 @@ class TelegramPublisher:
                     exc.response.status_code,
                     reason,
                 )
+                msg = f"Telegram delivery failed ({reason})"
                 raise DeliveryError(
-                    f"Telegram delivery failed ({reason})",
+                    msg,
                     reason=reason,
                     channel_unavailable=channel_unavailable,
                 ) from None
@@ -110,8 +116,9 @@ class TelegramPublisher:
                     len(chunk),
                     type(exc).__name__,
                 )
+                msg = "Telegram delivery failed (request-error)"
                 raise DeliveryError(
-                    "Telegram delivery failed (request-error)",
+                    msg,
                     reason="request-error",
                 ) from None
             _LOGGER.debug(
@@ -150,7 +157,8 @@ def telegram_error_reason(response: httpx.Response) -> tuple[str, bool]:
 def split_message(body: str, limit: int) -> tuple[str, ...]:
     """Split Telegram HTML into independently valid chunks."""
     if limit <= 0:
-        raise ValueError("Message split limit must be positive")
+        msg = "Message split limit must be positive"
+        raise ValueError(msg)
     if len(body) <= limit:
         return (body,)
     chunker = _TelegramHTMLChunker(limit)
@@ -170,11 +178,13 @@ class _TelegramHTMLChunker(HTMLParser):
         self._open_tags: list[tuple[str, str]] = []
         self._visible_length = 0
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:  # noqa: ARG002
         if self._visible_length == self._limit:
             self._finish_chunk()
         start_tag = self.get_starttag_text()
-        assert start_tag is not None
+        if start_tag is None:
+            msg = f"HTML parser returned no start tag text for <{tag}>"
+            raise TypeError(msg)
         self._parts.append(start_tag)
         self._open_tags.append((tag, start_tag))
 

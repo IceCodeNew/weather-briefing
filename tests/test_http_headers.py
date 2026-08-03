@@ -8,7 +8,7 @@ from weather_briefing.config.http_headers import headers_from_env
 
 @pytest.mark.parametrize(
     ("configured", "message"),
-    (
+    [
         ("not-json", "valid JSON object"),
         ("null", "must be a JSON object"),
         ("[]", "must be a JSON object"),
@@ -19,7 +19,7 @@ from weather_briefing.config.http_headers import headers_from_env
         ('{"X-Test":"café"}', "only ASCII characters"),
         ('{"X-Test":"line\\nbreak"}', "control characters"),
         ('{"X-Test":"value","x-test":"other"}', "duplicate HTTP header names"),
-    ),
+    ],
 )
 def test_headers_from_env_rejects_invalid_json_objects(monkeypatch, configured: str, message: str) -> None:
     monkeypatch.setenv("LLM_EXTRA_HEADERS", configured)

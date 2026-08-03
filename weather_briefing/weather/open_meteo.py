@@ -3,19 +3,23 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
-import pendulum
 
-from .. import allergen as allergen_module
-from ..api_client import api_call_extensions
-from ..data.resources import ReferenceDataError
-from ..data.service_endpoints import OPEN_METEO_AIR_QUALITY_BASE_URL, OPEN_METEO_WEATHER_BASE_URL
-from ..languages import LanguageSupport
-from ..models import AirQualitySnapshot, AirQualityTimeKind, AllergenSnapshot, WeatherContextSnapshot
-from ..time_utils import parse_datetime_with_default_timezone
+from weather_briefing import allergen as allergen_module
+from weather_briefing.api_client import api_call_extensions
+from weather_briefing.data.resources import ReferenceDataError
+from weather_briefing.data.service_endpoints import OPEN_METEO_AIR_QUALITY_BASE_URL, OPEN_METEO_WEATHER_BASE_URL
+from weather_briefing.languages import LanguageSupport
+from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind, AllergenSnapshot, WeatherContextSnapshot
+from weather_briefing.time_utils import parse_datetime_with_default_timezone
+
 from . import open_meteo_parsing, open_meteo_reference
 from .base import WeatherContextError, _is_string_keyed_dict, _safe_provider_error
+
+if TYPE_CHECKING:
+    import pendulum
 
 _LOGGER = logging.getLogger("weather_briefing.weather_context")
 OPEN_METEO_LANGUAGE_SUPPORT = LanguageSupport.fixed("en")
@@ -52,7 +56,7 @@ class OpenMeteoProvider:
         params: dict[str, str | int | float] = {
             "latitude": latitude,
             "longitude": longitude,
-            "daily": ",".join(
+            "daily": ",".join(  # noqa: FLY002
                 (
                     "weather_code",
                     "temperature_2m_max",
@@ -87,12 +91,14 @@ class OpenMeteoProvider:
             payload = response.json()
             daily = payload["daily"]
             if not _is_string_keyed_dict(daily):
-                raise open_meteo_parsing.OpenMeteoResponseError("daily forecast must be an object")
+                msg = "daily forecast must be an object"
+                raise open_meteo_parsing.OpenMeteoResponseError(msg)  # noqa: TRY301
             times = open_meteo_parsing.daily_values(daily, "time")
             forecast_count = min(2, len(times)) if forecast_date is None else len(times)
             weather_forecast = tuple(open_meteo_parsing.format_day(daily, index) for index in range(forecast_count))
             if not weather_forecast:
-                raise WeatherContextError("Open-Meteo returned no daily forecast")
+                msg = "Open-Meteo returned no daily forecast"
+                raise WeatherContextError(msg)  # noqa: TRY301
             current: dict[str, object] = payload["current"]
             observed_at = parse_datetime_with_default_timezone(
                 str(current["time"]),
@@ -102,9 +108,11 @@ class OpenMeteoProvider:
         except WeatherContextError:
             raise
         except open_meteo_parsing.OpenMeteoResponseError as exc:
-            raise WeatherContextError(f"Open-Meteo weather forecast parsing failed: {exc}") from None
+            msg = f"Open-Meteo weather forecast parsing failed: {exc}"
+            raise WeatherContextError(msg) from None
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise WeatherContextError(f"Open-Meteo weather forecast failed: {_safe_provider_error(exc)}") from None
+            msg = f"Open-Meteo weather forecast failed: {_safe_provider_error(exc)}"
+            raise WeatherContextError(msg) from None
 
         air_quality, allergen = await self._fetch_air_quality_and_allergen(
             latitude,
@@ -131,7 +139,7 @@ class OpenMeteoProvider:
         """Fetch Open-Meteo context for an explicit forecast date."""
         return await self.fetch(latitude, longitude, forecast_date=forecast_date)
 
-    async def _fetch_air_quality_and_allergen(
+    async def _fetch_air_quality_and_allergen(  # noqa: C901
         self,
         latitude: float,
         longitude: float,
@@ -174,16 +182,19 @@ class OpenMeteoProvider:
             response.raise_for_status()
             payload = response.json()
             if not _is_string_keyed_dict(payload):
-                raise open_meteo_parsing.OpenMeteoResponseError("air-quality response must be an object")
+                msg = "air-quality response must be an object"
+                raise open_meteo_parsing.OpenMeteoResponseError(msg)
             if forecast_date is None:
                 air_quality_values = payload["current"]
                 if not _is_string_keyed_dict(air_quality_values):
-                    raise open_meteo_parsing.OpenMeteoResponseError("current air quality must be an object")
+                    msg = "current air quality must be an object"
+                    raise open_meteo_parsing.OpenMeteoResponseError(msg)
                 allergen_values = air_quality_values
             else:
                 hourly = payload["hourly"]
                 if not _is_string_keyed_dict(hourly):
-                    raise open_meteo_parsing.OpenMeteoResponseError("hourly air quality must be an object")
+                    msg = "hourly air quality must be an object"
+                    raise open_meteo_parsing.OpenMeteoResponseError(msg)
                 air_quality_values, allergen_values = open_meteo_parsing.daily_peak_values(hourly, pollen_types)
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             reason = (

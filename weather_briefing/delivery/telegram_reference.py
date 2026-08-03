@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
-from ..data import resources
-from ..data.resources import ReferenceDataError
+from weather_briefing.data import resources
+from weather_briefing.data.resources import ReferenceDataError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _CLASSIFICATION_REASON = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
@@ -25,7 +28,7 @@ class TelegramErrorClassification:
 
 
 @cache
-def telegram_error_classification() -> TelegramErrorClassification:
+def telegram_error_classification() -> TelegramErrorClassification:  # noqa: C901, PLR0912
     """Return validated Telegram API error classification data."""
     value = resources.load_reference_data("telegram_error_classification.json")
     markers = value.get("description_markers")
@@ -38,9 +41,11 @@ def telegram_error_classification() -> TelegramErrorClassification:
         "parameter_reasons",
         "status_reasons",
     }:
-        raise ReferenceDataError("Telegram error classification must contain the supported fields")
+        msg = "Telegram error classification must contain the supported fields"
+        raise ReferenceDataError(msg)
     if not isinstance(markers, dict) or not markers:
-        raise ReferenceDataError("Telegram description markers must map normalized strings to reasons")
+        msg = "Telegram description markers must map normalized strings to reasons"
+        raise ReferenceDataError(msg)
     validated_markers: list[tuple[str, str]] = []
     for marker, reason in markers.items():
         if (
@@ -50,28 +55,33 @@ def telegram_error_classification() -> TelegramErrorClassification:
             or not isinstance(reason, str)
             or _CLASSIFICATION_REASON.fullmatch(reason) is None
         ):
-            raise ReferenceDataError("Telegram description markers must map normalized strings to reasons")
+            msg = "Telegram description markers must map normalized strings to reasons"
+            raise ReferenceDataError(msg)
         validated_markers.append((marker, reason))
 
     if not isinstance(parameters, dict) or set(parameters) != {"migrate_to_chat_id"}:
-        raise ReferenceDataError("Telegram parameters must map supported API fields to reasons")
+        msg = "Telegram parameters must map supported API fields to reasons"
+        raise ReferenceDataError(msg)
     migration_reason = parameters.get("migrate_to_chat_id")
     if not isinstance(migration_reason, str) or _CLASSIFICATION_REASON.fullmatch(migration_reason) is None:
-        raise ReferenceDataError("Telegram parameters must map supported API fields to reasons")
+        msg = "Telegram parameters must map supported API fields to reasons"
+        raise ReferenceDataError(msg)
 
     if not isinstance(statuses, dict) or not statuses:
-        raise ReferenceDataError("Telegram statuses must map HTTP error codes to reasons")
+        msg = "Telegram statuses must map HTTP error codes to reasons"
+        raise ReferenceDataError(msg)
     validated_statuses: dict[int, str] = {}
     for status, reason in statuses.items():
         if (
             not isinstance(status, str)
             or not status.isascii()
             or not status.isdigit()
-            or not 400 <= int(status) <= 599
+            or not 400 <= int(status) <= 599  # noqa: PLR2004
             or not isinstance(reason, str)
             or _CLASSIFICATION_REASON.fullmatch(reason) is None
         ):
-            raise ReferenceDataError("Telegram statuses must map HTTP error codes to reasons")
+            msg = "Telegram statuses must map HTTP error codes to reasons"
+            raise ReferenceDataError(msg)
         validated_statuses[int(status)] = reason
 
     known_reasons = {
@@ -80,16 +90,19 @@ def telegram_error_classification() -> TelegramErrorClassification:
         *validated_statuses.values(),
     }
     if not isinstance(unavailable_reasons, list) or not unavailable_reasons:
-        raise ReferenceDataError("Telegram channel availability must reference known reasons")
+        msg = "Telegram channel availability must reference known reasons"
+        raise ReferenceDataError(msg)
     validated_unavailable_reasons: list[str] = []
     for reason in unavailable_reasons:
         if not isinstance(reason, str) or _CLASSIFICATION_REASON.fullmatch(reason) is None:
-            raise ReferenceDataError("Telegram channel availability must reference known reasons")
+            msg = "Telegram channel availability must reference known reasons"
+            raise ReferenceDataError(msg)
         validated_unavailable_reasons.append(reason)
     if len(set(validated_unavailable_reasons)) != len(validated_unavailable_reasons) or not set(
         validated_unavailable_reasons
     ).issubset(known_reasons):
-        raise ReferenceDataError("Telegram channel availability must reference known reasons")
+        msg = "Telegram channel availability must reference known reasons"
+        raise ReferenceDataError(msg)
 
     return TelegramErrorClassification(
         description_markers=tuple(validated_markers),

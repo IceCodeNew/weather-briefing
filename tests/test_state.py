@@ -6,7 +6,7 @@ from time import monotonic
 import pendulum
 import pytest
 
-from weather_briefing.models import Article, BriefingRecord, SourceDocument, Warning
+from weather_briefing.models import Article, BriefingRecord, SourceDocument, WeatherWarning
 from weather_briefing.persistence.schema import initialize_state
 from weather_briefing.state import SQLiteRuntimeDiagnostics, SQLiteStateStore
 
@@ -203,7 +203,7 @@ def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> No
         is_verbatim=True,
     )
     document = SourceDocument("context", "Context", "https://example.invalid/c", "context")
-    warning = Warning("warning", "Warning", "active", "detail", (regular.id,), now)
+    warning = WeatherWarning("warning", "Warning", "active", "detail", (regular.id,), now)
 
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.save_pending_articles((regular, verbatim), now.subtract(hours=1))
@@ -234,7 +234,7 @@ def test_published_result_is_committed_with_verbatim_queue(tmp_path: Path) -> No
 def test_active_warnings_rejects_invalid_stored_payload(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="UTC")
     state_path = tmp_path / "state.db"
-    warning = Warning("warning", "Warning", "active", "detail", ("source",), now)
+    warning = WeatherWarning("warning", "Warning", "active", "detail", ("source",), now)
     valid_fields = '"id":"warning","title":"Warning","status":"active","detail":"detail"'
 
     with SQLiteStateStore(state_path) as state:
@@ -303,7 +303,7 @@ def test_unpublished_result_commits_pending_state_without_delivery_queue(tmp_pat
         is_verbatim=True,
     )
     document = SourceDocument("context", "Context", "https://example.invalid/c", "context")
-    warning = Warning("warning", "Warning", "active", "detail", (article.id,), now)
+    warning = WeatherWarning("warning", "Warning", "active", "detail", (article.id,), now)
 
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.commit_result(
@@ -388,8 +388,8 @@ def test_result_checkpoint_rolls_back_all_state_and_can_be_retried(tmp_path: Pat
         is_verbatim=True,
     )
     document = SourceDocument("context", "Context", "https://example.invalid/c", "context")
-    old_warning = Warning("old-warning", "Old", "active", "old", (article.id,), now.subtract(hours=1))
-    new_warning = Warning("new-warning", "New", "active", "new", (article.id,), now)
+    old_warning = WeatherWarning("old-warning", "Old", "active", "old", (article.id,), now.subtract(hours=1))
+    new_warning = WeatherWarning("new-warning", "New", "active", "new", (article.id,), now)
 
     with SQLiteStateStore(state_path) as state:
         state.save_pending_articles((article,), now.subtract(hours=1))
@@ -444,8 +444,8 @@ def test_result_checkpoint_rolls_back_all_state_and_can_be_retried(tmp_path: Pat
 
 def test_update_warnings_rolls_back_resolutions_when_insert_fails(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
-    old_warning = Warning("old-warning", "Old", "active", "old", ("source",), now)
-    new_warning = Warning("new-warning", "New", "active", "new", ("source",), now.add(minutes=1))
+    old_warning = WeatherWarning("old-warning", "Old", "active", "old", ("source",), now)
+    new_warning = WeatherWarning("new-warning", "New", "active", "new", ("source",), now.add(minutes=1))
     state_path = tmp_path / "state.db"
     with SQLiteStateStore(state_path) as state:
         state.update_warnings((old_warning,), (), now, {"source"})
@@ -536,7 +536,7 @@ def test_stale_source_alert_is_sent_once_until_a_new_article_arrives(tmp_path: P
 
 def test_removed_warning_is_resolved_immediately(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
-    warning = Warning("warning", "Warning", "active", "detail", ("source",), now)
+    warning = WeatherWarning("warning", "Warning", "active", "detail", ("source",), now)
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.update_warnings((warning,), (), now)
         assert state.active_warnings(now, 12) == (warning,)
@@ -546,7 +546,7 @@ def test_removed_warning_is_resolved_immediately(tmp_path: Path) -> None:
 
 def test_historical_warning_evidence_does_not_refresh_retention(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
-    warning = Warning("warning", "Warning", "active", "detail", ("old-source",), now)
+    warning = WeatherWarning("warning", "Warning", "active", "detail", ("old-source",), now)
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.update_warnings((warning,), (), now, {"old-source"})
         later = now.add(hours=13)
@@ -556,7 +556,7 @@ def test_historical_warning_evidence_does_not_refresh_retention(tmp_path: Path) 
 
 def test_new_warning_evidence_refreshes_retention(tmp_path: Path) -> None:
     now = pendulum.datetime(2026, 7, 13, 9, tz="Asia/Shanghai")
-    warning = Warning("warning", "Warning", "active", "detail", ("source",), now)
+    warning = WeatherWarning("warning", "Warning", "active", "detail", ("source",), now)
     with SQLiteStateStore(tmp_path / "state.db") as state:
         state.update_warnings((warning,), (), now, {"source"})
         later = now.add(hours=11)
@@ -815,8 +815,8 @@ def test_record_success_prunes_expired_history_and_preserves_boundaries(tmp_path
         state.save_context_documents((old_document,), history_boundary.subtract(seconds=1))
         state.save_context_documents((boundary_document,), history_boundary)
 
-        old_warning = Warning("old-warning", "Old", "active", "old", ("source",), now)
-        boundary_warning = Warning("boundary-warning", "Boundary", "active", "boundary", ("source",), now)
+        old_warning = WeatherWarning("old-warning", "Old", "active", "old", ("source",), now)
+        boundary_warning = WeatherWarning("boundary-warning", "Boundary", "active", "boundary", ("source",), now)
         state.update_warnings((old_warning,), (), warning_boundary.subtract(seconds=1), {"source"})
         state.update_warnings((boundary_warning,), (), warning_boundary, {"source"})
 

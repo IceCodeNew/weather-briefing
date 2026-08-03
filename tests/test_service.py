@@ -36,8 +36,8 @@ from weather_briefing.models import (
     RenderedMessage,
     ResolvedLocation,
     SourceDocument,
-    Warning,
     WeatherContextSnapshot,
+    WeatherWarning,
 )
 from weather_briefing.notification_decision import (
     NotificationAssessment,
@@ -77,7 +77,8 @@ def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
 
 class EmptyRSSSource:
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
-        raise AssertionError("No RSS feed should be requested in this test")
+        msg = "No RSS feed should be requested in this test"
+        raise AssertionError(msg)
 
 
 class StaticRSSSource:
@@ -105,7 +106,8 @@ class CountingPlainTextRenderer(PlainTextRenderer):
 
 class FailingRSSSource:
     async def fetch(self, config: FeedConfig) -> tuple[Article, ...]:
-        raise RuntimeError("feed unavailable")
+        msg = "feed unavailable"
+        raise RuntimeError(msg)
 
 
 class CanceledRSSSource:
@@ -118,13 +120,15 @@ class MixedOutcomeRSSSource:
         if config.id.startswith("canceled-"):
             raise asyncio.CancelledError
         if config.id == "failing-feed":
-            raise RuntimeError("feed unavailable")
+            msg = "feed unavailable"
+            raise RuntimeError(msg)
         return ()
 
 
 class FailingWeatherContextProvider:
     async def fetch(self, latitude: float, longitude: float) -> WeatherContextSnapshot:
-        raise WeatherContextError("weather context unavailable")
+        msg = "weather context unavailable"
+        raise WeatherContextError(msg)
 
 
 class StaticWeatherContextProvider:
@@ -235,7 +239,7 @@ class _NotificationDecisionOwner(Protocol):
         ...
 
 
-def _briefing_service(
+def _briefing_service(  # noqa: PLR0913
     settings: _TestSettings,
     location: ResolvedLocation,
     state: SQLiteStateStore,
@@ -289,7 +293,8 @@ class FailOncePublisher(RecordingPublisher):
     ) -> None:
         self.attempts += 1
         if self.attempts == 1:
-            raise RuntimeError("delivery unavailable")
+            msg = "delivery unavailable"
+            raise RuntimeError(msg)
         await super().publish(message, single_message=single_message, silent=silent)
 
 
@@ -306,8 +311,9 @@ class UnavailableChannelPublisher(RecordingPublisher):
         silent: bool = False,
     ) -> None:
         self.attempts += 1
+        msg = "Telegram delivery failed (chat-not-found)"
         raise DeliveryError(
-            "Telegram delivery failed (chat-not-found)",
+            msg,
             reason="chat-not-found",
             channel_unavailable=True,
         )
@@ -329,7 +335,8 @@ class FailingVerbatimPublisher(RecordingPublisher):
         if not single_message:
             self.verbatim_attempts.append(message.body)
             if len(self.verbatim_attempts) in self._failed_attempts:
-                raise RuntimeError("verbatim delivery unavailable")
+                msg = "verbatim delivery unavailable"
+                raise RuntimeError(msg)
         await super().publish(message, single_message=single_message, silent=silent)
 
 
@@ -826,7 +833,7 @@ async def test_context_budget_alert_delivery_failure_is_retried(tmp_path: Path, 
 
 @pytest.mark.parametrize(
     ("kind", "historical_ids"),
-    (("briefing", ["historical-verbatim"]), ("forecast", ["historical-verbatim", "historical-summary"])),
+    [("briefing", ["historical-verbatim"]), ("forecast", ["historical-verbatim", "historical-summary"])],
 )
 def test_build_payload_serializes_article_groups_consistently(
     tmp_path: Path,
@@ -888,7 +895,7 @@ def test_build_payload_serializes_article_groups_consistently(
 
 @pytest.mark.parametrize(
     ("location", "expected_scope"),
-    (
+    [
         (
             _location(),
             {
@@ -909,7 +916,7 @@ def test_build_payload_serializes_article_groups_consistently(
                 "country_code": "CN",
             },
         ),
-    ),
+    ],
 )
 async def test_forecast_uses_configured_coordinates_and_air_quality_context(
     tmp_path: Path,
@@ -1249,7 +1256,7 @@ async def test_unchanged_active_warning_does_not_force_briefing_delivery(tmp_pat
         now,
         "Heat warning remains active",
     )
-    warning = Warning(
+    warning = WeatherWarning(
         "heat-warning",
         "Heat warning",
         "active",
@@ -1324,7 +1331,7 @@ async def test_unknown_resolved_warning_id_is_ignored(tmp_path: Path, caplog: py
         now,
         "Heat warning is active",
     )
-    warning = Warning(
+    warning = WeatherWarning(
         "heat-warning",
         "Heat warning",
         "active",
@@ -1626,7 +1633,7 @@ async def test_final_window_keeps_worthy_briefing_notifications_enabled(tmp_path
 
 @pytest.mark.parametrize(
     ("kind", "llm", "message"),
-    (("briefing", RecordingLLM(include_briefing_advice=True), "must not repeat"),),
+    [("briefing", RecordingLLM(include_briefing_advice=True), "must not repeat")],
 )
 async def test_service_rejects_mode_specific_llm_contract_violations(
     tmp_path: Path,
@@ -1830,7 +1837,8 @@ async def test_failure_recording_error_does_not_mask_task_error(
     delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())
 
     def fail_to_record_failure(state: SQLiteStateStore) -> int:
-        raise RuntimeError("private database path")
+        msg = "private database path"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(SQLiteStateStore, "record_failure", fail_to_record_failure)
     with SQLiteStateStore(tmp_path / "failure-recording.sqlite3") as state:
@@ -2209,7 +2217,8 @@ class FailingOnceLLM:
         self.attempts += 1
         if self.attempts == 1:
             if self._fail_before_response:
-                raise LLMError("contract validation failed before a response was available")
+                msg = "contract validation failed before a response was available"
+                raise LLMError(msg)
             invalid_result = {
                 "headline": "Briefing",
                 "headline_source_ids": ["invented"],
@@ -2240,7 +2249,7 @@ class FailingOnceLLM:
 
 @pytest.mark.parametrize(
     ("fail_before_response", "omit_headline"),
-    ((False, False), (True, False), (False, True)),
+    [(False, False), (True, False), (False, True)],
 )
 async def test_llm_retry_on_validation_failure(tmp_path: Path, fail_before_response: bool, omit_headline: bool) -> None:
     timezone = pendulum.timezone("Asia/Shanghai")
@@ -2313,7 +2322,8 @@ async def test_llm_request_failure_does_not_enter_contract_repair(tmp_path: Path
 
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             self.attempts += 1
-            raise LLMRequestError("request failed")
+            msg = "request failed"
+            raise LLMRequestError(msg)
 
     llm = RequestFailingLLM()
     delivery = DeliveryProvider(PlainTextRenderer(), RecordingPublisher())

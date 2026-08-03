@@ -18,7 +18,7 @@ def _provider() -> AsyncMock:
 
 @pytest.mark.parametrize(
     ("operation", "args", "expected"),
-    (
+    [
         ("summarize", ("system", {"input": "value"}), {"provider": "fallback"}),
         (
             "decide_notification",
@@ -26,7 +26,7 @@ def _provider() -> AsyncMock:
             NotificationDecision(True),
         ),
         ("translate_service_status", ("title", "body", "en"), ("translated", "content")),
-    ),
+    ],
 )
 async def test_request_failure_uses_fallback(operation: str, args: tuple[object, ...], expected: object) -> None:
     primary = _provider()
@@ -125,7 +125,8 @@ async def test_concurrent_failure_switches_before_another_primary_request() -> N
     async def fail_primary(*args: object) -> dict[str, object]:
         primary_started.set()
         await release_primary.wait()
-        raise LLMRequestError("primary unavailable")
+        msg = "primary unavailable"
+        raise LLMRequestError(msg)
 
     primary.summarize.side_effect = fail_primary
     fallback.summarize.return_value = {"provider": "fallback"}
@@ -201,7 +202,8 @@ async def test_fallback_log_excludes_exception_details(caplog) -> None:
     primary = _provider()
     fallback = _provider()
     try:
-        raise RuntimeError("private upstream detail")
+        msg = "private upstream detail"
+        raise RuntimeError(msg)  # noqa: TRY301
     except RuntimeError as exc:
         request_error = LLMRequestError("private request detail")
         request_error.__cause__ = exc

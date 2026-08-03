@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import httpx
+from typing import TYPE_CHECKING
 
-from ...data.service_endpoints import DEEPSEEK_STATUS_FEED_URL, DEEPSEEK_STATUS_PAGE_URL
-from ...registries import ServiceStatusProviderName
-from ..feed import StatusFeedProvider
-from ..models import ServiceSurface
+from weather_briefing.data.service_endpoints import DEEPSEEK_STATUS_FEED_URL, DEEPSEEK_STATUS_PAGE_URL
+from weather_briefing.registries import ServiceStatusProviderName
+from weather_briefing.service_status.feed import StatusFeedProvider
+from weather_briefing.service_status.models import ServiceSurface
+
+if TYPE_CHECKING:
+    import httpx
 
 
 def _deepseek_surface(name: str) -> ServiceSurface:

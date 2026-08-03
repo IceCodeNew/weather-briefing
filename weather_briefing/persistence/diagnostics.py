@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from pathlib import Path
+from typing import TYPE_CHECKING, Self
 
 import pendulum
 
-from ..time_utils import require_aware_datetime
+from weather_briefing.time_utils import require_aware_datetime
+
 from .serialization import _parse_time, _storage_time
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _RENDERED_TEXT_DIAGNOSTIC = "rendered_text"
 _RUNTIME_DIAGNOSTIC_BUSY_TIMEOUT_SECONDS = 0.1
@@ -33,7 +37,7 @@ class SQLiteRuntimeDiagnostics:
         """Close the diagnostics database connection."""
         self._connection.close()
 
-    def __enter__(self) -> SQLiteRuntimeDiagnostics:
+    def __enter__(self) -> Self:
         """Return this diagnostics store for context-managed use."""
         return self
 

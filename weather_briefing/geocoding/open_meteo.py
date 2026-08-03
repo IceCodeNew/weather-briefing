@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import httpx
 
-from ..api_client import api_call_extensions
-from ..data.service_endpoints import OPEN_METEO_GEOCODING_BASE_URL
-from ..models import LocationSpec, ResolvedLocation
+from weather_briefing.api_client import api_call_extensions
+from weather_briefing.data.service_endpoints import OPEN_METEO_GEOCODING_BASE_URL
+from weather_briefing.models import LocationSpec, ResolvedLocation
+
 from .base import GeocodingError, log_candidate_selection, required_location_name
 from .matching import is_geocoded_mainland, open_meteo_result_matches
 
@@ -47,14 +48,17 @@ class OpenMeteoGeocodingProvider:
             payload = response.json()
             if not isinstance(payload, dict):
                 log_candidate_selection("open-meteo", location.id, 1, 0, outcome="invalid-response")
-                raise GeocodingError(f"Open-Meteo geocoding returned an invalid response for location: {location.id}")
+                msg = f"Open-Meteo geocoding returned an invalid response for location: {location.id}"
+                raise GeocodingError(msg)  # noqa: TRY301
             results = payload.get("results", [])
             if not isinstance(results, list):
                 log_candidate_selection("open-meteo", location.id, 1, 0, outcome="invalid-response")
-                raise GeocodingError(f"Open-Meteo geocoding returned an invalid response for location: {location.id}")
+                msg = f"Open-Meteo geocoding returned an invalid response for location: {location.id}"
+                raise GeocodingError(msg)  # noqa: TRY301
             if not results:
                 log_candidate_selection("open-meteo", location.id, 1, 0, outcome="no-results")
-                raise GeocodingError(f"Open-Meteo geocoding returned no results for location: {location.id}")
+                msg = f"Open-Meteo geocoding returned no results for location: {location.id}"
+                raise GeocodingError(msg)  # noqa: TRY301
             result = next(
                 (item for item in results if isinstance(item, dict) and open_meteo_result_matches(location_name, item)),
                 None,
@@ -67,7 +71,8 @@ class OpenMeteoGeocodingProvider:
                 outcome="matched" if result is not None else "no-match",
             )
             if result is None:
-                raise GeocodingError(f"Open-Meteo geocoding returned no matching result for location: {location.id}")
+                msg = f"Open-Meteo geocoding returned no matching result for location: {location.id}"
+                raise GeocodingError(msg)  # noqa: TRY301
             latitude = float(result["latitude"])
             longitude = float(result["longitude"])
             country_code = str(result.get("country_code", "")).upper() or None
@@ -76,8 +81,9 @@ class OpenMeteoGeocodingProvider:
         except GeocodingError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            msg = f"Open-Meteo geocoding failed for location: {location.id} ({type(exc).__name__})"
             raise GeocodingError(
-                f"Open-Meteo geocoding failed for location: {location.id} ({type(exc).__name__})",
+                msg,
                 cause_type=type(exc),
             ) from None
         return ResolvedLocation(

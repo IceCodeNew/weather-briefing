@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-from ..models import Advice, Article, BriefingResult, Conclusion, RenderedMessage, SourceDocument
 from .rendering import (
     article_source_name,
     briefing_labels,
@@ -12,6 +11,11 @@ from .rendering import (
     plain_attribution,
     plain_message,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from weather_briefing.models import Advice, Article, BriefingResult, Conclusion, RenderedMessage, SourceDocument
 
 
 class PlainTextRenderer:

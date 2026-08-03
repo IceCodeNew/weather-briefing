@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TypeGuard
+from typing import TYPE_CHECKING, TypeGuard
 
-from ..models import BriefingResult
-from ..notification_decision import NotificationAssessment
-from ..notification_decision.policies import WEATHER_NOTIFICATION_KIND
+from weather_briefing.notification_decision import NotificationAssessment
+from weather_briefing.notification_decision.policies import WEATHER_NOTIFICATION_KIND
+
+if TYPE_CHECKING:
+    from weather_briefing.models import BriefingResult
 
 _WEATHER_DECISION_SCALAR_KEYS = (
     "mode",

@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 from apscheduler.triggers.cron import CronTrigger
 
-from ..data.resources import reference_string_tuple
-from ..languages import normalize_language_tag
-from ..models import ResolvedLocation
-from ..registries import (
+from weather_briefing.data.resources import reference_string_tuple
+from weather_briefing.languages import normalize_language_tag
+from weather_briefing.registries import (
     LOCAL_WEATHER_CAPABILITY_PROVIDERS,
     PublisherName,
     ServiceStatusProviderName,
     WeatherProviderName,
 )
+
 from .base import ConfigurationError
+
+if TYPE_CHECKING:
+    from weather_briefing.models import ResolvedLocation
 
 SUPPORTED_WEATHER_PROVIDERS = frozenset(WeatherProviderName)
 SUPPORTED_SERVICE_STATUS_PROVIDERS = frozenset(ServiceStatusProviderName)
@@ -38,7 +41,7 @@ def clean_env(value: str | None) -> str | None:
     if value is None:
         return None
     value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":  # noqa: PLR2004
         return value[1:-1]
     return value
 
@@ -56,14 +59,16 @@ def integer(name: str, default: int) -> int:
     try:
         return int(clean_env(os.getenv(name, str(default))))
     except ValueError as exc:
-        raise ConfigurationError(f"{name} must be an integer") from exc
+        msg = f"{name} must be an integer"
+        raise ConfigurationError(msg) from exc
 
 
 def positive_integer(name: str, default: int) -> int:
     """Read one positive integer environment value."""
     value = integer(name, default)
     if value <= 0:
-        raise ConfigurationError(f"{name} must be greater than zero")
+        msg = f"{name} must be greater than zero"
+        raise ConfigurationError(msg)
     return value
 
 
@@ -71,7 +76,8 @@ def bounded_positive_integer(name: str, default: int, maximum: int) -> int:
     """Read one positive integer with an upper bound."""
     value = positive_integer(name, default)
     if value > maximum:
-        raise ConfigurationError(f"{name} cannot exceed {maximum}")
+        msg = f"{name} cannot exceed {maximum}"
+        raise ConfigurationError(msg)
     return value
 
 
@@ -79,7 +85,8 @@ def bounded_integer(name: str, default: int, minimum: int, maximum: int) -> int:
     """Read one integer within inclusive bounds."""
     value = integer(name, default)
     if not minimum <= value <= maximum:
-        raise ConfigurationError(f"{name} must be between {minimum} and {maximum}")
+        msg = f"{name} must be between {minimum} and {maximum}"
+        raise ConfigurationError(msg)
     return value
 
 
@@ -87,11 +94,13 @@ def cron_hour(name: str, default: str) -> str:
     """Read and validate an APScheduler hour expression."""
     value = clean_env(os.getenv(name, default))
     if not value:
-        raise ConfigurationError(f"{name} must not be empty")
+        msg = f"{name} must not be empty"
+        raise ConfigurationError(msg)
     try:
         CronTrigger(hour=value)
     except ValueError as exc:
-        raise ConfigurationError(f"{name} must be a valid APScheduler hour expression") from exc
+        msg = f"{name} must be a valid APScheduler hour expression"
+        raise ConfigurationError(msg) from exc
     return value
 
 
@@ -99,11 +108,13 @@ def cron_expression(name: str, default: str) -> str:
     """Read and validate a standard five-field cron expression."""
     value = clean_env(os.getenv(name, default))
     if not value:
-        raise ConfigurationError(f"{name} must not be empty")
+        msg = f"{name} must not be empty"
+        raise ConfigurationError(msg)
     try:
         CronTrigger.from_crontab(value)
     except ValueError as exc:
-        raise ConfigurationError(f"{name} must be a valid five-field cron expression") from exc
+        msg = f"{name} must be a valid five-field cron expression"
+        raise ConfigurationError(msg) from exc
     return value
 
 
@@ -112,25 +123,28 @@ def number(name: str, default: float) -> float:
     try:
         return float(clean_env(os.getenv(name, str(default))))
     except ValueError as exc:
-        raise ConfigurationError(f"{name} must be a number") from exc
+        msg = f"{name} must be a number"
+        raise ConfigurationError(msg) from exc
 
 
 def positive_float(name: str, default: float) -> float:
     """Read one positive floating-point environment value."""
     value = number(name, default)
     if value <= 0:
-        raise ConfigurationError(f"{name} must be greater than zero")
+        msg = f"{name} must be greater than zero"
+        raise ConfigurationError(msg)
     return value
 
 
-def boolean(name: str, default: bool) -> bool:
+def boolean(name: str, *, default: bool) -> bool:
     """Read one strict boolean environment value."""
     value = clean_env(os.getenv(name, str(default))).strip().casefold()
     if value in {"1", "true", "yes"}:
         return True
     if value in {"0", "false", "no", ""}:
         return False
-    raise ConfigurationError(f"{name} must be one of: true, false, 1, 0, yes, no")
+    msg = f"{name} must be one of: true, false, 1, 0, yes, no"
+    raise ConfigurationError(msg)
 
 
 def configured_weather_providers() -> tuple[str, ...] | None:
@@ -140,10 +154,12 @@ def configured_weather_providers() -> tuple[str, ...] | None:
         return None
     providers = tuple(item.strip() for item in configured.split(",") if item.strip())
     if not providers:
-        raise ConfigurationError("WEATHER_PROVIDERS cannot be empty")
+        msg = "WEATHER_PROVIDERS cannot be empty"
+        raise ConfigurationError(msg)
     unsupported = sorted(set(providers) - SUPPORTED_WEATHER_PROVIDERS)
     if unsupported:
-        raise ConfigurationError(f"WEATHER_PROVIDERS contains unsupported providers: {', '.join(unsupported)}")
+        msg = f"WEATHER_PROVIDERS contains unsupported providers: {', '.join(unsupported)}"
+        raise ConfigurationError(msg)
     validate_weather_provider_order(providers)
     return providers
 
@@ -155,12 +171,14 @@ def configured_service_status_providers() -> tuple[str, ...]:
         return ()
     providers = tuple(item.strip() for item in configured.split(","))
     if any(not provider for provider in providers):
-        raise ConfigurationError("SERVICE_STATUS_PROVIDERS cannot contain empty entries")
+        msg = "SERVICE_STATUS_PROVIDERS cannot contain empty entries"
+        raise ConfigurationError(msg)
     unsupported = sorted(set(providers) - SUPPORTED_SERVICE_STATUS_PROVIDERS)
     if unsupported:
         raise ConfigurationError("SERVICE_STATUS_PROVIDERS contains unsupported providers: " + ", ".join(unsupported))
     if len(providers) != len(set(providers)):
-        raise ConfigurationError("SERVICE_STATUS_PROVIDERS cannot contain duplicates")
+        msg = "SERVICE_STATUS_PROVIDERS cannot contain duplicates"
+        raise ConfigurationError(msg)
     return providers
 
 
@@ -168,17 +186,21 @@ def configured_service_status_publishers(default: str) -> tuple[str, ...]:
     """Read comma-separated service-status publishers with a weather fallback."""
     configured = clean_env(os.getenv("SERVICE_STATUS_PUBLISHERS", default))
     if not configured:
-        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot be empty")
+        msg = "SERVICE_STATUS_PUBLISHERS cannot be empty"
+        raise ConfigurationError(msg)
     publishers = tuple(item.strip() for item in configured.split(","))
     if not any(publishers):
-        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot be empty")
+        msg = "SERVICE_STATUS_PUBLISHERS cannot be empty"
+        raise ConfigurationError(msg)
     if any(not publisher for publisher in publishers):
-        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot contain empty entries")
+        msg = "SERVICE_STATUS_PUBLISHERS cannot contain empty entries"
+        raise ConfigurationError(msg)
     unsupported = sorted(set(publishers) - SUPPORTED_PUBLISHERS)
     if unsupported:
         raise ConfigurationError("SERVICE_STATUS_PUBLISHERS contains unsupported publishers: " + ", ".join(unsupported))
     if len(publishers) != len(set(publishers)):
-        raise ConfigurationError("SERVICE_STATUS_PUBLISHERS cannot contain duplicates")
+        msg = "SERVICE_STATUS_PUBLISHERS cannot contain duplicates"
+        raise ConfigurationError(msg)
     return publishers
 
 
@@ -188,10 +210,12 @@ def configured_service_status_language() -> str:
     try:
         language = normalize_language_tag(value)
     except ValueError as exc:
-        raise ConfigurationError("SERVICE_STATUS_LANGUAGE must be a supported language tag") from exc
+        msg = "SERVICE_STATUS_LANGUAGE must be a supported language tag"
+        raise ConfigurationError(msg) from exc
     if language not in SUPPORTED_SERVICE_STATUS_LANGUAGES:
         supported = ", ".join(sorted(SUPPORTED_SERVICE_STATUS_LANGUAGES))
-        raise ConfigurationError(f"SERVICE_STATUS_LANGUAGE must be one of: {supported}")
+        msg = f"SERVICE_STATUS_LANGUAGE must be one of: {supported}"
+        raise ConfigurationError(msg)
     return language
 
 
@@ -202,16 +226,16 @@ def validate_weather_provider_order(providers: tuple[str, ...]) -> None:
         if provider in LOCAL_WEATHER_CAPABILITY_PROVIDERS:
             local_provider_seen = True
         elif local_provider_seen:
-            raise ConfigurationError(
-                "WEATHER_PROVIDERS must place local capability providers after all primary providers"
-            )
+            msg = "WEATHER_PROVIDERS must place local capability providers after all primary providers"
+            raise ConfigurationError(msg)
 
 
 def publisher() -> str:
     """Read the configured delivery publisher."""
     selected = clean_env(os.getenv("PUBLISHER", "telegram"))
     if selected not in SUPPORTED_PUBLISHERS:
-        raise ConfigurationError(f"PUBLISHER must be one of: {', '.join(sorted(SUPPORTED_PUBLISHERS))}")
+        msg = f"PUBLISHER must be one of: {', '.join(sorted(SUPPORTED_PUBLISHERS))}"
+        raise ConfigurationError(msg)
     return selected
 
 
@@ -219,7 +243,8 @@ def path_from_env(name: str, default: str) -> Path:
     """Read one non-empty filesystem path environment value."""
     value = clean_env(os.getenv(name, default))
     if not value:
-        raise ConfigurationError(f"{name} must not be empty")
+        msg = f"{name} must not be empty"
+        raise ConfigurationError(msg)
     return Path(value)
 
 
@@ -235,7 +260,8 @@ def weather_providers_for(location: ResolvedLocation, configured: tuple[str, ...
         if location.country_code != "SG" and WeatherProviderName.NEA_SINGAPORE in configured:
             available = tuple(provider for provider in configured if provider != WeatherProviderName.NEA_SINGAPORE)
             if not available:
-                raise ConfigurationError("nea-sg is only available for locations identified as Singapore")
+                msg = "nea-sg is only available for locations identified as Singapore"
+                raise ConfigurationError(msg)
             return available
         return configured
     region = _weather_region(location)

@@ -43,7 +43,8 @@ class _CompletionClientStub:
         if self._error is not None:
             raise self._error
         if self._response is None:
-            raise AssertionError("Completion response was not configured")
+            msg = "Completion response was not configured"
+            raise AssertionError(msg)
         return self._response
 
 
@@ -59,7 +60,8 @@ class _DiagnosticsStub:
 
 class _FailingDiagnosticsStub:
     def rendered_text_logging_enabled(self) -> bool:
-        raise RuntimeError("diagnostic state unavailable")
+        msg = "diagnostic state unavailable"
+        raise RuntimeError(msg)
 
 
 def test_sensitive_llm_diagnostics_remains_public() -> None:
@@ -192,7 +194,7 @@ def test_rejects_every_missing_required_top_level_field(field: str) -> None:
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (
+    [
         ("headline", None),
         ("headline", "   "),
         ("headline_source_ids", []),
@@ -202,7 +204,7 @@ def test_rejects_every_missing_required_top_level_field(field: str) -> None:
         ("resolved_warning_ids", "warning"),
         ("disaster_tracking", "not-an-array"),
         ("advice", "not-an-array"),
-    ),
+    ],
 )
 def test_rejects_invalid_top_level_field(field: str, value: object) -> None:
     payload = _valid_payload()
@@ -212,17 +214,17 @@ def test_rejects_invalid_top_level_field(field: str, value: object) -> None:
         parse_result(payload, _now(), {"source"})
 
 
-@pytest.mark.parametrize("section", ("conclusions", "disaster_tracking"))
+@pytest.mark.parametrize("section", ["conclusions", "disaster_tracking"])
 @pytest.mark.parametrize(
     "item",
-    (
+    [
         "not-an-object",
         {"text": "Claim"},
         {"text": "", "source_ids": ["source"]},
         {"text": 42, "source_ids": ["source"]},
         {"text": "Claim", "source_ids": []},
         {"text": "Claim", "source_ids": [None]},
-    ),
+    ],
 )
 def test_rejects_invalid_sourced_item(section: str, item: object) -> None:
     payload = _valid_payload()
@@ -232,7 +234,7 @@ def test_rejects_invalid_sourced_item(section: str, item: object) -> None:
         parse_result(payload, _now(), {"source"})
 
 
-@pytest.mark.parametrize("field", ("id", "title", "status", "detail", "source_ids"))
+@pytest.mark.parametrize("field", ["id", "title", "status", "detail", "source_ids"])
 def test_rejects_incomplete_warning(field: str) -> None:
     warning = {
         "id": "w1",
@@ -249,8 +251,8 @@ def test_rejects_incomplete_warning(field: str) -> None:
         parse_result(payload, _now(), {"source"})
 
 
-@pytest.mark.parametrize("field", ("id", "title", "status", "detail"))
-@pytest.mark.parametrize("value", (None, "", "   ", 42))
+@pytest.mark.parametrize("field", ["id", "title", "status", "detail"])
+@pytest.mark.parametrize("value", [None, "", "   ", 42])
 def test_rejects_invalid_warning_text(field: str, value: object) -> None:
     warning = {
         "id": "w1",
@@ -269,11 +271,11 @@ def test_rejects_invalid_warning_text(field: str, value: object) -> None:
 
 @pytest.mark.parametrize(
     "advice",
-    (
+    [
         ["not-an-object"],
         [{"text": "Advice", "source_ids": ["source"]}],
         [{"topic": "unknown", "text": "Advice", "source_ids": ["source"]}],
-    ),
+    ],
 )
 def test_rejects_invalid_advice(advice: object) -> None:
     payload = _valid_payload()
@@ -285,7 +287,7 @@ def test_rejects_invalid_advice(advice: object) -> None:
 
 @pytest.mark.parametrize(
     ("section", "item"),
-    (
+    [
         ("headline_source_ids", ["invented"]),
         ("conclusions", [{"text": "Claim", "source_ids": ["invented"]}]),
         (
@@ -302,7 +304,7 @@ def test_rejects_invalid_advice(advice: object) -> None:
         ),
         ("disaster_tracking", [{"text": "Storm", "source_ids": ["invented"]}]),
         ("advice", [{"topic": "mask", "text": "Mask", "source_ids": ["invented"]}]),
-    ),
+    ],
 )
 def test_rejects_unknown_source_in_every_cited_section(section: str, item: object) -> None:
     payload = _valid_payload()
@@ -351,11 +353,11 @@ async def test_provider_rejects_empty_json_content_as_request_failure(content: o
 
 @pytest.mark.parametrize(
     ("response", "message"),
-    (
+    [
         (SimpleNamespace(), "no completion choices"),
         (SimpleNamespace(choices=[]), "no completion choices"),
         (SimpleNamespace(choices=[SimpleNamespace()]), "missing a message"),
-    ),
+    ],
 )
 async def test_provider_rejects_malformed_completion_response(response: object, message: str) -> None:
     client = _CompletionClientStub(response)
@@ -449,14 +451,14 @@ async def test_service_status_translation_rejects_unsupported_language() -> None
 
 @pytest.mark.parametrize(
     ("error", "exception", "message"),
-    (
+    [
         (ProviderError("upstream failed"), LLMRequestError, "translation request failed"),
         (
             LengthFinishReasonError(completion=ParsedChatCompletion[object].model_construct()),
             LLMOutputLimitError,
             "translation reached output token limit",
         ),
-    ),
+    ],
 )
 async def test_service_status_translation_wraps_sdk_failures(
     error: BaseException,
@@ -484,14 +486,14 @@ async def test_service_status_translation_wraps_sdk_failures(
 
 @pytest.mark.parametrize(
     ("error", "exception", "message"),
-    (
+    [
         (ProviderError("upstream failed"), LLMRequestError, "decision request failed"),
         (
             LengthFinishReasonError(completion=ParsedChatCompletion[object].model_construct()),
             LLMOutputLimitError,
             "decision reached output token limit",
         ),
-    ),
+    ],
 )
 async def test_notification_decision_wraps_sdk_failures(
     error: BaseException,
@@ -542,14 +544,14 @@ def test_service_status_translation_decoder_accepts_parsed_output() -> None:
 
 @pytest.mark.parametrize(
     ("response", "message"),
-    (
+    [
         (SimpleNamespace(choices=[]), "no completion choices"),
         (SimpleNamespace(choices=[SimpleNamespace(message=None)]), "missing a message"),
         (
             SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))]),
             "empty JSON content",
         ),
-    ),
+    ],
 )
 def test_service_status_translation_decoder_rejects_incomplete_response(
     response: object,
@@ -584,14 +586,14 @@ def test_notification_decision_decoder_accepts_parsed_output() -> None:
 
 @pytest.mark.parametrize(
     ("response", "message"),
-    (
+    [
         (SimpleNamespace(choices=[]), "no completion choices"),
         (SimpleNamespace(choices=[SimpleNamespace(message=None)]), "missing a message"),
         (
             SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=""))]),
             "empty JSON content",
         ),
-    ),
+    ],
 )
 def test_notification_decision_decoder_rejects_incomplete_response(
     response: object,

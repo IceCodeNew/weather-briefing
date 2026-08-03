@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import pendulum
+from weather_briefing.models import ServiceSurface  # noqa: TC001
 
-from ..models import ServiceSurface
+if TYPE_CHECKING:
+    import pendulum
 
 
 @dataclass(frozen=True, slots=True)

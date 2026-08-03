@@ -7,8 +7,7 @@ import hashlib
 import logging
 import random
 from email.utils import parsedate_to_datetime
-from time import struct_time
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import feedparser
 import httpx
@@ -17,6 +16,9 @@ import pendulum
 from .api_client import api_call_extensions
 from .content_cleaners import ContentCleaner, ContentCleaningRules, HTMLContentCleaner
 from .models import Article, FeedConfig
+
+if TYPE_CHECKING:
+    from time import struct_time
 
 _LOGGER = logging.getLogger("weather_briefing.sources")
 _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -89,7 +91,8 @@ class RSSSource:
         response_text = await self._fetch_with_retry(config)
         parsed = feedparser.parse(response_text)
         if parsed.bozo and not parsed.entries:
-            raise SourceFetchError(f"RSS parser rejected source {config.id}")
+            msg = f"RSS parser rejected source {config.id}"
+            raise SourceFetchError(msg)
         articles: list[Article] = []
         for entry in parsed.entries:
             published_at = _entry_time(entry)
@@ -141,7 +144,6 @@ class RSSSource:
                     extensions=api_call_extensions("rss", "fetch"),
                 )
                 response.raise_for_status()
-                return response.text
             except httpx.TransportError:
                 pass
             except httpx.HTTPStatusError as exc:
@@ -150,8 +152,11 @@ class RSSSource:
                 retry_after = _retry_after_seconds(exc.response)
             except httpx.HTTPError:
                 break
+            else:
+                return response.text
             if attempt < self._max_attempts:
-                delay = random.uniform(self._retry_min_seconds, self._retry_max_seconds)
+                delay = random.uniform(self._retry_min_seconds, self._retry_max_seconds)  # noqa: S311
                 await asyncio.sleep(max(delay, retry_after or 0.0))
         attempt_label = "attempt" if attempts_made == 1 else "attempts"
-        raise SourceFetchError(f"RSS source {config.id} failed after {attempts_made} {attempt_label}") from None
+        msg = f"RSS source {config.id} failed after {attempts_made} {attempt_label}"
+        raise SourceFetchError(msg) from None

@@ -7,9 +7,10 @@ import time
 
 import httpx
 
-from ..api_client import api_call_extensions
-from ..data.service_endpoints import NOMINATIM_BASE_URL, NOMINATIM_USER_AGENT
-from ..models import LocationSpec, ResolvedLocation
+from weather_briefing.api_client import api_call_extensions
+from weather_briefing.data.service_endpoints import NOMINATIM_BASE_URL, NOMINATIM_USER_AGENT
+from weather_briefing.models import LocationSpec, ResolvedLocation
+
 from .base import GeocodingError, log_candidate_selection, required_location_name
 from .matching import is_geocoded_mainland, nominatim_queries, nominatim_result_matches
 
@@ -26,7 +27,8 @@ class NominatimGeocodingProvider:
     ) -> None:
         """Configure rate-limited Nominatim access with an identifying user agent."""
         if not user_agent.strip():
-            raise ValueError("Nominatim requires an identifying User-Agent")
+            msg = "Nominatim requires an identifying User-Agent"
+            raise ValueError(msg)
         self._client = client
         self._user_agent = user_agent
         self._base_url = base_url.rstrip("/")
@@ -82,12 +84,14 @@ class NominatimGeocodingProvider:
                     if result is not None:
                         break
                 except httpx.HTTPError as exc:
+                    msg = f"Nominatim geocoding request failed for location: {location.id} ({type(exc).__name__})"
                     raise GeocodingError(
-                        f"Nominatim geocoding request failed for location: {location.id} ({type(exc).__name__})",
+                        msg,
                         cause_type=type(exc),
                     ) from None
             if result is None:
-                raise GeocodingError(f"Nominatim geocoding returned no result for location: {location.id}")
+                msg = f"Nominatim geocoding returned no result for location: {location.id}"
+                raise GeocodingError(msg)
             try:
                 address = result.get("address", {})
                 latitude = float(result["lat"])
@@ -95,9 +99,11 @@ class NominatimGeocodingProvider:
                 country_code = str(address.get("country_code", "")).upper() or None
                 administrative_area = str(address.get("state") or address.get("province") or "").strip() or None
             except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                msg = (
+                    f"Nominatim geocoding response validation failed for location: {location.id} ({type(exc).__name__})"
+                )
                 raise GeocodingError(
-                    "Nominatim geocoding response validation failed "
-                    f"for location: {location.id} ({type(exc).__name__})",
+                    msg,
                     cause_type=type(exc),
                 ) from None
         return ResolvedLocation(
@@ -115,7 +121,8 @@ class NominatimGeocodingProvider:
     async def reverse_geocode(self, location: LocationSpec) -> ResolvedLocation:
         """Resolve coordinates to the nearest canonical OSM address."""
         if location.latitude is None or location.longitude is None:
-            raise GeocodingError(f"Reverse geocoding requires coordinates for location: {location.id}")
+            msg = f"Reverse geocoding requires coordinates for location: {location.id}"
+            raise GeocodingError(msg)
         async with self._lock:
             await self._wait_for_rate_limit()
             try:
@@ -134,20 +141,24 @@ class NominatimGeocodingProvider:
                 response.raise_for_status()
                 result = response.json()
                 if not isinstance(result, dict):
-                    raise TypeError("Nominatim reverse response must be an object")
+                    msg = "Nominatim reverse response must be an object"
+                    raise TypeError(msg)  # noqa: TRY301
                 address = result.get("address", {})
                 if not isinstance(address, dict):
-                    raise TypeError("Nominatim reverse address must be an object")
+                    msg = "Nominatim reverse address must be an object"
+                    raise TypeError(msg)  # noqa: TRY301
                 display_name = str(result.get("display_name", "")).strip()
                 if not display_name:
-                    raise ValueError("Nominatim reverse response has no display name")
+                    msg = "Nominatim reverse response has no display name"
+                    raise ValueError(msg)  # noqa: TRY301
                 country_code = str(address.get("country_code", "")).upper() or None
                 administrative_area = (
                     str(address.get("state") or address.get("province") or address.get("region") or "").strip() or None
                 )
             except (httpx.HTTPError, TypeError, ValueError, AttributeError) as exc:
+                msg = f"Nominatim reverse geocoding failed for location: {location.id} ({type(exc).__name__})"
                 raise GeocodingError(
-                    f"Nominatim reverse geocoding failed for location: {location.id} ({type(exc).__name__})",
+                    msg,
                     cause_type=type(exc),
                 ) from None
         return ResolvedLocation(

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
-import pendulum
-
-from ..capabilities import CapabilityProviderSet
-from ..models import (
+from weather_briefing.capabilities import CapabilityProviderSet
+from weather_briefing.models import (
     AirQualityTimeKind,
     Article,
     FeedConfig,
@@ -16,10 +15,14 @@ from ..models import (
     SourceDocument,
     WeatherContextSnapshot,
 )
-from ..sources import RSSFeedSource
-from ..state import SQLiteStateStore
-from ..time_utils import require_aware_datetime
-from ..weather import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
+from weather_briefing.time_utils import require_aware_datetime
+from weather_briefing.weather import WeatherContextProvider, fetch_weather_context, snapshot_to_documents
+
+if TYPE_CHECKING:
+    import pendulum
+
+    from weather_briefing.sources import RSSFeedSource
+    from weather_briefing.state import SQLiteStateStore
 
 _LOGGER = logging.getLogger("weather_briefing.service")
 _CURRENT_DOCUMENT_MAX_LAG_HOURS = 2

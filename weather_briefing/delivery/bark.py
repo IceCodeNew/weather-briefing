@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 
-from ..api_client import api_call_extensions
-from ..data.bark import BARK_MAX_MESSAGE_LENGTH, BARK_NOTIFICATION_LEVEL
-from ..data.service_endpoints import BARK_BASE_URL
-from ..models import RenderedMessage
+from weather_briefing.api_client import api_call_extensions
+from weather_briefing.data.bark import BARK_MAX_MESSAGE_LENGTH, BARK_NOTIFICATION_LEVEL
+from weather_briefing.data.service_endpoints import BARK_BASE_URL
+
 from .bark_crypto import BarkEncryptor
 from .base import DeliveryError, RenderedTextDiagnostics, rendered_text_logging_enabled, split_plain_message
+
+if TYPE_CHECKING:
+    from weather_briefing.models import RenderedMessage
 
 _LOGGER = logging.getLogger("weather_briefing.publishers")
 
@@ -22,7 +26,7 @@ class BarkPublisher:
     # Content must share APNs' 4 KiB payload with Bark metadata.
     MAX_MESSAGE_LENGTH = BARK_MAX_MESSAGE_LENGTH
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         client: httpx.AsyncClient,
         device_key: str,
@@ -36,11 +40,14 @@ class BarkPublisher:
     ) -> None:
         """Configure Bark delivery and optional AES-GCM encryption."""
         if not device_key:
-            raise ValueError("Bark device key must not be empty")
+            msg = "Bark device key must not be empty"
+            raise ValueError(msg)
         if (encryption_key is None) != (encryption_iv is None):
-            raise ValueError("Bark encryption key and IV must be configured together")
+            msg = "Bark encryption key and IV must be configured together"
+            raise ValueError(msg)
         if not group:
-            raise ValueError("Bark group must not be empty")
+            msg = "Bark group must not be empty"
+            raise ValueError(msg)
         self._client = client
         self._url = f"{base_url.rstrip('/')}/push"
         self._device_key = device_key
@@ -62,8 +69,9 @@ class BarkPublisher:
         title_length = len(title or "")
         body_limit = self.MAX_MESSAGE_LENGTH - title_length
         if body_limit <= 0 or (single_message and title_length + len(message.body) > self.MAX_MESSAGE_LENGTH):
+            msg = "Bark message exceeds the platform limit"
             raise DeliveryError(
-                "Bark message exceeds the platform limit",
+                msg,
                 reason="message-too-long",
             )
         chunks = (message.body,) if single_message else split_plain_message(message.body, body_limit)
@@ -122,8 +130,9 @@ class BarkPublisher:
                     exc.response.status_code,
                     reason,
                 )
+                msg = f"Bark delivery failed ({reason})"
                 raise DeliveryError(
-                    f"Bark delivery failed ({reason})",
+                    msg,
                     reason=reason,
                     channel_unavailable=channel_unavailable,
                 ) from None
@@ -137,7 +146,8 @@ class BarkPublisher:
                     title_length + len(chunk),
                     type(exc).__name__,
                 )
-                raise DeliveryError("Bark delivery failed (request-error)", reason="request-error") from None
+                msg = "Bark delivery failed (request-error)"
+                raise DeliveryError(msg, reason="request-error") from None
             except ValueError:
                 _LOGGER.warning(
                     "Bark delivery returned an invalid success response index=%d/%d status_code=%d",
@@ -145,7 +155,8 @@ class BarkPublisher:
                     len(chunks),
                     response.status_code,
                 )
-                raise DeliveryError("Bark delivery failed (invalid-response)", reason="invalid-response") from None
+                msg = "Bark delivery failed (invalid-response)"
+                raise DeliveryError(msg, reason="invalid-response") from None
             _LOGGER.debug(
                 "Bark chunk accepted: index=%d/%d payload_characters=%d",
                 index,
@@ -175,13 +186,15 @@ def bark_error_reason(response: httpx.Response) -> tuple[str, bool]:
         413: "message-too-long",
         429: "rate-limited",
     }
-    return status_reasons.get(response.status_code, "api-error"), response.status_code == 404
+    return status_reasons.get(response.status_code, "api-error"), response.status_code == 404  # noqa: PLR2004
 
 
 def _validate_success_response(response: httpx.Response) -> None:
     try:
         payload = response.json()
     except ValueError as exc:
-        raise ValueError("Bark response is not JSON") from exc
-    if not isinstance(payload, dict) or type(payload.get("code")) is not int or payload["code"] != 200:
-        raise ValueError("Bark response does not confirm success")
+        msg = "Bark response is not JSON"
+        raise ValueError(msg) from exc
+    if not isinstance(payload, dict) or type(payload.get("code")) is not int or payload["code"] != 200:  # noqa: PLR2004
+        msg = "Bark response does not confirm success"
+        raise ValueError(msg)

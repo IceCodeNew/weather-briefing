@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from .models import ServiceStatusSnapshot
+if TYPE_CHECKING:
+    from .models import ServiceStatusSnapshot
 
 
 class ServiceStatusError(RuntimeError):

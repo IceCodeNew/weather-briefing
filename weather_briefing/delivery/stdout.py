@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from ..models import RenderedMessage
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from weather_briefing.models import RenderedMessage
 
 
 class StdoutPublisher:
@@ -12,8 +15,8 @@ class StdoutPublisher:
         self,
         message: RenderedMessage,
         *,
-        single_message: bool = False,
-        silent: bool = False,
+        single_message: bool = False,  # noqa: ARG002
+        silent: bool = False,  # noqa: ARG002
     ) -> None:
         """Print the rendered body and ignore platform delivery hints."""
-        print(message.body)
+        print(message.body)  # noqa: T201

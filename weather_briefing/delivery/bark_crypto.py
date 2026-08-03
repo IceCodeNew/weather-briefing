@@ -5,10 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _BARK_GCM_IV_CHARACTERS = 12
 _BARK_AES_KEY_LENGTHS = frozenset({16, 24, 32})
@@ -31,15 +34,19 @@ class BarkEncryptor:
         try:
             key_bytes = key.encode("ascii")
         except UnicodeEncodeError as exc:
-            raise ValueError("Bark encryption key must contain only ASCII characters") from exc
+            msg = "Bark encryption key must contain only ASCII characters"
+            raise ValueError(msg) from exc
         if len(key_bytes) not in _BARK_AES_KEY_LENGTHS:
-            raise ValueError("Bark encryption key must contain 16, 24, or 32 ASCII characters")
+            msg = "Bark encryption key must contain 16, 24, or 32 ASCII characters"
+            raise ValueError(msg)
         try:
             iv_bytes = iv.encode("ascii")
         except UnicodeEncodeError as exc:
-            raise ValueError("Bark GCM IV must contain only ASCII characters") from exc
+            msg = "Bark GCM IV must contain only ASCII characters"
+            raise ValueError(msg) from exc
         if len(iv_bytes) != _BARK_GCM_IV_CHARACTERS:
-            raise ValueError("Bark GCM IV must contain exactly 12 ASCII characters")
+            msg = "Bark GCM IV must contain exactly 12 ASCII characters"
+            raise ValueError(msg)
         self._cipher = AESGCM(key_bytes)
 
     def encrypt(self, parameters: Mapping[str, object]) -> EncryptedBarkPayload:

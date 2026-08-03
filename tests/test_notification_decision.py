@@ -63,7 +63,7 @@ async def test_message_type_can_use_non_llm_policy_logic() -> None:
     assert decision.should_notify
 
 
-@pytest.mark.parametrize("should_notify", (None, 0, 1, "false", (), object()))
+@pytest.mark.parametrize("should_notify", [None, 0, 1, "false", (), object()])
 def test_notification_decision_rejects_non_boolean_values(should_notify: object) -> None:
     with pytest.raises(ValueError, match="should_notify must be a boolean"):
         NotificationDecision(should_notify)
@@ -83,13 +83,13 @@ async def test_decision_service_rejects_invalid_custom_policy_result() -> None:
         await service.assess_notification(NotificationAssessment("custom", {}))
 
 
-@pytest.mark.parametrize("value", ("", " weather", "weather ", 1))
+@pytest.mark.parametrize("value", ["", " weather", "weather ", 1])
 def test_assessment_rejects_unnormalized_kind(value: object) -> None:
     with pytest.raises(ValueError, match="non-empty normalized"):
         NotificationAssessment(kind=value, payload={})
 
 
-@pytest.mark.parametrize("payload", (None, 1, [], {1: "value"}))
+@pytest.mark.parametrize("payload", [None, 1, [], {1: "value"}])
 def test_assessment_rejects_invalid_payload(payload: object) -> None:
     with pytest.raises(ValueError, match="mapping with string keys"):
         NotificationAssessment(kind="weather", payload=payload)
@@ -107,13 +107,13 @@ def test_assessment_copies_valid_payload() -> None:
 
 @pytest.mark.parametrize(
     ("kind", "prompt", "message"),
-    (
+    [
         ("", "prompt", "kind"),
         (" weather", "prompt", "kind"),
         (1, "prompt", "kind"),
         ("weather", " ", "prompt"),
         ("weather", 1, "prompt"),
-    ),
+    ],
 )
 def test_prompt_policy_rejects_invalid_registration(kind: object, prompt: object, message: str) -> None:
     with pytest.raises(ValueError, match=message):
@@ -133,7 +133,7 @@ def test_decision_service_rejects_empty_and_duplicate_registries() -> None:
         NotificationDecisionService((policy, policy))
 
 
-@pytest.mark.parametrize("kind", (None, 1, "", " weather"))
+@pytest.mark.parametrize("kind", [None, 1, "", " weather"])
 def test_decision_service_rejects_invalid_custom_policy_kind(kind: object) -> None:
     @dataclass(frozen=True, slots=True)
     class CustomPolicy:

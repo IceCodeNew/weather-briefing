@@ -8,7 +8,8 @@ def _load_prompt(filename: str) -> str:
     try:
         return resources.files("weather_briefing.data").joinpath(filename).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise RuntimeError(f"Unable to load prompt: {filename}") from exc
+        msg = f"Unable to load prompt: {filename}"
+        raise RuntimeError(msg) from exc
 
 
 def _load_system_prompt() -> str:

@@ -53,7 +53,8 @@ async def test_output_token_limit_retries_with_contract_repair() -> None:
         async def summarize(self, system_prompt: str, payload: dict[str, object]) -> dict[str, object]:
             self.instructions.append(system_prompt)
             if len(self.instructions) == 1:
-                raise LLMOutputLimitError("LLM response reached output token limit")
+                msg = "LLM response reached output token limit"
+                raise LLMOutputLimitError(msg)
             return {
                 "headline": "Weather update",
                 "headline_source_ids": ["source-1"],

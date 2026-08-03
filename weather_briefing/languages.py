@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*")
 
@@ -13,9 +16,10 @@ def normalize_language_tag(value: str) -> str:
     """Validate a basic BCP 47-like tag and normalize its separator casing."""
     value = value.strip()
     if _LANGUAGE_TAG.fullmatch(value) is None:
-        raise ValueError("Language must be a basic BCP 47-like language tag")
+        msg = "Language must be a basic BCP 47-like language tag"
+        raise ValueError(msg)
     parts = value.split("-")
-    return "-".join([parts[0].lower(), *(part.title() if len(part) == 4 else part.upper() for part in parts[1:])])
+    return "-".join([parts[0].lower(), *(part.title() if len(part) == 4 else part.upper() for part in parts[1:])])  # noqa: PLR2004
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,18 +35,21 @@ class LanguageSupport:
         default = normalize_language_tag(self.default)
         supported = tuple(normalize_language_tag(value) for value in self.supported)
         if not supported or default not in supported or len(set(supported)) != len(supported):
-            raise ValueError("Language support must contain a unique supported default language")
+            msg = "Language support must contain a unique supported default language"
+            raise ValueError(msg)
         api_codes: list[tuple[str, str]] = []
         for language, code in self.api_codes:
             normalized = normalize_language_tag(language)
             if normalized not in supported or not isinstance(code, str) or not code.strip():
-                raise ValueError("Language API codes must map supported languages to non-empty strings")
+                msg = "Language API codes must map supported languages to non-empty strings"
+                raise ValueError(msg)
             api_codes.append((normalized, code.strip()))
         if api_codes and (
             len({language for language, _ in api_codes}) != len(api_codes)
             or {language for language, _ in api_codes} != set(supported)
         ):
-            raise ValueError("Language API codes must uniquely cover every supported language")
+            msg = "Language API codes must uniquely cover every supported language"
+            raise ValueError(msg)
         object.__setattr__(self, "default", default)
         object.__setattr__(self, "supported", supported)
         object.__setattr__(self, "api_codes", tuple(api_codes))
@@ -58,7 +65,8 @@ class LanguageSupport:
             return self.default
         normalized = normalize_language_tag(requested)
         if normalized not in self.supported:
-            raise ValueError(f"Provider does not support output language: {normalized}")
+            msg = f"Provider does not support output language: {normalized}"
+            raise ValueError(msg)
         return normalized
 
     def match(self, requested: str | None) -> str:
@@ -93,4 +101,5 @@ def localized_labels(language: str, translations: Mapping[str, Mapping[str, str]
     for candidate in (normalized, normalized.split("-", maxsplit=1)[0]):
         if candidate in translations:
             return translations[candidate]
-    raise ValueError(f"No document scaffold labels for language: {normalized}")
+    msg = f"No document scaffold labels for language: {normalized}"
+    raise ValueError(msg)

@@ -10,7 +10,7 @@ def test_language_tags_are_normalized() -> None:
     assert normalize_language_tag("EN-us") == "en-US"
 
 
-@pytest.mark.parametrize("value", ("", "en_US", "english"))
+@pytest.mark.parametrize("value", ["", "en_US", "english"])
 def test_language_tags_reject_invalid_values(value: str) -> None:
     with pytest.raises(ValueError, match="BCP 47"):
         normalize_language_tag(value)
@@ -55,7 +55,7 @@ def test_weather_provider_language_metadata_distinguishes_selectable_and_fixed_s
 
 @pytest.mark.parametrize(
     ("default", "supported"),
-    (("en", ()), ("ja", ("en",)), ("en", ("en", "EN"))),
+    [("en", ()), ("ja", ("en",)), ("en", ("en", "EN"))],
 )
 def test_language_support_rejects_invalid_supported_sets(default: str, supported: tuple[str, ...]) -> None:
     with pytest.raises(ValueError, match="unique supported default"):
@@ -64,12 +64,12 @@ def test_language_support_rejects_invalid_supported_sets(default: str, supported
 
 @pytest.mark.parametrize(
     "api_codes",
-    (
+    [
         (("en", "en"),),
         (("en", "en"), ("ja", "ja"), ("JA", "jp")),
         (("en", "en"), ("fr", "fr")),
         (("en", "en"), ("ja", " ")),
-    ),
+    ],
 )
 def test_language_support_rejects_incomplete_or_invalid_api_codes(
     api_codes: tuple[tuple[str, str], ...],

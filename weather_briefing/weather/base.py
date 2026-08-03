@@ -6,12 +6,14 @@ import logging
 import time
 from contextlib import suppress
 from math import isfinite
-from typing import Protocol, TypeGuard, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypeGuard, runtime_checkable
 
 import httpx
-import pendulum
 
-from ..models import WeatherContextSnapshot
+if TYPE_CHECKING:
+    import pendulum
+
+    from weather_briefing.models import WeatherContextSnapshot
 
 _LOGGER = logging.getLogger("weather_briefing.weather_context")
 
@@ -117,7 +119,8 @@ class FallbackWeatherContextProvider:
     def __init__(self, *providers: WeatherContextProvider) -> None:
         """Require and retain weather providers in fallback priority order."""
         if not providers:
-            raise ValueError("At least one weather context provider is required")
+            msg = "At least one weather context provider is required"
+            raise ValueError(msg)
         self._providers = providers
 
     async def fetch(
@@ -155,10 +158,12 @@ async def fetch_weather_context(
     if forecast_date is None:
         return await provider.fetch(latitude, longitude)
     if not isinstance(provider, DatedWeatherContextProvider):
-        raise UnsupportedForecastDateError(f"{type(provider).__name__} does not support target forecast dates")
+        msg = f"{type(provider).__name__} does not support target forecast dates"
+        raise UnsupportedForecastDateError(msg)
     fetch_for_date = provider.fetch_for_date
     if not callable(fetch_for_date):
-        raise UnsupportedForecastDateError(f"{type(provider).__name__} does not support target forecast dates")
+        msg = f"{type(provider).__name__} does not support target forecast dates"
+        raise UnsupportedForecastDateError(msg)
     return await fetch_for_date(latitude, longitude, forecast_date)
 
 
@@ -174,13 +179,16 @@ def _safe_provider_error(exc: Exception) -> str:
 
 def _float_value(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, str | int | float):
-        raise TypeError("value must be numeric")
+        msg = "value must be numeric"
+        raise TypeError(msg)
     try:
         number = float(value)
     except OverflowError as exc:
-        raise ValueError("value must be finite") from exc
+        msg = "value must be finite"
+        raise ValueError(msg) from exc
     if not isfinite(number):
-        raise ValueError("value must be finite")
+        msg = "value must be finite"
+        raise ValueError(msg)
     return number
 
 

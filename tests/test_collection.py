@@ -36,7 +36,7 @@ def _air_quality(
     )
 
 
-def _snapshot(
+def _snapshot(  # noqa: PLR0913
     source: str,
     observed_at: pendulum.DateTime,
     *,
@@ -251,7 +251,7 @@ async def test_collection_does_not_filter_dated_forecast_snapshots() -> None:
 
 @pytest.mark.parametrize(
     ("snapshot", "expected_context"),
-    (
+    [
         (
             _snapshot(
                 "qweather",
@@ -278,7 +278,7 @@ async def test_collection_does_not_filter_dated_forecast_snapshots() -> None:
             ),
             "Allergen snapshot allergen:qweather observation time",
         ),
-    ),
+    ],
 )
 async def test_collection_rejects_ambiguous_current_observation_times(
     snapshot: WeatherContextSnapshot,

@@ -73,7 +73,7 @@ def test_mainland_weather_providers_default_to_qweather_then_open_meteo(monkeypa
 
 @pytest.mark.parametrize(
     ("selected_publisher", "briefing_max_characters", "llm_max_output_tokens"),
-    (("bark", 650, 4096), ("stdout", 3500, 8192), ("telegram", 3500, 8192)),
+    [("bark", 650, 4096), ("stdout", 3500, 8192), ("telegram", 3500, 8192)],
 )
 def test_publisher_selects_generation_defaults(
     monkeypatch,
@@ -118,7 +118,7 @@ def test_bark_llm_token_default_is_independent_of_briefing_limit(monkeypatch) ->
     assert settings.llm_max_output_tokens == 4096
 
 
-@pytest.mark.parametrize("selected_publisher", ("stdout", "telegram"))
+@pytest.mark.parametrize("selected_publisher", ["stdout", "telegram"])
 def test_non_bark_llm_token_default_is_independent_of_briefing_limit(monkeypatch, selected_publisher: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("PUBLISHER", selected_publisher)
@@ -151,7 +151,7 @@ def test_llm_history_limits_can_be_configured(monkeypatch) -> None:
     assert settings.llm_history_max_characters == 8_000
 
 
-@pytest.mark.parametrize("value", ("0", "257"))
+@pytest.mark.parametrize("value", ["0", "257"])
 def test_llm_history_document_limit_rejects_unsafe_values(monkeypatch, value: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("LLM_HISTORY_MAX_DOCUMENTS", value)
@@ -160,7 +160,7 @@ def test_llm_history_document_limit_rejects_unsafe_values(monkeypatch, value: st
         Settings.from_env()
 
 
-@pytest.mark.parametrize("value", ("0", "1", "1000001"))
+@pytest.mark.parametrize("value", ["0", "1", "1000001"])
 def test_llm_history_character_limit_rejects_unsafe_values(monkeypatch, value: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("LLM_HISTORY_MAX_CHARACTERS", value)
@@ -199,7 +199,7 @@ def test_nea_supplement_can_be_last_or_the_only_explicit_provider(monkeypatch) -
     assert Settings.from_env().weather_providers == ("nea-sg",)
 
 
-@pytest.mark.parametrize("local_provider", ("nea-sg", "jma-jp"))
+@pytest.mark.parametrize("local_provider", ["nea-sg", "jma-jp"])
 def test_programmatic_weather_order_cannot_bypass_local_supplement_constraint(local_provider: str) -> None:
     with pytest.raises(ConfigurationError, match="local capability providers after all primary providers"):
         weather_providers_for(_resolved_location(mainland=False), (local_provider, "open-meteo"))
@@ -212,7 +212,7 @@ def test_multiple_local_supplements_can_follow_primary_providers() -> None:
     assert weather_providers_for(singapore, providers) == providers
 
 
-@pytest.mark.parametrize("country_code", (None, "JP", "US"))
+@pytest.mark.parametrize("country_code", [None, "JP", "US"])
 def test_explicit_nea_provider_is_removed_outside_singapore(country_code: str | None) -> None:
     location = replace(_resolved_location(mainland=False), country_code=country_code)
 
@@ -281,7 +281,7 @@ def test_location_models_enforce_jma_office_code_invariant() -> None:
         normalize_jma_office_code(130000)
 
 
-@pytest.mark.parametrize("value", ("13000", "tokyo", "１２３４５６", 130000))
+@pytest.mark.parametrize("value", ["13000", "tokyo", "１２３４５６", 130000])
 def test_location_jma_office_code_rejects_invalid_values(monkeypatch, tmp_path: Path, value: object) -> None:
     _required_environment(monkeypatch)
     locations_file = tmp_path / "locations.json"
@@ -388,13 +388,13 @@ def test_rss_source_requires_public_display_name(monkeypatch, tmp_path: Path) ->
 
 @pytest.mark.parametrize(
     ("source", "message"),
-    (
+    [
         ('{"name":"Test","url":"https://example.invalid/feed"}', "id"),
         ('{"id":null,"name":"Test","url":"https://example.invalid/feed"}', "id"),
         ('{"id":"test","name":null,"url":"https://example.invalid/feed"}', "name"),
         ('{"id":"test","name":"Test"}', "url"),
         ('{"id":"test","name":"Test","url":null}', "url"),
-    ),
+    ],
 )
 def test_rss_source_rejects_missing_or_null_required_fields(
     monkeypatch,
@@ -414,8 +414,8 @@ def test_rss_source_rejects_missing_or_null_required_fields(
         Settings.from_env()
 
 
-@pytest.mark.parametrize("field", ("id", "name", "url"))
-@pytest.mark.parametrize("value", (1, ["value"], {"value": "nested"}))
+@pytest.mark.parametrize("field", ["id", "name", "url"])
+@pytest.mark.parametrize("value", [1, ["value"], {"value": "nested"}])
 def test_rss_source_required_fields_reject_non_strings(
     monkeypatch,
     tmp_path: Path,
@@ -458,13 +458,13 @@ def test_rss_source_treats_null_optional_arrays_as_empty(monkeypatch, tmp_path: 
 
 @pytest.mark.parametrize(
     "field",
-    (
+    [
         "verbatim_title_patterns",
         "forecast_title_patterns",
         "content_remove_selectors",
         "content_remove_patterns",
         "location_ids",
-    ),
+    ],
 )
 def test_rss_source_optional_arrays_reject_non_arrays(monkeypatch, tmp_path: Path, field: str) -> None:
     _required_environment(monkeypatch)
@@ -490,13 +490,13 @@ def test_rss_source_optional_arrays_reject_non_arrays(monkeypatch, tmp_path: Pat
 
 @pytest.mark.parametrize(
     ("field", "entry"),
-    (
+    [
         ("verbatim_title_patterns", ""),
         ("forecast_title_patterns", " "),
         ("content_remove_selectors", 1),
         ("content_remove_patterns", {}),
         ("location_ids", None),
-    ),
+    ],
 )
 def test_rss_source_optional_arrays_require_non_empty_strings(
     monkeypatch,
@@ -530,10 +530,10 @@ def test_rss_source_optional_arrays_require_non_empty_strings(
 
 @pytest.mark.parametrize(
     ("field", "entry"),
-    (
+    [
         ("content_remove_selectors", "["),
         ("content_remove_patterns", "["),
-    ),
+    ],
 )
 def test_rss_source_cleaning_rules_reject_invalid_syntax(
     monkeypatch,
@@ -690,7 +690,7 @@ def test_backfill_location_fields_does_not_mix_partial_on_disk_coordinates(tmp_p
     assert location_file.read_text(encoding="utf-8") == original
 
 
-@pytest.mark.parametrize("name", ("", "   ", None, 123))
+@pytest.mark.parametrize("name", ["", "   ", None, 123])
 def test_backfill_location_fields_rejects_invalid_resolved_names(tmp_path: Path, name: object) -> None:
     location_file = tmp_path / "locations.json"
     original = '[{"id":"place","latitude":10.0,"longitude":20.0}]'
@@ -716,14 +716,14 @@ def test_backfill_location_fields_rejects_invalid_resolved_names(tmp_path: Path,
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    (
+    [
         ("latitude", "10"),
         ("latitude", None),
         ("latitude", True),
         ("longitude", "20"),
         ("longitude", None),
         ("longitude", False),
-    ),
+    ],
 )
 def test_backfill_location_fields_rejects_non_numeric_resolved_coordinates(
     tmp_path: Path,
@@ -755,14 +755,14 @@ def test_backfill_location_fields_rejects_non_numeric_resolved_coordinates(
 
 @pytest.mark.parametrize(
     ("latitude", "longitude", "field"),
-    (
+    [
         (float("nan"), 20.0, "latitude"),
         (float("inf"), 20.0, "latitude"),
         (91.0, 20.0, "latitude"),
         (10.0, float("nan"), "longitude"),
         (10.0, float("inf"), "longitude"),
         (10.0, 181.0, "longitude"),
-    ),
+    ],
 )
 def test_backfill_location_fields_rejects_invalid_resolved_coordinates(
     tmp_path: Path,
@@ -792,7 +792,8 @@ def test_locations_reports_file_read_errors(monkeypatch, tmp_path: Path) -> None
     location_file.write_text('[{"id":"place","name":"Place"}]', encoding="utf-8")
 
     def fail_open(*_args: object, **_kwargs: object) -> None:
-        raise OSError("read failure")
+        msg = "read failure"
+        raise OSError(msg)
 
     monkeypatch.setattr(Path, "open", fail_open)
 
@@ -807,7 +808,8 @@ def test_json_file_reports_read_errors(monkeypatch, tmp_path: Path) -> None:
     source_file.write_text("[]", encoding="utf-8")
 
     def fail_read_text(*_args: object, **_kwargs: object) -> None:
-        raise OSError("read failure")
+        msg = "read failure"
+        raise OSError(msg)
 
     monkeypatch.setattr(Path, "read_text", fail_read_text)
 
@@ -839,7 +841,8 @@ def test_backfill_location_fields_requires_writable_file(monkeypatch, tmp_path: 
     resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
 
     def deny_location_write(*_args: object, **_kwargs: object) -> None:
-        raise PermissionError("read-only mount")
+        msg = "read-only mount"
+        raise PermissionError(msg)
 
     monkeypatch.setattr(Path, "open", deny_location_write)
 
@@ -854,7 +857,8 @@ def test_backfill_location_fields_reports_non_permission_io_errors(monkeypatch, 
     resolved = (ResolvedLocation("place", "Place", 10.0, 20.0, "US", None, None, False),)
 
     def fail_fsync(_fd: int) -> None:
-        raise OSError("disk full")
+        msg = "disk full"
+        raise OSError(msg)
 
     monkeypatch.setattr(os, "fsync", fail_fsync)
 
@@ -869,8 +873,8 @@ def test_backfill_location_fields_reports_non_permission_io_errors(monkeypatch, 
     ]
 
 
-@pytest.mark.parametrize("field", ("id", "name"))
-@pytest.mark.parametrize("value", (1, ["value"], {"value": "nested"}))
+@pytest.mark.parametrize("field", ["id", "name"])
+@pytest.mark.parametrize("value", [1, ["value"], {"value": "nested"}])
 def test_location_string_fields_reject_non_strings(
     monkeypatch,
     tmp_path: Path,
@@ -988,7 +992,7 @@ def test_env_optional_with_quoted_empty_yields_none(monkeypatch) -> None:
     assert settings.qweather_project_id is None
 
 
-@pytest.mark.parametrize("value", ("sk-key'", 'sk-key"', "'sk-key\""))
+@pytest.mark.parametrize("value", ["sk-key'", 'sk-key"', "'sk-key\""])
 def test_env_value_with_unmatched_quotes_is_unchanged(monkeypatch, value: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("DEEPSEEK_API_KEY", value)
@@ -998,7 +1002,7 @@ def test_env_value_with_unmatched_quotes_is_unchanged(monkeypatch, value: str) -
     assert settings.api_key == value
 
 
-@pytest.mark.parametrize("value", ("1", "true", "yes", "'true'", '"yes"', "' true '", '" yes "'))
+@pytest.mark.parametrize("value", ["1", "true", "yes", "'true'", '"yes"', "' true '", '" yes "'])
 def test_debug_accepts_truthy_values_with_optional_outer_quotes(monkeypatch, value: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("DEBUG", value)
@@ -1006,7 +1010,7 @@ def test_debug_accepts_truthy_values_with_optional_outer_quotes(monkeypatch, val
     assert Settings.from_env().debug
 
 
-@pytest.mark.parametrize("value", ("", "0", "false", "no", "'false'", '"no"', "' false '", '" no "'))
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "'false'", '"no"', "' false '", '" no "'])
 def test_debug_accepts_false_values_with_optional_outer_quotes(monkeypatch, value: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("DEBUG", value)
@@ -1014,7 +1018,7 @@ def test_debug_accepts_false_values_with_optional_outer_quotes(monkeypatch, valu
     assert not Settings.from_env().debug
 
 
-@pytest.mark.parametrize("value", ("tru", "enabled", "2"))
+@pytest.mark.parametrize("value", ["tru", "enabled", "2"])
 def test_debug_rejects_unknown_values(monkeypatch, value: str) -> None:
     _required_environment(monkeypatch)
     monkeypatch.setenv("DEBUG", value)
@@ -1025,13 +1029,13 @@ def test_debug_rejects_unknown_values(monkeypatch, value: str) -> None:
 
 @pytest.mark.parametrize(
     "name",
-    (
+    [
         "HTTP_TIMEOUT_SECONDS",
         "RSS_FAILURE_THRESHOLD",
         "RSS_STALE_HOURS",
         "WARNING_RETENTION_HOURS",
         "HISTORY_HOURS",
-    ),
+    ],
 )
 def test_positive_operational_settings_reject_zero(monkeypatch, name: str) -> None:
     _required_environment(monkeypatch)
@@ -1196,14 +1200,14 @@ class TestScheduleSettings:
 
         assert Settings.from_env().service_status_cron == "*/2 8-20 * * 1-5"
 
-    @pytest.mark.parametrize("value", ("en", "zh-CN", "ja"))
+    @pytest.mark.parametrize("value", ["en", "zh-CN", "ja"])
     def test_service_status_notification_language(self, monkeypatch, value: str) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("SERVICE_STATUS_LANGUAGE", value)
 
         assert Settings.from_env().service_status_language == value
 
-    @pytest.mark.parametrize("value", ("", "fr", "zh-Hant", "not_a_language"))
+    @pytest.mark.parametrize("value", ["", "fr", "zh-Hant", "not_a_language"])
     def test_invalid_service_status_notification_language_rejected(self, monkeypatch, value: str) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("SERVICE_STATUS_LANGUAGE", value)
@@ -1211,7 +1215,7 @@ class TestScheduleSettings:
         with pytest.raises(ConfigurationError, match="SERVICE_STATUS_LANGUAGE"):
             Settings.from_env()
 
-    @pytest.mark.parametrize("value", ("", "*/5", "60 * * * *", "* * * * * *"))
+    @pytest.mark.parametrize("value", ["", "*/5", "60 * * * *", "* * * * * *"])
     def test_invalid_service_status_cron_rejected(self, monkeypatch, value: str) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("SERVICE_STATUS_CRON", value)
@@ -1219,7 +1223,7 @@ class TestScheduleSettings:
         with pytest.raises(ConfigurationError, match="SERVICE_STATUS_CRON"):
             Settings.from_env()
 
-    @pytest.mark.parametrize("value", ("foo", "24", "9-", "9 - 18"))
+    @pytest.mark.parametrize("value", ["foo", "24", "9-", "9 - 18"])
     def test_invalid_briefing_cron_rejected(self, monkeypatch, value: str) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("BRIEFING_CRON", value)
@@ -1227,7 +1231,7 @@ class TestScheduleSettings:
         with pytest.raises(ConfigurationError, match="valid APScheduler hour expression"):
             Settings.from_env()
 
-    @pytest.mark.parametrize("value", ("25", "-1", "abc"))
+    @pytest.mark.parametrize("value", ["25", "-1", "abc"])
     def test_greeting_hour_out_of_bounds_rejected(self, monkeypatch, value: str) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("GREETING_HOUR", value)
@@ -1235,7 +1239,7 @@ class TestScheduleSettings:
         with pytest.raises(ConfigurationError):
             Settings.from_env()
 
-    @pytest.mark.parametrize("value", ("60", "-1", "abc"))
+    @pytest.mark.parametrize("value", ["60", "-1", "abc"])
     def test_greeting_minute_out_of_bounds_rejected(self, monkeypatch, value: str) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("GREETING_MINUTE", value)
@@ -1279,10 +1283,10 @@ class TestConfigErrorPaths:
 
     @pytest.mark.parametrize(
         ("configured_name", "missing_name"),
-        (
+        [
             ("LLM_FALLBACK_PROVIDER", "LLM_FALLBACK_MODEL"),
             ("LLM_FALLBACK_MODEL", "LLM_FALLBACK_PROVIDER"),
-        ),
+        ],
     )
     def test_incomplete_llm_fallback_configuration_raises_error(
         self,
@@ -1524,10 +1528,10 @@ class TestConfigErrorPaths:
 
     @pytest.mark.parametrize(
         ("missing_name", "message"),
-        (
+        [
             ("TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"),
             ("TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID"),
-        ),
+        ],
     )
     def test_service_status_telegram_requires_credentials(
         self,
@@ -1554,13 +1558,13 @@ class TestConfigErrorPaths:
 
     @pytest.mark.parametrize(
         ("value", "message"),
-        (
+        [
             ("", "cannot be empty"),
             (", , ", "cannot be empty"),
             ("telegram,,bark", "cannot contain empty entries"),
             ("telegram,telegram", "cannot contain duplicates"),
             ("telegram,email", "unsupported publishers: email"),
-        ),
+        ],
     )
     def test_invalid_service_status_publishers_are_rejected(
         self,
@@ -1591,7 +1595,7 @@ class TestConfigErrorPaths:
         with pytest.raises(ConfigurationError, match="SERVICE_STATUS_PROVIDERS cannot contain duplicates"):
             Settings.from_env()
 
-    @pytest.mark.parametrize("value", (",,", "openai,,kimi"))
+    @pytest.mark.parametrize("value", [",,", "openai,,kimi"])
     def test_empty_service_status_provider_entries_raise_error(self, monkeypatch, value: str) -> None:
         _required_environment(monkeypatch)
         monkeypatch.setenv("SERVICE_STATUS_PROVIDERS", value)
@@ -1614,7 +1618,7 @@ class TestConfigErrorPaths:
         with pytest.raises(ConfigurationError, match="Missing required environment variable: BARK_DEVICE_KEY"):
             Settings.from_env()
 
-    @pytest.mark.parametrize("key", ("short", "a" * 17, "a" * 33))
+    @pytest.mark.parametrize("key", ["short", "a" * 17, "a" * 33])
     def test_invalid_bark_encryption_key_length_raises_error(self, monkeypatch, key: str) -> None:
         _required_environment(monkeypatch)
         _select_bark(monkeypatch)
@@ -1631,7 +1635,7 @@ class TestConfigErrorPaths:
         with pytest.raises(ConfigurationError, match="only ASCII"):
             Settings.from_env()
 
-    @pytest.mark.parametrize("iv", ("short", "longer-than-twelve"))
+    @pytest.mark.parametrize("iv", ["short", "longer-than-twelve"])
     def test_invalid_bark_encryption_iv_length_raises_error(self, monkeypatch, iv: str) -> None:
         _required_environment(monkeypatch)
         _select_bark(monkeypatch)
@@ -1666,14 +1670,14 @@ class TestConfigErrorPaths:
 
     @pytest.mark.parametrize(
         "base_url",
-        (
+        [
             "api.example.invalid",
             "ftp://api.example.invalid",
             "https://user:password@api.example.invalid",
             "https://api.example.invalid?token=private",
             "https://api.example.invalid#fragment",
             "https://api.example.invalid:invalid",
-        ),
+        ],
     )
     def test_invalid_bark_base_url_raises_error(self, monkeypatch, base_url: str) -> None:
         _required_environment(monkeypatch)
@@ -1709,7 +1713,7 @@ class TestConfigErrorPaths:
         with pytest.raises(ConfigurationError, match="BARK_GROUP must not be empty"):
             Settings.from_env()
 
-    @pytest.mark.parametrize("key_length", (16, 24, 32))
+    @pytest.mark.parametrize("key_length", [16, 24, 32])
     def test_bark_encryption_key_lengths_are_loaded(self, monkeypatch, key_length: int) -> None:
         _required_environment(monkeypatch)
         _select_bark(monkeypatch)

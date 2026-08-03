@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TypeGuard
+from typing import TYPE_CHECKING, TypeGuard
 
-import pendulum
+from weather_briefing.models import Article, BriefingRecord
+from weather_briefing.time_utils import require_aware_datetime
 
-from ..models import Article, BriefingRecord
-from ..time_utils import require_aware_datetime
 from .serialization import _article_from_row as article_from_row
 from .serialization import _parse_time as parse_time
 from .serialization import _storage_time as storage_time
+
+if TYPE_CHECKING:
+    import sqlite3
+    from collections.abc import Mapping
+
+    import pendulum
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,10 +36,12 @@ def _stored_notification_payload(value: object) -> dict[str, object] | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError("Stored notification payload must be JSON text")
+        msg = "Stored notification payload must be JSON text"
+        raise ValueError(msg)  # noqa: TRY004
     decoded: object = json.loads(value)
     if not _is_string_object_dict(decoded):
-        raise ValueError("Stored notification payload must be an object with string keys")
+        msg = "Stored notification payload must be an object with string keys"
+        raise ValueError(msg)
     return decoded
 
 
@@ -214,6 +219,7 @@ class ContentStateOperations:
     def _enqueue_verbatim_deliveries(
         self,
         articles: tuple[Article, ...],
+        *,
         silent: bool,
         queued_at: pendulum.DateTime,
     ) -> None:

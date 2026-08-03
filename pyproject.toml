@@ -55,8 +55,11 @@ line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "UP", "B", "SIM", "D", "PERF", "FURB"]
+select = ["ALL"]
 ignore = [
+  # The project has no copyright-header policy.
+  "CPY001",
+  # These docstring and whitespace rules conflict with Ruff's formatter.
   "W191",
   "E111",
   "E114",
@@ -78,4 +81,39 @@ preview = false
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D"]
+"tests/**" = [
+  # pytest is built on `assert`; flagging every assertion adds no signal.
+  "S101",
+  # Test functions, helpers, and fixtures do not need docstrings.
+  "D100",
+  "D101",
+  "D102",
+  "D103",
+  "D107",
+  # Test functions and helpers do not benefit from annotating every parameter,
+  # return type, *args, or **kwargs — fixture types are defined by pytest.
+  "ANN001",
+  "ANN002",
+  "ANN003",
+  "ANN202",
+  "ANN204",
+  "ANN401",
+  # Test doubles, mock classes, and transport lambdas must match the interface
+  # being faked even when they do not use every parameter.
+  "ARG001",
+  "ARG002",
+  "ARG005",
+  # Tests assertions and fixtures routinely compare against literal values.
+  "PLR2004",
+  # CJK punctuation in test data is intentional.
+  "RUF001",
+  # Tests need to access private members to verify internal state.
+  "SLF001",
+  # Function-level imports are used for cache clearing, mock isolation, and
+  # lazy side-effect control.
+  "PLC0415",
+  # Test helpers and doubles accept simple positional booleans.
+  "FBT001",
+  "FBT002",
+  "FBT003",
+]

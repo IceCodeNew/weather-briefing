@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-import pendulum
+if TYPE_CHECKING:
+    import pendulum
 
-from ..models import FeedConfig
+    from weather_briefing.models import FeedConfig
 
 
 class BriefingSettings(Protocol):

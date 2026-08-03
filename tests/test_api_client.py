@@ -59,7 +59,7 @@ async def test_logged_client_leaves_handled_response_error_warning_to_adapter(ca
     assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
 
-@pytest.mark.parametrize("value", (None, 0, 1, "true"))
+@pytest.mark.parametrize("value", [None, 0, 1, "true"])
 def test_api_call_extensions_rejects_non_boolean_response_error_ownership(value) -> None:
     with pytest.raises(TypeError, match="response_error_handled must be a bool"):
         api_call_extensions("telegram", "send-message", response_error_handled=value)
@@ -69,7 +69,8 @@ async def test_logged_client_records_exception_type_without_message(caplog) -> N
     caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
 
     def fail(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("private transport detail", request=request)
+        msg = "private transport detail"
+        raise httpx.ConnectError(msg, request=request)
 
     async with LoggedAsyncClient(transport=httpx.MockTransport(fail)) as client:
         with pytest.raises(httpx.ConnectError, match="private transport detail"):
@@ -115,7 +116,7 @@ async def test_request_extensions_override_sdk_context(caplog) -> None:
 
 @pytest.mark.parametrize(
     "identity",
-    ("invalid", ("provider",), (1, "operation"), ("unsafe label", "operation")),
+    ["invalid", ("provider",), (1, "operation"), ("unsafe label", "operation")],
 )
 async def test_logged_client_treats_malformed_metadata_as_unclassified(caplog, identity: object) -> None:
     caplog.set_level(logging.INFO, logger="weather_briefing.api_client")
@@ -144,7 +145,7 @@ async def test_logged_client_rejects_untrusted_method_in_log(caplog) -> None:
     assert "forged-log-line" not in caplog.text
 
 
-@pytest.mark.parametrize("label", ("", "Open-Meteo", "private endpoint", "line\nbreak"))
+@pytest.mark.parametrize("label", ["", "Open-Meteo", "private endpoint", "line\nbreak"])
 def test_api_call_extensions_rejects_unsafe_labels(label: str) -> None:
     with pytest.raises(ValueError, match="lowercase kebab-case"):
         api_call_extensions(label, "operation")

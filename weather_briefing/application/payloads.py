@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-import pendulum
+from typing import TYPE_CHECKING
 
-from ..models import Article, ResolvedLocation, SourceDocument, Warning
-from ..state import SQLiteStateStore
+if TYPE_CHECKING:
+    import pendulum
+
+    from weather_briefing.models import Article, ResolvedLocation, SourceDocument, WeatherWarning
+    from weather_briefing.state import SQLiteStateStore
 
 
 def serialize_article(article: Article) -> dict[str, object]:
@@ -21,7 +24,7 @@ def serialize_article(article: Article) -> dict[str, object]:
     }
 
 
-def build_briefing_payload(
+def build_briefing_payload(  # noqa: PLR0913
     *,
     kind: str,
     now: pendulum.DateTime,
@@ -35,7 +38,7 @@ def build_briefing_payload(
     historical_articles: tuple[Article, ...],
     context: tuple[SourceDocument, ...],
     historical_context: list[dict[str, object]],
-    active_warnings: tuple[Warning, ...],
+    active_warnings: tuple[WeatherWarning, ...],
 ) -> dict[str, object]:
     """Build the complete structured input without invoking external services."""
     location_scope = {"full_name": location.name}

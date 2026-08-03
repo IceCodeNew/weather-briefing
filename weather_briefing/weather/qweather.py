@@ -6,19 +6,23 @@ import base64
 import binascii
 import logging
 import time
-from collections.abc import Callable
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 import jwt
-import pendulum
 
-from ..api_client import api_call_extensions
-from ..data.resources import reference_string, reference_string_tuple
-from ..models import AirQualitySnapshot, AirQualityTimeKind, WeatherContextSnapshot
-from ..time_utils import parse_datetime_with_default_timezone
+from weather_briefing.api_client import api_call_extensions
+from weather_briefing.data.resources import reference_string, reference_string_tuple
+from weather_briefing.models import AirQualitySnapshot, AirQualityTimeKind, WeatherContextSnapshot
+from weather_briefing.time_utils import parse_datetime_with_default_timezone
+
 from . import qweather_parsing
 from .base import WeatherContextError, _is_object_list, _is_string_keyed_dict, _safe_provider_error
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pendulum
 
 _LOGGER = logging.getLogger("weather_briefing.weather_context")
 QWEATHER_LANGUAGE_SUPPORT = qweather_parsing.QWEATHER_LANGUAGE_SUPPORT
@@ -45,14 +49,16 @@ class QWeatherJWTAuthenticator:
         clock: Callable[[], float] = time.time,
     ) -> None:
         """Validate and retain credentials for short-lived QWeather JWTs."""
-        if not 1 <= lifetime_seconds <= 86_400:
-            raise ValueError("QWeather JWT lifetime must be between 1 and 86400 seconds")
+        if not 1 <= lifetime_seconds <= 86_400:  # noqa: PLR2004
+            msg = "QWeather JWT lifetime must be between 1 and 86400 seconds"
+            raise ValueError(msg)
         self._project_id = project_id
         self._credential_id = credential_id
         try:
             self._private_key = base64.b64decode(private_key_base64, validate=True).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError):
-            raise ValueError("QWeather private key must be a Base64-encoded UTF-8 PEM") from None
+            msg = "QWeather private key must be a Base64-encoded UTF-8 PEM"
+            raise ValueError(msg) from None
         self._lifetime_seconds = lifetime_seconds
         self._clock = clock
 
@@ -102,7 +108,7 @@ class QWeatherProvider:
         )
         self._allergen_index_type = reference_string("provider_defaults.json", "qweather_allergen_index_type")
 
-    async def fetch(
+    async def fetch(  # noqa: C901, PLR0912, PLR0915
         self,
         latitude: float,
         longitude: float,
@@ -127,16 +133,21 @@ class QWeatherProvider:
             weather_response.raise_for_status()
             weather_payload = weather_response.json()
             if not _is_string_keyed_dict(weather_payload):
-                raise qweather_parsing.QWeatherResponseError("weather response must be an object")
+                msg = "weather response must be an object"
+                raise qweather_parsing.QWeatherResponseError(msg)  # noqa: TRY301
             if weather_payload.get("code") != "200":
-                raise WeatherContextError(
+                msg = (
                     "QWeather returned a non-success weather status "
                     f"code={qweather_parsing.safe_api_status(weather_payload.get('code'))}"
+                )
+                raise WeatherContextError(  # noqa: TRY301
+                    msg
                 )
             operation = "weather forecast parsing"
             daily_forecasts = weather_payload.get("daily", [])
             if not _is_object_list(daily_forecasts):
-                raise qweather_parsing.QWeatherResponseError("daily forecast must be an array")
+                msg = "daily forecast must be an array"
+                raise qweather_parsing.QWeatherResponseError(msg)  # noqa: TRY301
             forecast_index: int | None = None
             if forecast_date is None:
                 selected_forecasts = daily_forecasts[:2]
@@ -154,8 +165,10 @@ class QWeatherProvider:
             )
             if not weather_forecast:
                 if forecast_date is None:
-                    raise WeatherContextError("QWeather returned no daily forecast")
-                raise WeatherContextError(f"QWeather returned no forecast for {forecast_date}")
+                    msg = "QWeather returned no daily forecast"
+                    raise WeatherContextError(msg)  # noqa: TRY301
+                msg = f"QWeather returned no forecast for {forecast_date}"
+                raise WeatherContextError(msg)  # noqa: TRY301
 
             indices_payload: dict[str, object] = {}
             lifestyle_advice: tuple[str, ...] = ()
@@ -175,23 +188,29 @@ class QWeatherProvider:
                 indices_response.raise_for_status()
                 parsed_indices_payload = indices_response.json()
                 if not _is_string_keyed_dict(parsed_indices_payload):
-                    raise qweather_parsing.QWeatherResponseError("indices response must be an object")
+                    msg = "indices response must be an object"
+                    raise qweather_parsing.QWeatherResponseError(msg)  # noqa: TRY301
                 if parsed_indices_payload.get("code") != "200":
-                    raise qweather_parsing.QWeatherResponseError(
+                    msg = (
                         "non-success indices status "
                         f"code={qweather_parsing.safe_api_status(parsed_indices_payload.get('code'))}"
+                    )
+                    raise qweather_parsing.QWeatherResponseError(  # noqa: TRY301
+                        msg
                     )
                 indices_payload = parsed_indices_payload
                 daily_indices_payload = indices_payload.get("daily", [])
                 if not _is_object_list(daily_indices_payload):
-                    raise qweather_parsing.QWeatherResponseError("daily indices must be an array")
+                    msg = "daily indices must be an array"
+                    raise qweather_parsing.QWeatherResponseError(msg)  # noqa: TRY301
                 daily_indices = tuple(
                     item
                     for item in daily_indices_payload
                     if _is_string_keyed_dict(item) and (forecast_date is None or item.get("date") == str(forecast_date))
                 )
                 if forecast_date is None and len(daily_indices) != len(daily_indices_payload):
-                    raise TypeError("daily indices must contain objects")
+                    msg = "daily indices must contain objects"
+                    raise TypeError(msg)  # noqa: TRY301
                 lifestyle_advice = tuple(
                     qweather_parsing.format_lifestyle(item, self._output_language) for item in daily_indices
                 )
@@ -213,7 +232,8 @@ class QWeatherProvider:
             if not isinstance(update_time, str) or not update_time.strip():
                 update_time = indices_payload.get("updateTime")
             if not isinstance(update_time, str) or not update_time.strip():
-                raise WeatherContextError("QWeather response is missing a non-empty updateTime")
+                msg = "QWeather response is missing a non-empty updateTime"
+                raise WeatherContextError(msg)  # noqa: TRY301
             observed_at = parse_datetime_with_default_timezone(
                 update_time.strip(),
                 "Asia/Shanghai",
@@ -222,10 +242,12 @@ class QWeatherProvider:
         except WeatherContextError:
             raise
         except qweather_parsing.QWeatherResponseError as exc:
-            raise WeatherContextError(f"QWeather {operation} failed: {exc}") from None
+            msg = f"QWeather {operation} failed: {exc}"
+            raise WeatherContextError(msg) from None
         except (httpx.HTTPError, jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
             detail = _safe_provider_error(exc)
-            raise WeatherContextError(f"QWeather {operation} failed: {detail}") from None
+            msg = f"QWeather {operation} failed: {detail}"
+            raise WeatherContextError(msg) from None
 
         air_quality = await self._fetch_air_quality(
             latitude,
@@ -283,7 +305,8 @@ class QWeatherProvider:
                     or forecast_index >= len(days)
                     or not isinstance(days[forecast_index], dict)
                 ):
-                    raise ValueError("daily air-quality forecast is unavailable")
+                    msg = "daily air-quality forecast is unavailable"
+                    raise ValueError(msg)  # noqa: TRY301
                 payload = days[forecast_index]
                 effective_at = parse_datetime_with_default_timezone(
                     str(payload["forecastStartTime"]),

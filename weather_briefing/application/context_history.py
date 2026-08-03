@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 from collections import deque
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
-from ..llm import serialize_llm_payload
-from ..models import SourceDocument
+from weather_briefing.llm import serialize_llm_payload
+
+if TYPE_CHECKING:
+    from weather_briefing.models import SourceDocument
 
 _FINGERPRINT_CHUNK_CHARACTERS = 64 * 1024
 _FINGERPRINT_SINGLE_PASS_CHARACTERS = 4 * _FINGERPRINT_CHUNK_CHARACTERS
@@ -119,7 +121,8 @@ def _context_overflow(
     compact_payload_characters: int | None = None,
 ) -> HistoricalContextOverflow:
     if candidate.role == "recent_change":
-        raise ValueError("recent changes are optional and cannot produce overflow alerts")
+        msg = "recent changes are optional and cannot produce overflow alerts"
+        raise ValueError(msg)
     return HistoricalContextOverflow(
         source_id=candidate.document.id,
         role=candidate.role,
@@ -130,7 +133,7 @@ def _context_overflow(
     )
 
 
-def bounded_context_history(
+def bounded_context_history(  # noqa: C901, PLR0912
     documents: tuple[SourceDocument, ...],
     *,
     max_documents: int,
@@ -233,7 +236,7 @@ def context_history_candidates(
     return candidates
 
 
-def _context_history_selection(
+def _context_history_selection(  # noqa: C901
     documents: tuple[SourceDocument, ...],
     max_documents: int,
 ) -> tuple[tuple[HistoricalContextCandidate, ...], tuple[HistoricalContextOverflow, ...]]:

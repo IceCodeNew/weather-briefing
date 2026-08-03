@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from typing import TypeGuard
+from typing import TYPE_CHECKING, TypeGuard
 
-import pendulum
+from weather_briefing.models import WeatherWarning
+from weather_briefing.time_utils import require_aware_datetime
 
-from ..models import Warning
-from ..time_utils import require_aware_datetime
 from .serialization import _parse_time as parse_time
 from .serialization import _storage_time as storage_time
+
+if TYPE_CHECKING:
+    import sqlite3
+
+    import pendulum
 
 
 def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
@@ -21,7 +24,8 @@ def _is_string_object_dict(value: object) -> TypeGuard[dict[str, object]]:
 def _required_text_field(payload: dict[str, object], field: str) -> str:
     value = payload.get(field)
     if not isinstance(value, str):
-        raise ValueError(f"Stored warning payload {field} must be a string")
+        msg = f"Stored warning payload {field} must be a string"
+        raise ValueError(msg)  # noqa: TRY004
     return value
 
 
@@ -35,16 +39,20 @@ def _stored_warning_payload(
     row_id: object,
 ) -> tuple[str, str, str, str, tuple[str, ...]]:
     if not isinstance(value, str):
-        raise ValueError("Stored warning payload must be JSON text")
+        msg = "Stored warning payload must be JSON text"
+        raise ValueError(msg)  # noqa: TRY004
     decoded: object = json.loads(value)
     if not _is_string_object_dict(decoded):
-        raise ValueError("Stored warning payload must be an object with string keys")
+        msg = "Stored warning payload must be an object with string keys"
+        raise ValueError(msg)
     source_ids = decoded.get("source_ids")
     if not _is_string_list(source_ids):
-        raise ValueError("Stored warning payload source_ids must be a list of strings")
+        msg = "Stored warning payload source_ids must be a list of strings"
+        raise ValueError(msg)
     warning_id = _required_text_field(decoded, "id")
     if warning_id != row_id:
-        raise ValueError("Stored warning payload id must match its row id")
+        msg = "Stored warning payload id must match its row id"
+        raise ValueError(msg)
     return (
         warning_id,
         _required_text_field(decoded, "title"),
@@ -59,7 +67,7 @@ class WarningStateOperations:
 
     _connection: sqlite3.Connection
 
-    def active_warnings(self, now: pendulum.DateTime, retention_hours: int) -> tuple[Warning, ...]:
+    def active_warnings(self, now: pendulum.DateTime, retention_hours: int) -> tuple[WeatherWarning, ...]:
         """Return warnings confirmed inside the retention window."""
         now = require_aware_datetime(now, context="Warning retention time")
         threshold = storage_time(now.subtract(hours=retention_hours))
@@ -67,14 +75,14 @@ class WarningStateOperations:
             "SELECT id, payload, last_confirmed_at FROM warnings WHERE last_confirmed_at >= ?",
             (threshold,),
         )
-        warnings: list[Warning] = []
+        warnings: list[WeatherWarning] = []
         for row in rows:
             warning_id, title, status, detail, source_ids = _stored_warning_payload(
                 row["payload"],
                 row_id=row["id"],
             )
             warnings.append(
-                Warning(
+                WeatherWarning(
                     id=warning_id,
                     title=title,
                     status=status,
@@ -87,7 +95,7 @@ class WarningStateOperations:
 
     def update_warnings(
         self,
-        warnings: tuple[Warning, ...],
+        warnings: tuple[WeatherWarning, ...],
         resolved_warning_ids: tuple[str, ...],
         now: pendulum.DateTime,
         confirmed_source_ids: set[str] | None = None,
@@ -99,7 +107,7 @@ class WarningStateOperations:
 
     def _update_warnings(
         self,
-        warnings: tuple[Warning, ...],
+        warnings: tuple[WeatherWarning, ...],
         resolved_warning_ids: tuple[str, ...],
         now: pendulum.DateTime,
         confirmed_source_ids: set[str] | None = None,

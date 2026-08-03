@@ -132,7 +132,7 @@ async def test_status_feed_parses_flashcat_label_and_bilingual_message() -> None
     assert message.surfaces == (ServiceSurface.WEB, ServiceSurface.API)
 
 
-@pytest.mark.parametrize("status", (404, 503))
+@pytest.mark.parametrize("status", [404, 503])
 async def test_status_feed_wraps_http_errors(status: int) -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(status))) as client:
         with pytest.raises(ServiceStatusError, match="feed request failed"):
@@ -141,7 +141,7 @@ async def test_status_feed_wraps_http_errors(status: int) -> None:
 
 @pytest.mark.parametrize(
     ("payload", "message"),
-    (
+    [
         (b"not a feed", "feed is invalid"),
         (b"<?xml version='1.0'?><rss><channel></channel></rss>", "no incident messages"),
         (_rss(title=""), "field title"),
@@ -153,7 +153,7 @@ async def test_status_feed_wraps_http_errors(status: int) -> None:
         (_rss(summary="<b>Status: Monitoring</b>"), "empty body"),
         (_rss(summary="<p><strong>Status:</strong> monitoring</p>"), "empty body"),
         (_rss(summary="<strong>Monitoring</strong>"), "no update paragraph"),
-    ),
+    ],
 )
 async def test_status_feed_rejects_invalid_contract(payload: bytes, message: str) -> None:
     async with httpx.AsyncClient(
@@ -246,7 +246,7 @@ async def test_labeled_status_ignores_non_paragraph_siblings() -> None:
 
 @pytest.mark.parametrize(
     ("classifier", "name", "expected"),
-    (
+    [
         (keyword_surface, "Public API", ServiceSurface.API),
         (keyword_surface, "Web console", ServiceSurface.WEB),
         (keyword_surface, "Batch jobs", ServiceSurface.OTHER),
@@ -258,7 +258,7 @@ async def test_labeled_status_ignores_non_paragraph_siblings() -> None:
         (_openai_surface, "Responses", ServiceSurface.API),
         (_openai_surface, "Conversations", ServiceSurface.WEB),
         (_openai_surface, "Model inference", ServiceSurface.OTHER),
-    ),
+    ],
 )
 def test_provider_surface_classification(
     classifier,
@@ -270,12 +270,12 @@ def test_provider_surface_classification(
 
 @pytest.mark.parametrize(
     ("provider_type", "expected_host"),
-    (
+    [
         (DeepSeekStatusProvider, "status.deepseek.com"),
         (OpenAIStatusProvider, "status.openai.com"),
         (AnthropicStatusProvider, "status.claude.com"),
         (KimiStatusProvider, "status.moonshot.cn"),
-    ),
+    ],
 )
 async def test_official_providers_use_their_history_feed(
     provider_type: (
@@ -335,7 +335,7 @@ def test_composition_builds_independent_official_providers() -> None:
     asyncio.run(check())
 
 
-def _message(
+def _message(  # noqa: PLR0913
     *,
     incident_id: str = "incident-1",
     revision_id: str = "revision-1",
@@ -412,7 +412,8 @@ async def test_initial_resolved_history_is_a_silent_baseline(tmp_path: Path) -> 
         stored = state.service_status.service_status_message_state("service-status:test", message.incident_id)
 
     assert published == 0
-    assert stored is not None and stored.handled_revision_id == message.revision_id
+    assert stored is not None
+    assert stored.handled_revision_id == message.revision_id
     decision.assess_notification.assert_not_awaited()
     delivery.publish_alert.assert_not_awaited()
 
@@ -507,7 +508,8 @@ async def test_delivery_failure_retries_the_same_revision(tmp_path: Path, caplog
         monitor = ServiceStatusMonitor((provider,), state.service_status, (("test", delivery),), decision, translator)
         assert await monitor.run(pendulum.now("UTC")) == 0
         stored = state.service_status.service_status_message_state("service-status:test", message.incident_id)
-        assert stored is not None and stored.handled_revision_id is None
+        assert stored is not None
+        assert stored.handled_revision_id is None
         assert await monitor.run(pendulum.now("UTC")) == 1
 
     assert delivery.publish_alert.await_count == 2
@@ -557,7 +559,8 @@ async def test_message_failure_does_not_block_remaining_messages(tmp_path: Path)
         first_state = state.service_status.service_status_message_state("service-status:test", "first")
         second_state = state.service_status.service_status_message_state("service-status:test", "second")
 
-    assert first_state is not None and first_state.handled_revision_id is None
+    assert first_state is not None
+    assert first_state.handled_revision_id is None
     assert second_state is not None
     assert second_state.handled_revision_id == second_message.revision_id
 
@@ -606,7 +609,7 @@ async def test_translation_failure_falls_back_to_official_text(tmp_path: Path, c
 
 @pytest.mark.parametrize(
     ("title", "body", "target", "expected"),
-    (
+    [
         ("API incident", "We are investigating elevated errors.", "zh-CN", True),
         ("Resolved", "Resolved.", "en", True),
         ("Resolved", "Resolved.", "zh-CN", True),
@@ -615,7 +618,7 @@ async def test_translation_failure_falls_back_to_official_text(tmp_path: Path, c
         ("検索障害", "検索サービスでエラーが発生しています。", "ja", True),
         ("搜索服务故障", "搜索服务发生错误。", "ja", False),
         ("障害", "調査中", "en", False),
-    ),
+    ],
 )
 def test_official_message_language_matching(
     title: str,
@@ -707,5 +710,5 @@ def test_state_rejects_deciding_a_changed_observation(tmp_path: Path) -> None:
                 "source",
                 "incident",
                 "old",
-                True,
+                should_notify=True,
             )

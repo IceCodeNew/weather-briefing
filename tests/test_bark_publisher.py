@@ -20,11 +20,11 @@ class EnabledDiagnostics:
 
 @pytest.mark.parametrize(
     ("key", "expected_ciphertext"),
-    (
+    [
         ("k" * 16, "M31imDGJqdEEszZWcWfgiMTooJniyhmvnRIIrUSrWDVi3FxcD9cl1Dyre2wQ8a5I2bhFyBrGPeMEwp1+Uw=="),
         ("k" * 24, "QyuvztP2Yktq2khUWXw6hYrjLnhuc+kC44lyGOaVYBRJC4vsYaB6RewayvX+4ZKjUUIifRWDtIiVFq/KgA=="),
         ("k" * 32, "a9CkBbe9d0qkskyAzKyb4pV/WjH6D1J/JLm0EOUTMcoTpJEs10gqANkkLKaOPqVXL0yo0AaxElYjmLmynw=="),
-    ),
+    ],
 )
 def test_bark_encryptor_matches_the_app_gcm_wire_format(
     key: str,
@@ -47,13 +47,13 @@ def test_bark_encryptor_matches_the_app_gcm_wire_format(
     assert len(base64.b64decode(encrypted.ciphertext)) == len(plaintext) + 16
 
 
-@pytest.mark.parametrize("key", ("short", "k" * 17, "密" * 16))
+@pytest.mark.parametrize("key", ["short", "k" * 17, "密" * 16])
 def test_bark_encryptor_rejects_incompatible_app_keys(key: str) -> None:
     with pytest.raises(ValueError, match="Bark encryption key"):
         BarkEncryptor(key, "fixed-iv-123")
 
 
-@pytest.mark.parametrize("iv", ("short", "longer-than-twelve", "密" * 12))
+@pytest.mark.parametrize("iv", ["short", "longer-than-twelve", "密" * 12])
 def test_bark_encryptor_rejects_incompatible_app_ivs(iv: str) -> None:
     with pytest.raises(ValueError, match="Bark GCM IV"):
         BarkEncryptor("k" * 32, iv)
@@ -239,7 +239,7 @@ async def test_bark_publisher_rejects_title_that_leaves_no_body_capacity() -> No
 
 @pytest.mark.parametrize(
     ("status_code", "payload", "expected_reason", "channel_unavailable"),
-    (
+    [
         (400, {"message": "failed to get device token: private detail"}, "device-key-rejected", True),
         (400, {"message": "APNs PayloadTooLarge"}, "message-too-long", False),
         (401, {}, "unauthorized", False),
@@ -248,7 +248,7 @@ async def test_bark_publisher_rejects_title_that_leaves_no_body_capacity() -> No
         (413, {}, "message-too-long", False),
         (429, {}, "rate-limited", False),
         (500, {"message": "private provider detail"}, "api-error", False),
-    ),
+    ],
 )
 def test_bark_error_classification(
     status_code: int,
@@ -263,10 +263,10 @@ def test_bark_error_classification(
 
 @pytest.mark.parametrize(
     "response",
-    (
+    [
         httpx.Response(500, text="not-json"),
         httpx.Response(500, json=["not", "an", "object"]),
-    ),
+    ],
 )
 def test_bark_malformed_error_response_uses_status_classification(response: httpx.Response) -> None:
     assert bark_error_reason(response) == ("api-error", False)
@@ -294,11 +294,11 @@ async def test_bark_error_logs_safe_reason_without_private_response(caplog) -> N
 
 @pytest.mark.parametrize(
     "response",
-    (
+    [
         httpx.Response(200, text="not-json"),
         httpx.Response(200, json={"code": "200"}),
         httpx.Response(200, json={"code": 500, "message": "private detail"}),
-    ),
+    ],
 )
 async def test_bark_rejects_invalid_success_response(response: httpx.Response, caplog) -> None:
     with caplog.at_level("INFO", logger="weather_briefing.publishers"):
@@ -314,7 +314,8 @@ async def test_bark_rejects_invalid_success_response(response: httpx.Response, c
 
 async def test_bark_request_error_does_not_log_private_detail(caplog) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("private network detail", request=request)
+        msg = "private network detail"
+        raise httpx.ConnectError(msg, request=request)
 
     with caplog.at_level("INFO", logger="weather_briefing.publishers"):
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -347,7 +348,7 @@ def test_split_plain_message_preserves_non_boundary_newlines() -> None:
     assert chunks == ("x" * 100 + "\n" + "y" * 549, "y" * 650)
 
 
-@pytest.mark.parametrize("limit", (0, -1))
+@pytest.mark.parametrize("limit", [0, -1])
 def test_split_plain_message_rejects_non_positive_limit(limit: int) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         split_plain_message("body", limit)

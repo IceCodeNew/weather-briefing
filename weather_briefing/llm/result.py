@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pendulum
+from weather_briefing.models import Advice, AdviceTopic, BriefingResult, Conclusion, WeatherWarning
+from weather_briefing.time_utils import require_aware_datetime
 
-from ..models import Advice, AdviceTopic, BriefingResult, Conclusion, Warning
-from ..time_utils import require_aware_datetime
 from .base import LLMError
 from .schema import SourcedTextPayload, validate_structured_output
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    import pendulum
 
 
 def parse_result(
@@ -25,14 +28,15 @@ def parse_result(
     def cited_source_ids(source_ids: list[str]) -> tuple[str, ...]:
         unknown = set(source_ids) - valid_source_ids
         if unknown:
-            raise LLMError(f"Model cited unknown source IDs: {sorted(unknown)}")
+            msg = f"Model cited unknown source IDs: {sorted(unknown)}"
+            raise LLMError(msg)
         return tuple(source_ids)
 
     def sourced_text_items(values: list[SourcedTextPayload]) -> tuple[Conclusion, ...]:
         return tuple(Conclusion(text=value.text, source_ids=cited_source_ids(value.source_ids)) for value in values)
 
     warnings = tuple(
-        Warning(
+        WeatherWarning(
             id=value.id,
             title=value.title,
             status=value.status,

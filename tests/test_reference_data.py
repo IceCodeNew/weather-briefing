@@ -106,7 +106,7 @@ def test_nominatim_user_agent_identifies_current_version() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    (
+    [
         {},
         {"descriptions_en": {}},
         {"descriptions_en": {"unknown": "Clear sky"}},
@@ -114,7 +114,7 @@ def test_nominatim_user_agent_identifies_current_version() -> None:
         {"descriptions_en": {"9" * 5_000: "Unknown"}},
         {"descriptions_en": {"0": ""}},
         {"descriptions_en": {"0": "Clear sky"}, "unknown": {}},
-    ),
+    ],
 )
 def test_open_meteo_weather_codes_reject_invalid_data(monkeypatch, value) -> None:
     monkeypatch.setattr("weather_briefing.weather.open_meteo_reference.load_reference_data", lambda filename: value)
@@ -166,7 +166,7 @@ def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
 
 @pytest.mark.parametrize(
     ("value", "message"),
-    (
+    [
         ({}, "supported fields"),
         (_telegram_classification_data() | {"description_markers": {}}, "description markers"),
         (_telegram_classification_data() | {"status_reasons": {}}, "statuses"),
@@ -210,7 +210,7 @@ def test_reference_string_rejects_invalid_value(monkeypatch, value) -> None:
             _telegram_classification_data() | {"channel_unavailable_reasons": ["unsafe\nreason"]},
             "channel availability",
         ),
-    ),
+    ],
 )
 def test_telegram_error_classification_rejects_invalid_data(monkeypatch, value, message) -> None:
     monkeypatch.setattr(data_resources, "load_reference_data", lambda filename: value)
@@ -255,8 +255,9 @@ def test_reference_value_copies_only_the_selected_value(monkeypatch) -> None:
 
     class UnselectedValue:
         def __deepcopy__(self, memo):
+            msg = "reference_value must not copy the cached root"
             raise AssertionError(  # pragma: no cover - reached only if root copying regresses
-                "reference_value must not copy the cached root"
+                msg
             )
 
     selected = {"items": ["one"]}
@@ -281,8 +282,9 @@ def test_reference_string_tuple_does_not_copy_the_cached_list(monkeypatch) -> No
 
     class CachedStrings(list[str]):
         def __deepcopy__(self, memo):
+            msg = "reference_string_tuple must not copy the cached list"
             raise AssertionError(  # pragma: no cover - reached only if list copying regresses
-                "reference_string_tuple must not copy the cached list"
+                msg
             )
 
     cached = CachedStrings(["one", "two"])
@@ -366,7 +368,7 @@ def test_localization_tables_are_immutable() -> None:
     assert localization_table("briefing")["zh-Hans"]["weather"] == "天气信息"
 
 
-@pytest.mark.parametrize("aliases", ([], {"unknown": {}}))
+@pytest.mark.parametrize("aliases", [[], {"unknown": {}}])
 def test_localization_table_rejects_invalid_alias_root(monkeypatch, aliases) -> None:
     value, _, _ = _mutable_localization_data()
     value["aliases"] = aliases
@@ -418,7 +420,7 @@ def test_localization_table_rejects_non_object_table_aliases(monkeypatch) -> Non
 
 @pytest.mark.parametrize(
     ("alias", "target"),
-    ((7, "zh-CN"), ("ZH", "zh-CN"), ("bad_tag", "zh-CN"), ("fr", 7), ("en", "en")),
+    [(7, "zh-CN"), ("ZH", "zh-CN"), ("bad_tag", "zh-CN"), ("fr", 7), ("en", "en")],
 )
 def test_localization_table_rejects_invalid_aliases(monkeypatch, alias, target) -> None:
     value, _, aliases = _mutable_localization_data()

@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _LOGGER = logging.getLogger("weather_briefing.api_client")
 _API_CALL_EXTENSION = "weather_briefing.api_call"
@@ -27,11 +29,14 @@ def api_call_extensions(
 ) -> dict[str, object]:
     """Attach non-sensitive API identity to an HTTPX request."""
     if not isinstance(response_error_handled, bool):
-        raise TypeError("response_error_handled must be a bool")
+        msg = "response_error_handled must be a bool"
+        raise TypeError(msg)
     if _SAFE_LABEL.fullmatch(provider) is None:
-        raise ValueError("API provider must be a lowercase kebab-case label")
+        msg = "API provider must be a lowercase kebab-case label"
+        raise ValueError(msg)
     if _SAFE_LABEL.fullmatch(operation) is None:
-        raise ValueError("API operation must be a lowercase kebab-case label")
+        msg = "API operation must be a lowercase kebab-case label"
+        raise ValueError(msg)
     extensions: dict[str, object] = {_API_CALL_EXTENSION: (provider, operation)}
     if response_error_handled:
         extensions[_RESPONSE_ERROR_HANDLED_EXTENSION] = True
@@ -53,7 +58,7 @@ def api_call_context(provider: str, operation: str) -> Iterator[None]:
 class LoggedAsyncClient(httpx.AsyncClient):
     """Record outbound HTTP calls without logging request data."""
 
-    async def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+    async def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:  # noqa: ANN401
         """Send a request while logging only its non-sensitive identity."""
         provider, operation = _api_call_identity(request)
         method = _safe_http_method(request.method)
@@ -109,7 +114,7 @@ class LoggedAsyncClient(httpx.AsyncClient):
 
 def _api_call_identity(request: httpx.Request) -> tuple[str, str]:
     value = request.extensions.get(_API_CALL_EXTENSION, _CURRENT_API_CALL.get())
-    if not isinstance(value, tuple) or len(value) != 2:
+    if not isinstance(value, tuple) or len(value) != 2:  # noqa: PLR2004
         return "unclassified", "request"
     provider, operation = value
     if not isinstance(provider, str) or not isinstance(operation, str):

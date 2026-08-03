@@ -6,10 +6,13 @@ import argparse
 import logging
 import re
 import subprocess
-from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import __version__
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _LOGGER = logging.getLogger("weather_briefing.command_parser")
 
@@ -62,7 +65,7 @@ class _VersionAction(argparse.Action):
         option_string: str | None = None,
     ) -> None:
         del namespace, values, option_string
-        print(f"{parser.prog} {_display_version()}")
+        print(f"{parser.prog} {_display_version()}")  # noqa: T201
         parser.exit()
 
 
@@ -73,8 +76,8 @@ def _display_version() -> str:
 
     repository_root = Path(__file__).resolve().parents[1]
     try:
-        git_metadata = subprocess.run(
-            (
+        git_metadata = subprocess.run(  # noqa: S603
+            (  # noqa: S607
                 "git",
                 "-C",
                 str(repository_root),
@@ -87,11 +90,11 @@ def _display_version() -> str:
             capture_output=True,
             text=True,
         ).stdout.splitlines()
-        if len(git_metadata) != 2 or Path(git_metadata[0]).resolve() != repository_root:
+        if len(git_metadata) != 2 or Path(git_metadata[0]).resolve() != repository_root:  # noqa: PLR2004
             return __version__
         revision = git_metadata[1]
-        status = subprocess.run(
-            ("git", "-C", str(repository_root), "status", "--porcelain"),
+        status = subprocess.run(  # noqa: S603
+            ("git", "-C", str(repository_root), "status", "--porcelain"),  # noqa: S607
             check=True,
             capture_output=True,
             text=True,
@@ -120,9 +123,11 @@ _DIAGNOSTIC_DURATION_PATTERN = re.compile(r"^(?P<value>[1-9][0-9]*)(?P<unit>[smh
 def _diagnostic_duration_seconds(value: str) -> int:
     match = _DIAGNOSTIC_DURATION_PATTERN.fullmatch(value)
     if match is None:
-        raise argparse.ArgumentTypeError("duration must use a positive value followed by s, m, or h")
+        msg = "duration must use a positive value followed by s, m, or h"
+        raise argparse.ArgumentTypeError(msg)
     multipliers = {"s": 1, "m": 60, "h": 3600}
     seconds = int(match.group("value")) * multipliers[match.group("unit")]
     if seconds > 24 * 60 * 60:
-        raise argparse.ArgumentTypeError("duration cannot exceed 24h")
+        msg = "duration cannot exceed 24h"
+        raise argparse.ArgumentTypeError(msg)
     return seconds

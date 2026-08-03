@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from functools import cache
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
-import pendulum
 
 from .api_client import api_call_extensions
 from .data.resources import ReferenceDataError, reference_value
@@ -15,6 +14,9 @@ from .languages import localized_labels
 from .localization import localization_table
 from .models import AirQualitySnapshot, AirQualityTimeKind, SourceDocument
 from .time_utils import parse_datetime_with_default_timezone
+
+if TYPE_CHECKING:
+    import pendulum
 
 _AIR_QUALITY_FORMATS = localization_table("air_quality")
 
@@ -67,7 +69,8 @@ class AQICNProvider:
             response.raise_for_status()
             payload = response.json()
             if payload.get("status") != "ok":
-                raise AirQualityError("AQICN returned a non-success status")
+                msg = "AQICN returned a non-success status"
+                raise AirQualityError(msg)  # noqa: TRY301
             data = payload["data"]
             aqi = int(data["aqi"])
             pm25_value = data.get("iaqi", {}).get("pm25", {}).get("v")
@@ -77,7 +80,8 @@ class AQICNProvider:
         except AirQualityError:
             raise
         except (httpx.HTTPError, KeyError, TypeError, ValueError):
-            raise AirQualityError("AQICN request or response validation failed") from None
+            msg = "AQICN request or response validation failed"
+            raise AirQualityError(msg) from None
         category, guidance = health_guidance(aqi)
         return AirQualitySnapshot(
             source_id="air-quality:aqicn",
@@ -147,7 +151,8 @@ def health_guidance(aqi: int) -> tuple[str, str]:
     for maximum_aqi, category, guidance in _guidance_bands():
         if maximum_aqi is None or aqi <= maximum_aqi:
             return category, guidance
-    raise ReferenceDataError("Air quality guidance must end with an unbounded band")
+    msg = "Air quality guidance must end with an unbounded band"
+    raise ReferenceDataError(msg)
 
 
 def _aqicn_observed_at(
@@ -176,7 +181,8 @@ def _aqicn_observed_at(
 def _guidance_bands() -> tuple[tuple[int | None, str, str], ...]:
     values = reference_value("air_quality_guidance.json", "bands")
     if not isinstance(values, list) or not values:
-        raise ReferenceDataError("Air quality guidance bands must be a non-empty list")
+        msg = "Air quality guidance bands must be a non-empty list"
+        raise ReferenceDataError(msg)
     bands: list[tuple[int | None, str, str]] = []
     try:
         for value in values:
@@ -185,11 +191,14 @@ def _guidance_bands() -> tuple[tuple[int | None, str, str], ...]:
                 maximum = int(maximum)
             bands.append((maximum, str(value["category"]), str(value["guidance"])))
     except (KeyError, TypeError, ValueError) as exc:
-        raise ReferenceDataError("Invalid air quality guidance band") from exc
+        msg = "Invalid air quality guidance band"
+        raise ReferenceDataError(msg) from exc
     bounded_maxima = [maximum for maximum, _, _ in bands[:-1]]
     if bands[-1][0] is not None or any(maximum is None for maximum in bounded_maxima):
-        raise ReferenceDataError("Air quality guidance must end with an unbounded band")
+        msg = "Air quality guidance must end with an unbounded band"
+        raise ReferenceDataError(msg)
     numeric_maxima = [maximum for maximum in bounded_maxima if maximum is not None]
     if numeric_maxima != sorted(set(numeric_maxima)) or any(maximum < 0 for maximum in numeric_maxima):
-        raise ReferenceDataError("Air quality guidance bounds must be unique, increasing, and non-negative")
+        msg = "Air quality guidance bounds must be unique, increasing, and non-negative"
+        raise ReferenceDataError(msg)
     return tuple(bands)

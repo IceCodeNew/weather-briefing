@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
-from ..models import LocationSpec, ResolvedLocation
 from .base import GeocodingError, GeocodingProvider, required_location_name
 from .matching import lower_precision_location_names
+
+if TYPE_CHECKING:
+    from weather_briefing.models import LocationSpec, ResolvedLocation
 
 
 class FallbackGeocodingProvider:
@@ -15,7 +18,8 @@ class FallbackGeocodingProvider:
     def __init__(self, *providers: GeocodingProvider) -> None:
         """Require and retain providers in fallback priority order."""
         if not providers:
-            raise ValueError("At least one geocoding provider is required")
+            msg = "At least one geocoding provider is required"
+            raise ValueError(msg)
         self._providers = providers
 
     async def geocode(self, location: LocationSpec) -> ResolvedLocation:
@@ -29,8 +33,9 @@ class FallbackGeocodingProvider:
                 errors.append(exc)
         last_cause_type = errors[-1].cause_type
         detail = f" ({last_cause_type.__name__})" if last_cause_type is not None else ""
+        msg = f"No geocoder could resolve location: {location.id}{detail}"
         raise GeocodingError(
-            f"No geocoder could resolve location: {location.id}{detail}",
+            msg,
             cause_type=last_cause_type,
         ) from None
 
@@ -62,7 +67,8 @@ class PrecisionReducingGeocodingProvider:
                 precision_reduced=True,
             )
         detail = f" ({last_error.cause_type.__name__})" if last_error.cause_type is not None else ""
+        msg = f"No geocoder could resolve location at a safe precision: {location.id}{detail}"
         raise GeocodingError(
-            f"No geocoder could resolve location at a safe precision: {location.id}{detail}",
+            msg,
             cause_type=last_error.cause_type,
         ) from None

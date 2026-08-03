@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from soupsieve import SelectorSyntaxError
 from soupsieve import compile as compile_selector
 
-from ..models import FeedConfig
+from weather_briefing.models import FeedConfig
+
 from .base import ConfigurationError
 from .files import json_file, required_string_field
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 
 def _optional_string_array(
@@ -26,17 +29,20 @@ def _optional_string_array(
     if value is None:
         return ()
     if not isinstance(value, list):
-        raise ConfigurationError(f"RSS source {source_id} field {field} must be a JSON array")
+        msg = f"RSS source {source_id} field {field} must be a JSON array"
+        raise ConfigurationError(msg)
     entries: list[str] = []
     for index, entry in enumerate(value):
         path = f"RSS source {source_id} field {field}[{index}]"
         if not isinstance(entry, str) or not entry.strip():
-            raise ConfigurationError(f"{path} must be a non-empty string")
+            msg = f"{path} must be a non-empty string"
+            raise ConfigurationError(msg)
         if validator is not None:
             try:
                 validator(entry)
             except (re.error, SelectorSyntaxError) as exc:
-                raise ConfigurationError(f"{path} is invalid") from exc
+                msg = f"{path} is invalid"
+                raise ConfigurationError(msg) from exc
         entries.append(entry)
     return tuple(entries)
 

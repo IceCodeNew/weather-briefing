@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
-from .models import ServiceStatusSnapshot
-from .statuspage import ServiceStatusProvider
+if TYPE_CHECKING:
+    from .models import ServiceStatusSnapshot
+    from .statuspage import ServiceStatusProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service_status")
 

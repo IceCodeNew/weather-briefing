@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import sqlite3
+from typing import TYPE_CHECKING
 
-import pendulum
+from weather_briefing.models import SourceDocument
+from weather_briefing.time_utils import require_aware_datetime
 
-from ..models import SourceDocument
-from ..time_utils import require_aware_datetime
 from .serialization import _storage_time as storage_time
+
+if TYPE_CHECKING:
+    import sqlite3
+
+    import pendulum
 
 
 class ContextStateOperations:

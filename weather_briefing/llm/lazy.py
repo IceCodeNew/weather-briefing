@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from ..notification_decision import NotificationDecision
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from weather_briefing.notification_decision import NotificationDecision
 
 
 class ServiceStatusLLM(Protocol):

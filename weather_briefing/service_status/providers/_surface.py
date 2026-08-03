@@ -1,6 +1,6 @@
 """Shared conservative service-surface classification."""
 
-from ..models import ServiceSurface
+from weather_briefing.service_status.models import ServiceSurface
 
 
 def keyword_surface(name: str) -> ServiceSurface:

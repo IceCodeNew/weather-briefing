@@ -17,13 +17,15 @@ class NotificationDecision:
     def __init__(self, should_notify: object) -> None:
         """Reject non-boolean decisions at the portable policy boundary."""
         if not isinstance(should_notify, bool):
-            raise ValueError("Notification decision should_notify must be a boolean")
+            msg = "Notification decision should_notify must be a boolean"
+            raise ValueError(msg)  # noqa: TRY004
         object.__setattr__(self, "should_notify", should_notify)
 
 
 def _validated_kind(value: object, *, context: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{context} must be a non-empty normalized string")
+        msg = f"{context} must be a non-empty normalized string"
+        raise ValueError(msg)
     return value
 
 
@@ -33,7 +35,8 @@ def _is_string_object_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
 
 def _validated_payload(value: object) -> Mapping[str, object]:
     if not _is_string_object_mapping(value):
-        raise ValueError("Notification payload must be a mapping with string keys")
+        msg = "Notification payload must be a mapping with string keys"
+        raise ValueError(msg)
     return MappingProxyType(dict(value))
 
 
@@ -94,7 +97,8 @@ class LLMPromptNotificationPolicy:
     ) -> None:
         """Validate and retain one prompt-driven policy registration."""
         if not isinstance(system_prompt, str) or not system_prompt.strip():
-            raise ValueError("Notification policy prompt must not be empty")
+            msg = "Notification policy prompt must not be empty"
+            raise ValueError(msg)
         object.__setattr__(self, "kind", _validated_kind(kind, context="Notification policy kind"))
         object.__setattr__(self, "system_prompt", system_prompt)
         object.__setattr__(self, "model", model)
@@ -127,10 +131,12 @@ class NotificationDecisionService:
         for policy in policies:
             kind = _validated_kind(policy.kind, context="Notification policy kind")
             if kind in registered:
-                raise ValueError(f"Duplicate notification policy: {kind}")
+                msg = f"Duplicate notification policy: {kind}"
+                raise ValueError(msg)
             registered[kind] = policy
         if not registered:
-            raise ValueError("At least one notification policy is required")
+            msg = "At least one notification policy is required"
+            raise ValueError(msg)
         self._policies = registered
 
     async def assess_notification(
@@ -140,8 +146,10 @@ class NotificationDecisionService:
         """Evaluate a candidate with the policy registered for its message type."""
         policy = self._policies.get(assessment.kind)
         if policy is None:
-            raise ValueError(f"Unsupported notification kind: {assessment.kind}")
+            msg = f"Unsupported notification kind: {assessment.kind}"
+            raise ValueError(msg)
         decision = await policy.assess_notification(assessment.payload)
         if not isinstance(decision, NotificationDecision):
-            raise ValueError("Notification policy must return a NotificationDecision")
+            msg = "Notification policy must return a NotificationDecision"
+            raise ValueError(msg)  # noqa: TRY004
         return decision

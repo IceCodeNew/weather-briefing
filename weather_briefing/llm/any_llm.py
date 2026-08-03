@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from any_llm import AnyLLM
 from any_llm.exceptions import LengthFinishReasonError
-from pydantic import BaseModel
 
-from ..data.any_llm_compatibility import (
+from weather_briefing.data.any_llm_compatibility import (
     UNSUPPORTED_DEFAULT_HEADER_PROVIDERS,
     UNSUPPORTED_JSON_OBJECT_PROVIDERS,
 )
-from ..notification_decision import NotificationDecision
+from weather_briefing.notification_decision import NotificationDecision
+
 from . import any_llm_transport
 from .base import LLMOutputLimitError, SensitiveLLMDiagnostics, serialize_llm_payload
 from .schema import (
@@ -25,13 +25,18 @@ from .schema import (
     decode_structured_response,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from pydantic import BaseModel
+
 _LOGGER = logging.getLogger("weather_briefing.llm")
 
 
 class AnyLLMStructuredProvider:
     """Adapt an any-llm provider to the application's structured LLM boundary."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         client: AnyLLM | any_llm_transport.LLMCompletionClient,
         *,
@@ -114,7 +119,8 @@ class AnyLLMStructuredProvider:
                 self._max_output_tokens,
                 type(exc).__name__,
             )
-            raise LLMOutputLimitError("LLM response reached output token limit") from exc
+            msg = "LLM response reached output token limit"
+            raise LLMOutputLimitError(msg) from exc
         result_payload = decode_structured_response(response).model_dump(mode="json")
         if log_sensitive:
             _LOGGER.debug(
@@ -152,7 +158,8 @@ class AnyLLMStructuredProvider:
                 min(self._max_output_tokens, 256),
                 type(exc).__name__,
             )
-            raise LLMOutputLimitError("LLM notification decision reached output token limit") from exc
+            msg = "LLM notification decision reached output token limit"
+            raise LLMOutputLimitError(msg) from exc
         return NotificationDecision(should_notify=decode_notification_decision(response))
 
     async def translate_service_status(
@@ -168,7 +175,8 @@ class AnyLLMStructuredProvider:
             "zh-CN": "Simplified Chinese",
         }.get(target_language)
         if language_name is None:
-            raise ValueError(f"Unsupported service-status translation language: {target_language}")
+            msg = f"Unsupported service-status translation language: {target_language}"
+            raise ValueError(msg)
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
@@ -199,7 +207,8 @@ class AnyLLMStructuredProvider:
                 min(self._max_output_tokens, 2048),
                 type(exc).__name__,
             )
-            raise LLMOutputLimitError("LLM translation reached output token limit") from exc
+            msg = "LLM translation reached output token limit"
+            raise LLMOutputLimitError(msg) from exc
         translated = decode_service_status_translation(response)
         return translated.title, translated.body
 
@@ -230,12 +239,12 @@ def _sensitive_llm_diagnostics_enabled(diagnostics: SensitiveLLMDiagnostics | No
         return False
     try:
         return diagnostics.rendered_text_logging_enabled()
-    except Exception:
+    except Exception:  # noqa: BLE001
         _LOGGER.warning("Sensitive LLM diagnostic state check failed", exc_info=True)
         return False
 
 
-def create_any_llm_provider(
+def create_any_llm_provider(  # noqa: PLR0913
     provider: str,
     model: str,
     max_output_tokens: int,
@@ -249,11 +258,14 @@ def create_any_llm_provider(
     provider_class = AnyLLM.get_provider_class(provider)
     canonical_provider = provider_class.PROVIDER_NAME
     if not provider_class.SUPPORTS_COMPLETION:
-        raise ValueError(f"any-llm provider does not support completion: {canonical_provider}")
+        msg = f"any-llm provider does not support completion: {canonical_provider}"
+        raise ValueError(msg)
     if extra_headers and canonical_provider in UNSUPPORTED_DEFAULT_HEADER_PROVIDERS:
-        raise ValueError(f"Custom headers are not supported for any-llm provider: {canonical_provider}")
+        msg = f"Custom headers are not supported for any-llm provider: {canonical_provider}"
+        raise ValueError(msg)
     if canonical_provider in UNSUPPORTED_JSON_OBJECT_PROVIDERS:
-        raise ValueError(f"any-llm provider does not support required JSON Object output: {canonical_provider}")
+        msg = f"any-llm provider does not support required JSON Object output: {canonical_provider}"
+        raise ValueError(msg)
     client_args: dict[str, object] = {"api_key": api_key, "api_base": api_base}
     if extra_headers:
         client_args["default_headers"] = extra_headers

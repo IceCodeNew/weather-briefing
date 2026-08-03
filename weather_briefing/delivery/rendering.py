@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from ..languages import LanguageSupport
-from ..localization import localization_table
-from ..models import Article, BriefingResult, RenderedMessage, SourceDocument
+from weather_briefing.languages import LanguageSupport
+from weather_briefing.localization import localization_table
+from weather_briefing.models import Article, BriefingResult, RenderedMessage, SourceDocument
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _BRIEFING_LABELS = localization_table("briefing")
 _BRIEFING_LANGUAGE_SUPPORT = LanguageSupport(

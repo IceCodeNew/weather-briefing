@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack
+from typing import TYPE_CHECKING
 
-from ..config import Settings
-from ..llm import CompleteLLMProvider, SensitiveLLMDiagnostics, any_llm
-from ..llm import fallback as fallback_module
+from weather_briefing.llm import CompleteLLMProvider, SensitiveLLMDiagnostics, any_llm
+from weather_briefing.llm import fallback as fallback_module
+
+if TYPE_CHECKING:
+    from weather_briefing.config import Settings
 
 
 async def llm_provider(

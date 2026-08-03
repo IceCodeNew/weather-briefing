@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import httpx
+from typing import TYPE_CHECKING
 
-from ...data.service_endpoints import ANTHROPIC_STATUS_FEED_URL, ANTHROPIC_STATUS_PAGE_URL
-from ...registries import ServiceStatusProviderName
-from ..feed import StatusFeedProvider
+from weather_briefing.data.service_endpoints import ANTHROPIC_STATUS_FEED_URL, ANTHROPIC_STATUS_PAGE_URL
+from weather_briefing.registries import ServiceStatusProviderName
+from weather_briefing.service_status.feed import StatusFeedProvider
+
 from ._surface import keyword_surface
+
+if TYPE_CHECKING:
+    import httpx
 
 
 class AnthropicStatusProvider(StatusFeedProvider):

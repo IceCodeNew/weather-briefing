@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-import pendulum
+from weather_briefing.llm import LLMError
 
-from ..llm import LLMError
-from ..notification_decision import NotificationDecisionProvider
-from ..persistence.service_status import ServiceStatusMessageState
 from .collection import collect_service_status
-from .models import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
 from .notification import service_status_notification_assessment
-from .statuspage import ServiceStatusProvider
+
+if TYPE_CHECKING:
+    import pendulum
+
+    from weather_briefing.notification_decision import NotificationDecisionProvider
+    from weather_briefing.persistence.service_status import ServiceStatusMessageState
+
+    from .models import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
+    from .statuspage import ServiceStatusProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service_status")
 _LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
@@ -34,7 +38,7 @@ class ServiceStatusStateStore(Protocol):
         """Return the durable state for one incident."""
         ...
 
-    def observe_service_status_message(
+    def observe_service_status_message(  # noqa: PLR0913
         self,
         source_id: str,
         incident_id: str,
@@ -47,7 +51,7 @@ class ServiceStatusStateStore(Protocol):
         """Record an official message before evaluating or delivering it."""
         ...
 
-    def mark_service_status_message_handled(
+    def mark_service_status_message_handled(  # noqa: PLR0913
         self,
         source_id: str,
         incident_id: str,
@@ -66,6 +70,7 @@ class ServiceStatusStateStore(Protocol):
         source_id: str,
         incident_id: str,
         revision_id: str,
+        *,
         should_notify: bool,
     ) -> None:
         """Persist one notification-value decision."""
@@ -116,7 +121,7 @@ class ServiceStatusDelivery(Protocol):
 class ServiceStatusMonitor:
     """Evaluate and publish meaningful revisions of official incident messages."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         providers: tuple[ServiceStatusProvider, ...],
         state: ServiceStatusStateStore,
@@ -186,7 +191,7 @@ class ServiceStatusMonitor:
                 snapshot.source_id,
                 message.incident_id,
                 message.revision_id,
-                should_notify,
+                should_notify=should_notify,
             )
         if not should_notify:
             self._mark_handled(snapshot, message, now)
@@ -264,4 +269,4 @@ def _looks_english(text: str) -> bool:
     non_ascii_letters = letters - ascii_letters
     if non_ascii_letters == 0:
         return ascii_letters > 0
-    return ascii_letters >= 20 and ascii_letters / letters >= 0.75
+    return ascii_letters >= 20 and ascii_letters / letters >= 0.75  # noqa: PLR2004

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Iterator
+    from pathlib import Path
 
 
 class StateDirectoryInUseError(RuntimeError):
@@ -22,9 +24,8 @@ def daemon_state_owner(state_database_path: Path) -> Iterator[None]:
         try:
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise StateDirectoryInUseError(
-                "Another weather-briefing daemon is already using the configured state directory"
-            ) from None
+            msg = "Another weather-briefing daemon is already using the configured state directory"
+            raise StateDirectoryInUseError(msg) from None
         yield
     finally:
         lock_file.close()
@@ -58,7 +59,7 @@ def _acquire_run_lock(state_database_path: Path) -> TextIO:
 def _close_cancelled_lock_acquisition(acquisition: asyncio.Future[TextIO]) -> None:
     try:
         lock_file = acquisition.result()
-    except (Exception, asyncio.CancelledError):
+    except (Exception, asyncio.CancelledError):  # noqa: BLE001
         return
     lock_file.close()
 
