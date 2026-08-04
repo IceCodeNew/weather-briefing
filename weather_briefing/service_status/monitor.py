@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from weather_briefing.notification_decision import NotificationDecisionProvider
     from weather_briefing.persistence.service_status import ServiceStatusMessageState
 
-    from .models import ServiceStatusMessage, ServiceStatusSnapshot, ServiceSurface
+    from .models import ServiceStatusMessage, ServiceStatusSnapshot
     from .statuspage import ServiceStatusProvider
 
 _LOGGER = logging.getLogger("weather_briefing.service_status")
@@ -38,28 +38,18 @@ class ServiceStatusStateStore(Protocol):
         """Return the durable state for one incident."""
         ...
 
-    def observe_service_status_message(  # noqa: PLR0913
+    def observe_service_status_message(
         self,
         source_id: str,
-        incident_id: str,
-        revision_id: str,
-        title: str,
-        status: str,
-        body: str,
-        observed_at: pendulum.DateTime,
+        message: ServiceStatusMessage,
     ) -> None:
         """Record an official message before evaluating or delivering it."""
         ...
 
-    def mark_service_status_message_handled(  # noqa: PLR0913
+    def mark_service_status_message_handled(
         self,
         source_id: str,
-        incident_id: str,
-        revision_id: str,
-        title: str,
-        status: str,
-        body: str,
-        surfaces: tuple[ServiceSurface, ...],
+        message: ServiceStatusMessage,
         handled_at: pendulum.DateTime,
     ) -> None:
         """Record successful delivery or an intentional skip."""
@@ -128,6 +118,7 @@ class ServiceStatusMonitor:
         deliveries: tuple[tuple[str, ServiceStatusDelivery], ...],
         decision_provider: NotificationDecisionProvider,
         translator: ServiceStatusTranslator | None = None,
+        *,
         language: str = "en",
     ) -> None:
         """Configure providers, durable state, notification policy, and delivery."""
@@ -164,15 +155,7 @@ class ServiceStatusMonitor:
         previous = self._state.service_status_message_state(snapshot.source_id, message.incident_id)
         if previous is not None and previous.handled_revision_id == message.revision_id:
             return False
-        self._state.observe_service_status_message(
-            snapshot.source_id,
-            message.incident_id,
-            message.revision_id,
-            message.title,
-            message.status,
-            message.body,
-            message.published_at,
-        )
+        self._state.observe_service_status_message(snapshot.source_id, message)
         if previous is None and message.status == "resolved":
             self._mark_handled(snapshot, message, now)
             return False
@@ -223,16 +206,7 @@ class ServiceStatusMonitor:
         message: ServiceStatusMessage,
         now: pendulum.DateTime,
     ) -> None:
-        self._state.mark_service_status_message_handled(
-            snapshot.source_id,
-            message.incident_id,
-            message.revision_id,
-            message.title,
-            message.status,
-            message.body,
-            message.surfaces,
-            now,
-        )
+        self._state.mark_service_status_message_handled(snapshot.source_id, message, now)
 
     async def _localized_message(self, message: ServiceStatusMessage) -> tuple[str, str]:
         if self._translator is None or official_message_matches(message, self._language):

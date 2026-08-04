@@ -574,7 +574,7 @@ async def test_mismatched_official_language_is_translated(tmp_path: Path) -> Non
     )
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         await ServiceStatusMonitor(
-            (provider,), state.service_status, (("test", delivery),), decision, translator, "zh-CN"
+            (provider,), state.service_status, (("test", delivery),), decision, translator, language="zh-CN"
         ).run(pendulum.now("UTC"))
 
     translator.translate_service_status.assert_awaited_once_with(
@@ -597,7 +597,7 @@ async def test_translation_failure_falls_back_to_official_text(tmp_path: Path, c
         caplog.at_level("WARNING", logger="weather_briefing.service_status"),
     ):
         await ServiceStatusMonitor(
-            (provider,), state.service_status, (("test", delivery),), decision, translator, "zh-CN"
+            (provider,), state.service_status, (("test", delivery),), decision, translator, language="zh-CN"
         ).run(pendulum.now("UTC"))
 
     delivery.publish_alert.assert_awaited_once_with(
@@ -634,22 +634,12 @@ def test_state_rejects_handling_a_changed_observation(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         state.service_status.observe_service_status_message(
             "source",
-            "incident",
-            "new",
-            "Title",
-            "monitoring",
-            "Body",
-            now,
+            _message(incident_id="incident", revision_id="new", title="Title", status="monitoring", body="Body"),
         )
         with pytest.raises(RuntimeError, match="changed before handling"):
             state.service_status.mark_service_status_message_handled(
                 "source",
-                "incident",
-                "old",
-                "Title",
-                "monitoring",
-                "Body",
-                (ServiceSurface.API,),
+                _message(incident_id="incident", revision_id="old", title="Title", status="monitoring", body="Body"),
                 now,
             )
 
@@ -658,25 +648,15 @@ def test_state_rejects_invalid_stored_service_status_surfaces(tmp_path: Path) ->
     now = pendulum.now("UTC")
     state_path = tmp_path / "state.sqlite3"
     with SQLiteStateStore(state_path) as state:
-        state.service_status.observe_service_status_message(
-            "source",
-            "incident",
-            "revision",
-            "Title",
-            "monitoring",
-            "Body",
-            now,
+        message = _message(
+            incident_id="incident",
+            revision_id="revision",
+            title="Title",
+            status="monitoring",
+            body="Body",
         )
-        state.service_status.mark_service_status_message_handled(
-            "source",
-            "incident",
-            "revision",
-            "Title",
-            "monitoring",
-            "Body",
-            (ServiceSurface.API,),
-            now,
-        )
+        state.service_status.observe_service_status_message("source", message)
+        state.service_status.mark_service_status_message_handled("source", message, now)
         for stored_value, message in (
             ("{}", "must be a list"),
             ("[1]", "must contain strings"),
@@ -698,12 +678,7 @@ def test_state_rejects_deciding_a_changed_observation(tmp_path: Path) -> None:
     with SQLiteStateStore(tmp_path / "state.sqlite3") as state:
         state.service_status.observe_service_status_message(
             "source",
-            "incident",
-            "new",
-            "Title",
-            "monitoring",
-            "Body",
-            pendulum.now("UTC"),
+            _message(incident_id="incident", revision_id="new", title="Title", status="monitoring", body="Body"),
         )
         with pytest.raises(RuntimeError, match="changed before its decision"):
             state.service_status.mark_service_status_message_decided(

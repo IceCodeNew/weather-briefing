@@ -239,7 +239,7 @@ def _sensitive_llm_diagnostics_enabled(diagnostics: SensitiveLLMDiagnostics | No
         return False
     try:
         return diagnostics.rendered_text_logging_enabled()
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOGGER.warning("Sensitive LLM diagnostic state check failed", exc_info=True)
         return False
 

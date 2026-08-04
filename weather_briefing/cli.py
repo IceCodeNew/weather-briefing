@@ -158,20 +158,20 @@ async def _run_unlocked(
                     briefing_sent_today=briefing_sent_today,
                 )
                 service = BriefingService(
-                    settings,
-                    location,
-                    state,
-                    RSSSource(
+                    settings=settings,
+                    location=location,
+                    state=state,
+                    rss_source=RSSSource(
                         client,
                         max_attempts=settings.rss_max_attempts,
                         retry_min_seconds=settings.rss_retry_min_seconds,
                         retry_max_seconds=settings.rss_retry_max_seconds,
                     ),
-                    llm_provider,
-                    notification_decisions,
-                    delivery,
-                    delivery,
-                    _weather_context_provider(settings, client, location),
+                    llm=llm_provider,
+                    notification_decisions=notification_decisions,
+                    delivery=delivery,
+                    ops_delivery=delivery,
+                    weather_context_provider=_weather_context_provider(settings, client, location),
                 )
                 body = await service.run(
                     kind,
@@ -220,7 +220,7 @@ async def run_service_status() -> None:
                     deliveries,
                     notification_decisions,
                     service_status_llm,
-                    settings.service_status_language,
+                    language=settings.service_status_language,
                 )
                 published = await monitor.run(pendulum.now(settings.timezone))
             _LOGGER.info("Service-status run published %d notification(s)", published)

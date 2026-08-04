@@ -31,8 +31,10 @@ class TelegramHTMLRenderer:
         }
         source_links.update({document.id: _html_link(document.url, document.name) for document in context})
         lines = [
-            f"<b>{_html_text(result.headline)}</b> "
-            f"{_html_attribution(result.headline_source_ids, source_links, labels)}",
+            (
+                f"<b>{_html_text(result.headline)}</b> "
+                f"{_html_attribution(result.headline_source_ids, source_links, labels)}"
+            ),
             "",
         ]
         lines.extend(_html_items(labels["weather"], result.conclusions, source_links, labels))

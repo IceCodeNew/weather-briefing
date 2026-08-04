@@ -299,6 +299,7 @@ async def test_any_llm_provider_assesses_notification_value_with_a_narrow_schema
 )
 async def test_factory_normalizes_provider_native_request_errors(  # noqa: PLR0913
     monkeypatch,
+    *,
     provider_name: str,
     error_factory: Callable[[httpx.Response], Exception],
     operation: str,

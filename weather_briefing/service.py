@@ -47,6 +47,7 @@ class BriefingService:
 
     def __init__(  # noqa: PLR0913
         self,
+        *,
         settings: BriefingSettings,
         location: ResolvedLocation,
         state: SQLiteStateStore,
