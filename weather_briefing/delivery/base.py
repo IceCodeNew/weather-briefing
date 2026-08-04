@@ -189,7 +189,7 @@ def rendered_text_logging_enabled(diagnostics: RenderedTextDiagnostics | None) -
         return False
     try:
         enabled = diagnostics.rendered_text_logging_enabled()
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOGGER.warning("Rendered text diagnostic state check failed", exc_info=True)
         return False
     return enabled and _LOGGER.isEnabledFor(logging.DEBUG)

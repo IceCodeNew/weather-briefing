@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
     import pendulum
 
+    from weather_briefing.service_status.models import ServiceStatusMessage
+
 
 @dataclass(frozen=True, slots=True)
 class ServiceStatusMessageState:
@@ -86,15 +88,10 @@ class SQLiteServiceStatusStore:
             handled_surfaces=_stored_surfaces(row["handled_surfaces"]),
         )
 
-    def observe_service_status_message(  # noqa: PLR0913
+    def observe_service_status_message(
         self,
         source_id: str,
-        incident_id: str,
-        revision_id: str,
-        title: str,
-        status: str,
-        body: str,
-        observed_at: pendulum.DateTime,
+        message: ServiceStatusMessage,
     ) -> None:
         """Persist an official message without claiming handling succeeded."""
         self._connection.execute(
@@ -108,7 +105,15 @@ class SQLiteServiceStatusStore:
                 observed_status = excluded.observed_status,
                 observed_body = excluded.observed_body,
                 observed_at = excluded.observed_at""",
-            (source_id, incident_id, revision_id, title, status, body, storage_time(observed_at)),
+            (
+                source_id,
+                message.incident_id,
+                message.revision_id,
+                message.title,
+                message.status,
+                message.body,
+                storage_time(message.published_at),
+            ),
         )
         self._connection.commit()
 
@@ -165,15 +170,10 @@ class SQLiteServiceStatusStore:
         )
         self._connection.commit()
 
-    def mark_service_status_message_handled(  # noqa: PLR0913
+    def mark_service_status_message_handled(
         self,
         source_id: str,
-        incident_id: str,
-        revision_id: str,
-        title: str,
-        status: str,
-        body: str,
-        surfaces: tuple[ServiceSurface, ...],
+        message: ServiceStatusMessage,
         handled_at: pendulum.DateTime,
     ) -> None:
         """Mark one observed message as delivered or intentionally skipped."""
@@ -187,15 +187,15 @@ class SQLiteServiceStatusStore:
                 handled_at = ?
             WHERE source_id = ? AND incident_id = ? AND observed_revision_id = ?""",
             (
-                revision_id,
-                title,
-                status,
-                body,
-                json.dumps([surface.value for surface in surfaces], ensure_ascii=False, separators=(",", ":")),
+                message.revision_id,
+                message.title,
+                message.status,
+                message.body,
+                json.dumps([surface.value for surface in message.surfaces], ensure_ascii=False, separators=(",", ":")),
                 storage_time(handled_at),
                 source_id,
-                incident_id,
-                revision_id,
+                message.incident_id,
+                message.revision_id,
             ),
         )
         if cursor.rowcount != 1:

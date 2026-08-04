@@ -501,9 +501,11 @@ async def test_forward_geocoder_strips_programmatic_location_name() -> None:
     [
         '"invalid"',
         '{"id":"example","name":"Example"}',
-        '{"id":"example","name":"Example","latitude":1,"longitude":2,'
-        '"country_code":null,"administrative_area":null,"timezone":null,'
-        '"is_mainland_china":false,"summary_language":"english"}',
+        (
+            '{"id":"example","name":"Example","latitude":1,"longitude":2,'
+            '"country_code":null,"administrative_area":null,"timezone":null,'
+            '"is_mainland_china":false,"summary_language":"english"}'
+        ),
     ],
 )
 async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, cached: str) -> None:
@@ -527,9 +529,11 @@ async def test_resolver_rejects_invalid_cached_reverse_record(tmp_path: Path, ca
     "cached",
     [
         '{"id":"example","name":"Example"}',
-        '{"id":"example","name":"Example","latitude":1,"longitude":2,'
-        '"country_code":null,"administrative_area":null,"timezone":null,'
-        '"is_mainland_china":false,"summary_language":"english"}',
+        (
+            '{"id":"example","name":"Example","latitude":1,"longitude":2,'
+            '"country_code":null,"administrative_area":null,"timezone":null,'
+            '"is_mainland_china":false,"summary_language":"english"}'
+        ),
     ],
 )
 async def test_resolver_rejects_obsolete_cache_record(tmp_path: Path, cached: str) -> None:

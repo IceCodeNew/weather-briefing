@@ -238,7 +238,8 @@ class _NotificationDecisionOwner(Protocol):
         ...
 
 
-def _briefing_service(  # noqa: PLR0913
+# Test factory mirroring BriefingService; kept positional across 37 call sites.
+def _briefing_service(  # noqa: PLR0913, PLR0917
     settings: _TestSettings,
     location: ResolvedLocation,
     state: SQLiteStateStore,
@@ -252,15 +253,15 @@ def _briefing_service(  # noqa: PLR0913
         llm.notification_decisions if isinstance(llm, _NotificationDecisionOwner) else RecordingNotificationDecisions()
     )
     return _BriefingService(
-        settings,
-        location,
-        state,
-        rss_source,
-        llm,
-        notification_decisions,
-        delivery,
-        ops_delivery,
-        weather_context_provider,
+        settings=settings,
+        location=location,
+        state=state,
+        rss_source=rss_source,
+        llm=llm,
+        notification_decisions=notification_decisions,
+        delivery=delivery,
+        ops_delivery=ops_delivery,
+        weather_context_provider=weather_context_provider,
     )
 
 
@@ -1541,15 +1542,15 @@ async def test_forced_audible_briefing_does_not_depend_on_notification_decision(
 
     with SQLiteStateStore(tmp_path / "forced-audible.sqlite3") as state:
         service = _BriefingService(
-            settings,
-            _location(),
-            state,
-            EmptyRSSSource(),
-            llm,
-            decision_provider,
-            delivery,
-            delivery,
-            StaticWeatherContextProvider(),
+            settings=settings,
+            location=_location(),
+            state=state,
+            rss_source=EmptyRSSSource(),
+            llm=llm,
+            notification_decisions=decision_provider,
+            delivery=delivery,
+            ops_delivery=delivery,
+            weather_context_provider=StaticWeatherContextProvider(),
         )
         body = await service.run(
             "briefing",
