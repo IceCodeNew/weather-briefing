@@ -4,6 +4,7 @@ permissions: {}
 on:
   push:
     branches:
+      - "master"
       - "renovate/**"
   pull_request:
     paths:
@@ -17,11 +18,15 @@ on:
       - "uv.lock"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   lint:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !startsWith(github.head_ref, 'renovate/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,6 +47,10 @@ jobs:
       - run: uv run --frozen ruff check .
 
   hadolint:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      !startsWith(github.head_ref, 'renovate/')
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
