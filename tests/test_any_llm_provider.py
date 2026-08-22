@@ -7,6 +7,7 @@ from typing import TypedDict
 from unittest.mock import AsyncMock, Mock
 
 import httpx
+import httpx2
 import pytest
 from anthropic import BadRequestError as AnthropicBadRequestError
 from any_llm import AnyLLM
@@ -64,7 +65,9 @@ class _CompletionClientStub:
 
 
 def _openai_bad_request(response: httpx.Response) -> Exception:
-    return BadRequestError("Upstream request failed", response=response, body={"error": "upstream"})
+    request = httpx2.Request(response.request.method, str(response.request.url))
+    openai_response = httpx2.Response(response.status_code, request=request)
+    return BadRequestError("Upstream request failed", response=openai_response, body={"error": "upstream"})
 
 
 def _anthropic_bad_request(response: httpx.Response) -> Exception:
@@ -369,8 +372,8 @@ async def test_protocol_client_preserves_completion_errors() -> None:
 
 
 async def test_provider_native_request_error_switches_to_fallback(monkeypatch) -> None:
-    request = httpx.Request("POST", "https://api.example.invalid/chat/completions")
-    response = httpx.Response(400, request=request)
+    request = httpx2.Request("POST", "https://api.example.invalid/chat/completions")
+    response = httpx2.Response(400, request=request)
     error = BadRequestError(
         "Upstream request failed",
         response=response,
@@ -635,7 +638,7 @@ async def test_openai_compatible_providers_send_configured_headers(
     caplog,
     provider_name: str,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
     private_header_name = "X-Private-Token"
     private_header_value = "private-value"
     model_result = {
@@ -648,9 +651,9 @@ async def test_openai_compatible_providers_send_configured_headers(
         "disaster_tracking": [],
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "id": "completion-id",
@@ -682,7 +685,7 @@ async def test_openai_compatible_providers_send_configured_headers(
             api_key=api_key,
             base_url=api_base,
             default_headers=default_headers,
-            http_client=LoggedAsyncClient(transport=httpx.MockTransport(handler)),
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
         )
 
     monkeypatch.setattr(BaseOpenAIProvider, "_init_client", init_client)
@@ -712,7 +715,7 @@ async def test_openai_compatible_providers_send_configured_headers(
 
 
 async def test_openai_compatible_provider_sends_json_object_with_the_application_schema(monkeypatch) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
     model_result = {
         "headline": "Briefing",
         "headline_source_ids": ["source"],
@@ -723,9 +726,9 @@ async def test_openai_compatible_provider_sends_json_object_with_the_application
         "disaster_tracking": [],
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "id": "completion-id",
@@ -754,7 +757,7 @@ async def test_openai_compatible_provider_sends_json_object_with_the_application
         sdk_provider.client = AsyncOpenAI(
             api_key=api_key,
             base_url=api_base,
-            http_client=LoggedAsyncClient(transport=httpx.MockTransport(handler)),
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
         )
 
     monkeypatch.setattr(BaseOpenAIProvider, "_init_client", init_client)
