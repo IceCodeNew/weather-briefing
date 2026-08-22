@@ -4,7 +4,6 @@ permissions: {}
 on:
   push:
     branches:
-      - "master"
       - "renovate/**"
   pull_request:
     paths:
@@ -18,7 +17,7 @@ on:
       - "uv.lock"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
