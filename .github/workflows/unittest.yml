@@ -47,7 +47,7 @@ jobs:
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         enable-cache: auto
-        version: '0.12.5'
+        version: '0.12.12'
     - name: Test with python ${{ matrix.python-version }}
       run: |
         uv sync --frozen
@@ -71,7 +71,7 @@ jobs:
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         enable-cache: auto
-        version: '0.12.5'
+        version: '0.12.12'
     - name: Generate Coverage Reports
       run: |
         uv sync --frozen
