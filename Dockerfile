@@ -1,6 +1,6 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
-FROM mirror.gcr.io/icecodexi/bash-toybox:0.8.14@sha256:d72ae63046b6326530250b3e795f9ce3d655efd66eba48b27ab2c257d876e404 AS assets
+FROM mirror.gcr.io/icecodexi/bash-toybox:0.8.14@sha256:51e295251662d5341c02a50f8e2587fa18566871eaabd163e47be68f4b1ead05 AS assets
 FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884 AS py-runtime
 # toybox + bash(ash) + catatonit
 COPY --link --from=assets /usr/bin/ /usr/bin/
