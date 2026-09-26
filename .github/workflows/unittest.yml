@@ -44,10 +44,10 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
         enable-cache: auto
-        version: '0.12.5'
+        version: '0.12.18'
     - name: Test with python ${{ matrix.python-version }}
       run: |
         uv sync --frozen
@@ -68,21 +68,21 @@ jobs:
       with:
         python-version: '3.14'
     - name: Install the latest version of uv and set the python version
-      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
         enable-cache: auto
-        version: '0.12.5'
+        version: '0.12.18'
     - name: Generate Coverage Reports
       run: |
         uv sync --frozen
         uv run pytest --cov --cov-branch --cov-report=xml --junitxml=junit.xml
     - name: Upload results to Codecov
-      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
     - name: Upload test results to Codecov
       if: ${{ !cancelled() }}
-      uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         report_type: test_results
