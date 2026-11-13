@@ -25,10 +25,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: auto
-          version: "0.12.5"
+          version: "0.13.7"
       - name: Create release and next development commits
         env:
           RELEASE_BUMP: ${{ inputs.bump }}
